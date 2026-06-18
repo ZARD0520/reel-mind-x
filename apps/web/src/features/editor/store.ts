@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Asset, Clip, Timeline, Track, TrackKind } from '@reel/contracts';
-import { others, resolveMove } from './collision';
+import { MIN_FRAMES, nextClipStart, others, resolveMove } from './collision';
 
 // 图片默认时长（秒）；落帧时乘 project fps。
 const IMAGE_DEFAULT_SECONDS = 3;
@@ -10,7 +10,7 @@ function uuid(): string {
 }
 
 function defaultTransform(): Clip['transform'] {
-  return { scale: 1, x: 0, y: 0, rotation: 0, opacity: 1, volume: 1 };
+  return { scale: 1, x: 0, y: 0, rotation: 0, opacity: 1, volume: 1, speed: 1 };
 }
 
 /** 素材应落在哪种轨道：音频→audio，视频/图片→video */
@@ -49,6 +49,9 @@ interface EditorState {
   selectedClipId: string | null;
   past: Timeline[];
   future: Timeline[];
+  /** 属性面板当前 tab（画面/音频/变速） */
+  propTab: '画面' | '音频' | '变速';
+  setPropTab: (tab: '画面' | '音频' | '变速') => void;
   setTimeline: (timeline: Timeline) => void;
   selectClip: (clipId: string | null) => void;
   /**
@@ -75,6 +78,8 @@ interface EditorState {
   ) => void;
   /** 更新片段 transform（预览里缩放/位移）；不入历史（拖拽期间高频调用，结束时 commitHistory） */
   updateClipTransform: (clipId: string, patch: Partial<Clip['transform']>) => void;
+  /** 设置片段播放速率，并按源时长重算时间轴占用长度（碰撞内 clamp）。不入历史。 */
+  setClipSpeed: (clipId: string, speed: number) => void;
   /** 在指定帧处分割选中片段为两段（分割点须落在片段内部） */
   splitClip: (clipId: string, atFrame: number) => void;
   /** 复制片段，放到同轨最近的空闲位置并选中 */
@@ -112,6 +117,8 @@ export const useEditorStore = create<EditorState>((set) => ({
   selectedClipId: null,
   past: [],
   future: [],
+  propTab: '画面',
+  setPropTab: (tab) => set({ propTab: tab }),
 
   // 初始化/加载项目：重置历史。
   setTimeline: (timeline) => set({ timeline, past: [], future: [] }),
@@ -238,6 +245,33 @@ export const useEditorStore = create<EditorState>((set) => ({
         ...c,
         transform: { ...c.transform, ...patch },
       }));
+      return { timeline: { ...state.timeline, tracks } };
+    }),
+
+  setClipSpeed: (clipId, speed) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      const newSpeed = Math.max(0.1, Math.min(speed, 10));
+      const tracks = state.timeline.tracks.map((t) => {
+        if (!t.clips.some((c) => c.id === clipId)) return t;
+        return {
+          ...t,
+          clips: t.clips.map((c) => {
+            if (c.id !== clipId) return c;
+            // 源内容帧数固定 = 当前占用 × 当前速率；新占用 = 源 / 新速率。
+            const sourceFrames = c.durationInFrames * c.transform.speed;
+            let nextDuration = Math.max(MIN_FRAMES, Math.round(sourceFrames / newSpeed));
+            // 变慢会变长：不得越过同轨下一片段起点。
+            const limit = nextClipStart(c, others(t.clips, c.id)) - c.start;
+            if (Number.isFinite(limit)) nextDuration = Math.min(nextDuration, limit);
+            return {
+              ...c,
+              durationInFrames: nextDuration,
+              transform: { ...c.transform, speed: newSpeed },
+            };
+          }),
+        };
+      });
       return { timeline: { ...state.timeline, tracks } };
     }),
 

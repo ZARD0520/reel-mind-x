@@ -87,9 +87,9 @@ export function PreviewCanvas({
   // 选中片段若在当前可见层里，显示交互变换框（非全屏）。
   const selectedLayer = layers.find((l) => l.clip.id === selectedClipId);
 
-  /** 单层的 CSS transform（缩放 + 位移，围绕内容中心）。 */
+  /** 单层的 CSS transform（位移 + 缩放 + 旋转，围绕内容中心）。 */
   const layerTransform = (clip: Clip): string =>
-    `translate(${clip.transform.x * displayScale}px, ${clip.transform.y * displayScale}px) scale(${clip.transform.scale})`;
+    `translate(${clip.transform.x * displayScale}px, ${clip.transform.y * displayScale}px) scale(${clip.transform.scale}) rotate(${clip.transform.rotation}deg)`;
 
   const timecode = formatTimecode(currentFrame / fps);
   const totalTimecode = formatTimecode(totalFrames / fps);
@@ -127,7 +127,7 @@ export function PreviewCanvas({
           }`}
           style={isFullscreen ? undefined : { width: 640, height: 360 }}
         >
-          {/* 多层叠加：按图层顺序（底→顶）渲染每个命中片段，各自 transform */}
+          {/* 多层叠加：按图层顺序（底→顶）渲染每个命中片段，各自 transform/opacity */}
           {layers.map(({ clip, asset, track }, i) =>
             asset.kind === 'image' ? (
               <img
@@ -135,14 +135,25 @@ export function PreviewCanvas({
                 src={asset.url!}
                 alt={asset.name}
                 className="absolute inset-0 h-full w-full object-contain"
-                style={{ transform: layerTransform(clip), transformOrigin: 'center', zIndex: i }}
+                style={{
+                  transform: layerTransform(clip),
+                  transformOrigin: 'center',
+                  opacity: clip.transform.opacity,
+                  zIndex: i,
+                }}
               />
             ) : (
-              <div key={clip.id} className="absolute inset-0" style={{ zIndex: i }}>
+              <div
+                key={clip.id}
+                className="absolute inset-0"
+                style={{ zIndex: i, opacity: clip.transform.opacity }}
+              >
                 <VideoLayer
                   clip={clip}
                   asset={asset}
                   muted={track.muted || clip.transform.volume === 0}
+                  volume={clip.transform.volume}
+                  speed={clip.transform.speed}
                   fps={fps}
                   currentFrame={currentFrame}
                   isPlaying={isPlaying}

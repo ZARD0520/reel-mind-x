@@ -73,6 +73,8 @@ export const ClipTransformSchema = z.object({
   opacity: z.number().min(0).max(1).default(1),
   /** 音量 0..1（音频/含音轨的视频） */
   volume: z.number().min(0).max(1).default(1),
+  /** 播放速率，1 = 原速。改变速率会按源时长重算片段在时间轴的占用长度。 */
+  speed: z.number().positive().default(1),
 });
 export type ClipTransform = z.infer<typeof ClipTransformSchema>;
 

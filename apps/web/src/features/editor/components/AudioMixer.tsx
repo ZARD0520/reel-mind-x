@@ -32,6 +32,7 @@ export function AudioMixer({ timeline, assetById, currentFrame, isPlaying }: Aud
             durationInFrames={clip.durationInFrames}
             trimStart={clip.trimStart}
             volume={clip.transform.volume}
+            speed={clip.transform.speed}
             muted={trackMuted}
             fps={fps}
             currentFrame={currentFrame}
@@ -49,6 +50,7 @@ interface AudioVoiceProps {
   durationInFrames: number;
   trimStart: number;
   volume: number;
+  speed: number;
   muted: boolean;
   fps: number;
   currentFrame: number;
@@ -61,6 +63,7 @@ function AudioVoice({
   durationInFrames,
   trimStart,
   volume,
+  speed,
   muted,
   fps,
   currentFrame,
@@ -74,16 +77,18 @@ function AudioVoice({
     const f = Math.floor(currentFrame);
     const active = f >= start && f < start + durationInFrames;
     const audible = active && isPlaying && !muted && volume > 0;
-    const targetTime = Math.max(0, (f - start + trimStart) / fps);
+    // 变速：timeline 推进 1 帧 → 源消耗 speed 帧。
+    const targetTime = Math.max(0, ((f - start) * speed + trimStart) / fps);
 
     el.volume = Math.max(0, Math.min(1, volume));
+    el.playbackRate = speed;
     if (audible) {
       if (Math.abs(el.currentTime - targetTime) > 0.3) el.currentTime = targetTime;
       if (el.paused) void el.play().catch(() => undefined);
     } else if (!el.paused) {
       el.pause();
     }
-  }, [currentFrame, isPlaying, muted, volume, start, durationInFrames, trimStart, fps]);
+  }, [currentFrame, isPlaying, muted, volume, speed, start, durationInFrames, trimStart, fps]);
 
   return <audio ref={ref} src={url} preload="auto" />;
 }

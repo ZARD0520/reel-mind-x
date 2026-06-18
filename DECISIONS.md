@@ -206,3 +206,13 @@
 - **音频导入**：基建本就齐（上传 accept audio/*、ffprobe 探测、AudioMixer 混音、落音频轨）。本期补打磨：LeftPanel 音频缩略图显示时长(mm:ss)、视频缩略图加时长角标；时长按探测参考 fps=30 折算。
 - **顺带修**：拖到底部新建轨道改为插入数组开头(`newTrackAt:0`)＝最底层，不再默认盖住现有内容。
 - **状态**：✅ 已落地，typecheck + build 通过（需浏览器实测多层叠加播放/性能）。
+
+### D25. 属性面板三 tab 实功能：画面/音频/变速（2026-06-18）
+- 原 PropertiesPanel 是静态 mock。改为读取选中片段、实连 store。未选中时提示「选中片段以编辑」。
+- **画面 tab**：缩放(scale 0.1~3)、不透明度(opacity 0~1)、旋转(rotation -180~180)，滑块实时写 `updateClipTransform`(不入历史)。预览 `layerTransform` 加 rotate、每层应用 opacity。音频片段画面 tab 提示无画面属性。
+- **音频 tab**：音量(volume 0~1) + 静音按钮。VideoLayer/AudioMixer 都按 volume 设元素音量。
+- **变速 tab**：speed 0.25~4x（滑块 + 0.5/1/1.5/2 快捷按钮）。新增 schema 字段 `ClipTransform.speed`(默认1)。
+  - store `setClipSpeed`：源帧数固定=`当前duration×当前speed`，新占用=`源/新speed`，**联动重算时间轴长度**(变慢变长/变快变短)，并 clamp 不越过同轨下一片段(碰撞)、不小于 MIN_FRAMES。
+  - 预览 VideoLayer/AudioMixer：`playbackRate=speed`，源时间映射 = `(timeline帧偏移×speed + trimStart)/fps`。
+- 属性 tab 状态放 store(`propTab`)。滑块拇指样式 `.reel-slider`(accent)。
+- **状态**：✅ 已落地，typecheck + build 通过。

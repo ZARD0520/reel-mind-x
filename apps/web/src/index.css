@@ -61,3 +61,23 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--color-fg-tertiary) var(--color-elevated);
 }
+
+/* 属性面板滑块：accent 圆形拇指 */
+.reel-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-fg);
+  cursor: pointer;
+  border: 2px solid var(--color-accent);
+}
+.reel-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: var(--color-fg);
+  cursor: pointer;
+  border: 2px solid var(--color-accent);
+}
