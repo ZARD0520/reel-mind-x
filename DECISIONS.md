@@ -216,3 +216,29 @@
   - 预览 VideoLayer/AudioMixer：`playbackRate=speed`，源时间映射 = `(timeline帧偏移×speed + trimStart)/fps`。
 - 属性 tab 状态放 store(`propTab`)。滑块拇指样式 `.reel-slider`(accent)。
 - **状态**：✅ 已落地，typecheck + build 通过。
+
+### D26. 视频导出：FFmpeg 异步合成 + 进度轮询（2026-06-18）
+- **链路**：前端导出 → `POST /render`(建 RenderJob 入 BullMQ) → worker 跑 FFmpeg → 回写进度/产物 → 前端轮询 `GET /render/:id`(1s) → 完成给下载。
+- **持久化**：Prisma 加 `RenderJob`(projectId/status/progress/outputUrl/outputPath/error)，迁移 `add_render_job`。env 加 `EXPORT_SUBDIR`(默认 exports)，产物落 `STORAGE_DIR/exports/<jobId>.mp4`，经 `/static/exports/...` 暴露。
+- **合成器**(`render-graph.ts` 纯函数构图 + `render-runner.ts` 执行)：
+  - 复用已装 fluent-ffmpeg + 内置 ffmpeg/ffprobe 二进制(零系统依赖)。
+  - 视觉：黑底 color 基底 → 按轨道顺序(数组开头=底层)叠加每层 → 每层 `setpts`(变速) + `scale`(contain×transform.scale) + `rotate`(非0时,ow/oh 扩边) + `colorchannelmixer=aa`(opacity) → `overlay` 居中+位移(x/y)，`enable=between(t,start,end)` 控制出现窗口。
+  - 音频：音频轨 clip + 视频自带音轨都参与；`atrim`(按 dur×speed 取源) → `atempo`(变速,超[0.5,2]链式) → `volume` → `adelay`(对齐 start) → `amix`(normalize=0)。静音/volume=0/轨muted 不入混音。
+  - 输出按 project fps/width/height，libx264+yuv420p+faststart，有音轨则 aac 否则 -an。
+  - hidden 只影响预览，导出仍包含(与 schema 注释一致)。
+- **类型**：worker 用 `RenderAsset = Asset & {localPath}`(对外 Asset 不含 localPath)。
+- **前端**：`useExport`(create+poll) hook；EditorTopBar 导出按钮弹 popover(排队/合成中%/完成下载/失败重试)。导出前 `onBeforeExport` 先 flush 防抖保存(`mutateAsync`)，避免渲染到旧 timeline。
+- **验证**：✅ 实跑通过——2 视频轨叠加(PiP scale0.4+位移+opacity0.9+2x变速)+音频，产物 640×360 h264+aac 5.0s，抽帧确认画中画位置正确；空时间轴优雅失败("没有可导出的素材")。
+- **状态**：✅ 全链路落地并实测。
+
+### D27. 导出 bug 修复 + 导出设置弹窗（2026-06-18）
+- **Bug：amix normalize 报错**。根因：`@ffmpeg-installer/ffmpeg@1.1.0` 打包的 Windows 二进制是 2018 旧版（N-92722），amix 无 `normalize` 选项。
+  - 修法①：去掉 `normalize=0`，改 `amix=...:duration=longest` 后 `volume=N` 补偿（amix 按输入数平均音量，旧版无法关，故乘回）。新旧版都兼容。
+  - 修法②：装 `ffmpeg-static`(5.3.0，较新二进制)，render-runner 优先用它、回退 installer。`onlyBuiltDependencies` 加 ffmpeg-static 跑 postinstall。
+  - 实测：之前崩的 amix（多音轨）路径现在产出 h264+aac。
+- **导出设置弹窗**：点导出先弹设置（文件名 + 质量三档），确认后才入队。
+  - 质量档（render-runner `QUALITY_PRESETS`）：high=原分辨率/crf18/medium preset，medium=原分辨率/crf23/veryfast，low=半分辨率/crf28。宽高偶数化（libx264 要求）。
+  - 文件名：contracts 加 `CreateRenderSchema`(projectId/fileName/quality)，RenderJob 加 `fileName`(迁移 render_job_filename)；service `safeBaseName` 清洗；前端 `download={job.fileName}`。
+  - **保存位置**：浏览器无法静默选路径——用标准下载（带 download 文件名），浏览器自身的"保存到"对话框处理位置。提示文案告知用户。
+  - 中文文件名：前端 fetch+JSON.stringify 发 UTF-8，后端存取正常（实测 假期vlog 完整）。
+- **状态**：✅ bug 修复 + 弹窗均实测通过。

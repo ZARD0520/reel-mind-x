@@ -9,6 +9,7 @@ import { validateEnv, type Env } from './config/env';
 import { AgentModule } from './modules/agent/agent.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { ProjectsModule } from './modules/projects/projects.module';
+import { RenderModule } from './modules/render/render.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
@@ -42,6 +43,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AgentModule,
     AssetsModule,
     ProjectsModule,
+    RenderModule,
   ],
   // 全局 Zod 校验：createZodDto 的 DTO 自动按 contracts schema 校验。
   providers: [{ provide: APP_PIPE, useClass: ZodValidationPipe }],

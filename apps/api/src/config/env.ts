@@ -11,6 +11,8 @@ const envSchema = z.object({
   REDIS_PORT: z.coerce.number().default(6379),
   /** 上传文件存储根目录（相对 api 工作目录或绝对路径） */
   STORAGE_DIR: z.string().default('storage'),
+  /** 导出成片子目录（相对 STORAGE_DIR），通过 /static/<此值> 暴露 */
+  EXPORT_SUBDIR: z.string().default('exports'),
   /** 静态资源对外基地址，用于拼 Asset.url */
   PUBLIC_URL: z.string().url().default('http://localhost:3888'),
 });

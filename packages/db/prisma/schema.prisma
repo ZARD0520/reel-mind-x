@@ -48,3 +48,18 @@ model Asset {
 
   @@map("assets")
 }
+
+/// 导出/渲染任务。worker 用 project.timeline 跑 FFmpeg 合成，回写进度与产物。
+model RenderJob {
+  id         String   @id @default(uuid())
+  projectId  String
+  status     String // queued | rendering | completed | failed
+  progress   Int      @default(0) // 0..100
+  outputUrl  String? // 成片静态访问地址（completed 时填充）
+  outputPath String? // 成片本机绝对路径
+  fileName   String? // 建议下载文件名（含扩展名）
+  error      String? // 失败原因
+  createdAt  DateTime @default(now())
+
+  @@map("render_jobs")
+}

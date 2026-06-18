@@ -43,4 +43,13 @@ export const api = {
     },
     remove: (id: string) => requestVoid(`/assets/${id}`, { method: 'DELETE' }),
   },
+  render: {
+    create: (body: { projectId: string; fileName?: string; quality?: string }) =>
+      request('/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    get: (id: string) => request(`/render/${id}`),
+  },
 } as const;

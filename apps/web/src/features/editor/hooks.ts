@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Asset, Project } from '@reel/contracts';
+import { useState } from 'react';
+import type { Asset, Project, RenderJob } from '@reel/contracts';
 import { api } from '../../lib/api';
 
 // ─── Projects ───────────────────────────────────────────────────────────────
@@ -43,4 +44,39 @@ export function useDeleteAsset() {
     mutationFn: (id: string) => api.assets.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['assets'] }),
   });
+}
+
+// ─── 导出/渲染 ────────────────────────────────────────────────────────────────
+
+/**
+ * 导出：创建渲染任务，然后轮询其状态（每 1s）直到 completed/failed。
+ * 返回当前任务与一个 start() 触发器。
+ */
+export function useExport(projectId: string) {
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: (opts: { fileName?: string; quality?: string }) =>
+      api.render.create({ projectId, ...opts }) as Promise<RenderJob>,
+    onSuccess: (job) => setJobId(job.id),
+  });
+
+  const { data: job } = useQuery<RenderJob>({
+    queryKey: ['render', jobId],
+    queryFn: () => api.render.get(jobId!) as Promise<RenderJob>,
+    enabled: !!jobId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      return s === 'completed' || s === 'failed' ? false : 1000;
+    },
+  });
+
+  const reset = () => setJobId(null);
+
+  return {
+    start: (opts: { fileName?: string; quality?: string }) => create.mutate(opts),
+    starting: create.isPending,
+    job: job ?? null,
+    reset,
+  };
 }

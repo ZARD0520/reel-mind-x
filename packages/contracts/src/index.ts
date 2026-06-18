@@ -160,6 +160,19 @@ export type UpdateProjectInput = z.infer<typeof UpdateProjectSchema>;
 
 // ───────────────────────── 导出/渲染任务 RenderJob ─────────────────────────
 
+/** 导出质量档：影响分辨率缩放与码率（CRF/preset）。 */
+export const RenderQualitySchema = z.enum(['high', 'medium', 'low']);
+export type RenderQuality = z.infer<typeof RenderQualitySchema>;
+
+/** 创建导出任务的入参。 */
+export const CreateRenderSchema = z.object({
+  projectId: z.string().uuid(),
+  /** 下载文件名（不含扩展名）；省略则用项目名 */
+  fileName: z.string().max(120).optional(),
+  quality: RenderQualitySchema.default('high'),
+});
+export type CreateRenderInput = z.infer<typeof CreateRenderSchema>;
+
 /** 渲染任务状态（对应 BullMQ job 生命周期） */
 export const RenderStatusSchema = z.enum([
   'queued',
@@ -178,6 +191,8 @@ export const RenderJobSchema = z.object({
   progress: z.number().min(0).max(100).default(0),
   /** 成片地址（completed 时填充） */
   outputUrl: z.string().url().nullable(),
+  /** 建议下载文件名（含扩展名） */
+  fileName: z.string().nullable().default(null),
   /** 失败原因（failed 时填充） */
   error: z.string().nullable(),
   createdAt: z.coerce.date(),

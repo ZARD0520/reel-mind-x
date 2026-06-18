@@ -1,6 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, ChevronLeft, Loader2, Pencil, Redo2, Undo2, Upload } from 'lucide-react';
+import {
+  Check,
+  ChevronLeft,
+  Download,
+  Loader2,
+  Pencil,
+  Redo2,
+  Undo2,
+  Upload,
+  X,
+} from 'lucide-react';
+import { useExport } from '../hooks';
+import type { RenderJob } from '@reel/contracts';
 
 interface EditorTopBarProps {
   projectId: string;
@@ -11,6 +23,8 @@ interface EditorTopBarProps {
   onUndo?: () => void;
   onRedo?: () => void;
   onRename?: (name: string) => void;
+  /** 导出前刷新保存最新 timeline（返回 Promise，待保存完成再入队渲染） */
+  onBeforeExport?: () => Promise<void>;
 }
 
 export function EditorTopBar({
@@ -22,12 +36,41 @@ export function EditorTopBar({
   onUndo,
   onRedo,
   onRename,
+  onBeforeExport,
 }: EditorTopBarProps) {
   const navigate = useNavigate();
   const shortId = projectId.slice(0, 8);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportName, setExportName] = useState('');
+  const [exportQuality, setExportQuality] = useState<'high' | 'medium' | 'low'>('high');
+  const [confirmed, setConfirmed] = useState(false);
+  const { start, starting, job, reset } = useExport(projectId);
+
+  const exporting = starting || job?.status === 'queued' || job?.status === 'rendering';
+  // 弹窗两阶段：未确认 → 显示设置（名称/质量）；确认后 → 显示进度/结果。
+  const showSettings = exportOpen && !confirmed;
+
+  const openExport = () => {
+    setExportName(projectName ?? '未命名项目');
+    setExportQuality('high');
+    setConfirmed(false);
+    setExportOpen(true);
+  };
+  const confirmExport = () => {
+    setConfirmed(true);
+    void (async () => {
+      await onBeforeExport?.(); // 先落库最新 timeline
+      start({ fileName: exportName.trim() || undefined, quality: exportQuality });
+    })();
+  };
+  const closeExport = () => {
+    setExportOpen(false);
+    setConfirmed(false);
+    if (job?.status === 'completed' || job?.status === 'failed') reset();
+  };
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
@@ -114,11 +157,185 @@ export function EditorTopBar({
             </>
           )}
         </div>
-        <button className="flex items-center gap-1.5 rounded-lg bg-accent px-[18px] py-2 text-fg hover:bg-accent-hover">
-          <Upload className="h-[15px] w-[15px]" />
-          <span className="text-[13px] font-semibold">导出</span>
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={openExport}
+            disabled={exporting}
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-[18px] py-2 text-fg hover:bg-accent-hover disabled:opacity-70"
+          >
+            {exporting ? (
+              <Loader2 className="h-[15px] w-[15px] animate-spin" />
+            ) : (
+              <Upload className="h-[15px] w-[15px]" />
+            )}
+            <span className="text-[13px] font-semibold">{exporting ? '导出中…' : '导出'}</span>
+          </button>
+
+          {exportOpen && (
+            <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] rounded-xl border border-border-subtle bg-surface p-4 shadow-xl">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-semibold">导出视频</span>
+                <button
+                  type="button"
+                  onClick={closeExport}
+                  className="text-fg-tertiary hover:text-fg"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {showSettings ? (
+                <ExportSettings
+                  name={exportName}
+                  quality={exportQuality}
+                  onName={setExportName}
+                  onQuality={setExportQuality}
+                  onConfirm={confirmExport}
+                />
+              ) : (
+                <ExportBody
+                  job={job}
+                  starting={starting}
+                  onRetry={() =>
+                    start({ fileName: exportName.trim() || undefined, quality: exportQuality })
+                  }
+                />
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </header>
+  );
+}
+
+function ExportSettings({
+  name,
+  quality,
+  onName,
+  onQuality,
+  onConfirm,
+}: {
+  name: string;
+  quality: 'high' | 'medium' | 'low';
+  onName: (v: string) => void;
+  onQuality: (v: 'high' | 'medium' | 'low') => void;
+  onConfirm: () => void;
+}) {
+  const QUALITIES: { key: 'high' | 'medium' | 'low'; label: string; desc: string }[] = [
+    { key: 'high', label: '高清', desc: '原分辨率 · 高码率' },
+    { key: 'medium', label: '标准', desc: '原分辨率 · 中码率' },
+    { key: 'low', label: '流畅', desc: '半分辨率 · 低码率 · 文件小' },
+  ];
+  return (
+    <div className="flex flex-col gap-3.5">
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[12px] text-fg-secondary">文件名</label>
+        <div className="flex items-center gap-1">
+          <input
+            value={name}
+            onChange={(e) => onName(e.target.value)}
+            maxLength={100}
+            className="min-w-0 flex-1 rounded-md border border-border-subtle bg-input px-2 py-1.5 text-[13px] text-fg outline-none focus:border-accent"
+          />
+          <span className="text-[12px] text-fg-tertiary">.mp4</span>
+        </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label className="text-[12px] text-fg-secondary">质量</label>
+        <div className="flex flex-col gap-1.5">
+          {QUALITIES.map((q) => (
+            <button
+              key={q.key}
+              type="button"
+              onClick={() => onQuality(q.key)}
+              className={`flex items-center justify-between rounded-md border px-2.5 py-2 text-left transition-colors ${
+                quality === q.key
+                  ? 'border-accent bg-accent-soft'
+                  : 'border-border-subtle hover:bg-elevated'
+              }`}
+            >
+              <span className="text-[13px] font-medium text-fg">{q.label}</span>
+              <span className="text-[11px] text-fg-tertiary">{q.desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onConfirm}
+        className="mt-1 rounded-lg bg-accent py-2 text-[13px] font-semibold text-fg hover:bg-accent-hover"
+      >
+        开始导出
+      </button>
+    </div>
+  );
+}
+
+function ExportBody({
+  job,
+  starting,
+  onRetry,
+}: {
+  job: RenderJob | null;
+  starting: boolean;
+  onRetry: () => void;
+}) {
+  if (starting || !job || job.status === 'queued') {
+    return <ProgressView label="排队中…" percent={0} />;
+  }
+  if (job.status === 'rendering') {
+    return <ProgressView label="合成中…" percent={job.progress} />;
+  }
+  if (job.status === 'failed') {
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-[13px] text-red-400">导出失败</p>
+        <p className="max-h-24 overflow-y-auto break-words text-[11px] text-fg-tertiary">
+          {job.error ?? '未知错误'}
+        </p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="self-start rounded-lg bg-elevated px-3 py-1.5 text-[13px] text-fg-secondary hover:text-fg"
+        >
+          重试
+        </button>
+      </div>
+    );
+  }
+  // completed
+  return (
+    <div className="flex flex-col gap-3">
+      <ProgressView label="完成" percent={100} />
+      <a
+        href={job.outputUrl ?? '#'}
+        download={job.fileName ?? '导出视频.mp4'}
+        className="flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[13px] font-semibold text-fg hover:bg-accent-hover"
+      >
+        <Download className="h-4 w-4" />
+        下载视频
+      </a>
+      <p className="text-center text-[11px] text-fg-tertiary">
+        点击下载，浏览器会让你选择保存位置
+      </p>
+    </div>
+  );
+}
+
+function ProgressView({ label, percent }: { label: string; percent: number }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between text-[13px]">
+        <span className="text-fg-secondary">{label}</span>
+        <span className="tabular-nums text-fg-tertiary">{Math.round(percent)}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-timeline-track">
+        <div
+          className="h-full rounded-full bg-accent transition-all"
+          style={{ width: `${Math.max(2, percent)}%` }}
+        />
+      </div>
+    </div>
   );
 }

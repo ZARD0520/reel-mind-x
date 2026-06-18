@@ -26,7 +26,8 @@
       "@prisma/engines",
       "prisma",
       "esbuild",
-      "msgpackr-extract"
+      "msgpackr-extract",
+      "ffmpeg-static"
     ]
   }
 }

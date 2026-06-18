@@ -128,6 +128,10 @@ export function EditorPage() {
         onUndo={undo}
         onRedo={redo}
         onRename={(name) => updateProject.mutate({ name })}
+        onBeforeExport={async () => {
+          if (saveTimer.current) clearTimeout(saveTimer.current);
+          if (timeline) await updateProject.mutateAsync({ timeline });
+        }}
       />
       <div className="flex min-h-0 flex-1">
         <LeftPanel />
