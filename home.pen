@@ -1,0 +1,265 @@
+{
+  "version": "2.13",
+  "children": [
+    {
+      "type": "frame",
+      "id": "bi8Au",
+      "x": -58,
+      "y": -43,
+      "name": "首页 Home",
+      "clip": true,
+      "width": 1440,
+      "height": 900,
+      "fill": "$bg-base",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "r9GdQ",
+          "name": "顶栏 TopBar",
+          "width": "fill_container",
+          "padding": [
+            20,
+            32
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "NmAMz",
+              "name": "Logo",
+              "gap": 10,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "DAmNu",
+                  "name": "LogoMark",
+                  "width": 32,
+                  "height": 32,
+                  "fill": "$accent",
+                  "cornerRadius": 9,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "zeqSP",
+                      "name": "LogoIcon",
+                      "width": 18,
+                      "height": 18,
+                      "icon": "clapperboard",
+                      "library": "lucide",
+                      "fill": "$text-primary"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "QEF4Z",
+                  "name": "LogoText",
+                  "fill": "$text-primary",
+                  "content": "ReelMind",
+                  "fontFamily": "$font-main",
+                  "fontSize": 18,
+                  "fontWeight": "700"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "PyNxF",
+              "name": "Avatar",
+              "width": 34,
+              "height": 34,
+              "fill": "$bg-elevated",
+              "cornerRadius": 17,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "QoKd6",
+                  "name": "AvatarIcon",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "user",
+                  "library": "lucide",
+                  "fill": "$text-secondary"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "FxOZh",
+          "name": "主区 Hero",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "gap": 14,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "nEJTp",
+              "name": "Eyebrow",
+              "fill": "$accent",
+              "content": "AI 视频创作",
+              "fontFamily": "$font-main",
+              "fontSize": 13,
+              "fontWeight": "600",
+              "letterSpacing": 2
+            },
+            {
+              "type": "text",
+              "id": "ikqQM",
+              "name": "Title",
+              "fill": "$text-primary",
+              "content": "开始你的创作",
+              "fontFamily": "$font-main",
+              "fontSize": 44,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "fHE0V",
+              "name": "Subtitle",
+              "fill": "$text-secondary",
+              "content": "一键新建项目，进入剪辑工作台",
+              "fontFamily": "$font-main",
+              "fontSize": 16
+            },
+            {
+              "type": "frame",
+              "id": "L1erH",
+              "name": "按钮容器 CTAWrap",
+              "layout": "vertical",
+              "gap": 12,
+              "padding": [
+                28,
+                0,
+                0,
+                0
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "Cb0fS",
+                  "name": "开始创作按钮 StartBtn",
+                  "fill": "$accent",
+                  "cornerRadius": 14,
+                  "effect": {
+                    "type": "shadow",
+                    "shadowType": "outer",
+                    "color": "#4E7CFF55",
+                    "offset": {
+                      "x": 0,
+                      "y": 8
+                    },
+                    "blur": 24
+                  },
+                  "gap": 10,
+                  "padding": [
+                    16,
+                    32
+                  ],
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "HTSsA",
+                      "name": "PlusIcon",
+                      "width": 22,
+                      "height": 22,
+                      "icon": "plus",
+                      "library": "lucide",
+                      "fill": "$text-primary"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Z13cHN",
+                      "name": "BtnLabel",
+                      "fill": "$text-primary",
+                      "content": "开始创作",
+                      "fontFamily": "$font-main",
+                      "fontSize": 18,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "accent": {
+      "type": "color",
+      "value": "#4E7CFF"
+    },
+    "accent-hover": {
+      "type": "color",
+      "value": "#6B92FF"
+    },
+    "accent-soft": {
+      "type": "color",
+      "value": "#2A3358"
+    },
+    "bg-base": {
+      "type": "color",
+      "value": "#1A1A1E"
+    },
+    "bg-elevated": {
+      "type": "color",
+      "value": "#2C2C34"
+    },
+    "bg-input": {
+      "type": "color",
+      "value": "#34343D"
+    },
+    "bg-surface": {
+      "type": "color",
+      "value": "#232329"
+    },
+    "border-subtle": {
+      "type": "color",
+      "value": "#3A3A44"
+    },
+    "clip-audio": {
+      "type": "color",
+      "value": "#4A7A5C"
+    },
+    "clip-video": {
+      "type": "color",
+      "value": "#3D5A8A"
+    },
+    "font-main": {
+      "type": "string",
+      "value": "Inter"
+    },
+    "text-primary": {
+      "type": "color",
+      "value": "#FFFFFF"
+    },
+    "text-secondary": {
+      "type": "color",
+      "value": "#A0A0AC"
+    },
+    "text-tertiary": {
+      "type": "color",
+      "value": "#6B6B76"
+    },
+    "timeline-track": {
+      "type": "color",
+      "value": "#3A3A44"
+    }
+  }
+}

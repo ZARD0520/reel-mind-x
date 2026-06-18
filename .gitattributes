@@ -1,0 +1,14 @@
+# 统一换行为 LF，避免跨平台（Windows/Linux/Mac）全文件 diff
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+*.woff binary
+*.woff2 binary
+*.mp4 binary
+*.mov binary

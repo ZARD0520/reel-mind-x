@@ -1,0 +1,30 @@
+{
+  "name": "@reel/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "./generated/client/index.js",
+  "types": "./generated/client/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./generated/client/index.d.ts",
+      "default": "./generated/client/index.js"
+    }
+  },
+  "scripts": {
+    "build": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "typecheck": "echo \"no typecheck (generated client)\" ",
+    "lint": "echo \"no lint configured\" "
+  },
+  "dependencies": {
+    "@prisma/client": "^6.2.1"
+  },
+  "devDependencies": {
+    "prisma": "^6.2.1",
+    "typescript": "^5.7.3"
+  }
+}

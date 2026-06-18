@@ -1,0 +1,50 @@
+// Prisma schema —— 持久层单一来源。
+// 改动一律走迁移：开发 `pnpm --filter @reel/db db:migrate`，生产 `db:deploy`。
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+/// 剪辑项目。timeline 存完整剪辑状态（@reel/contracts 的 Timeline schema）为 jsonb。
+model Project {
+  id        String   @id @default(uuid())
+  name      String
+  timeline  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("projects")
+}
+
+/// 素材库条目。localPath 为本机文件绝对路径（仅服务端/worker 用，不暴露给前端）。
+model Asset {
+  id               String   @id @default(uuid())
+  kind             String // video | image | audio
+  source           String // upload | ai
+  status           String // ready | generating | failed
+  name             String
+  url              String? // 前端静态访问地址
+  localPath        String? // 本机文件绝对路径（worker 直接喂 FFmpeg）
+  durationInFrames Int?
+  width            Int?
+  height           Int?
+  prompt           String?
+  createdAt        DateTime @default(now())
+
+  @@map("assets")
+}

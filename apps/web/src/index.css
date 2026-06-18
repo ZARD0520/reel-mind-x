@@ -1,0 +1,63 @@
+@import 'tailwindcss';
+
+/* 设计稿配色 token（对应 .pen 变量），可用 bg-base / text-secondary / accent 等 utility 引用 */
+@theme {
+  --color-accent: #4e7cff;
+  --color-accent-hover: #6b92ff;
+  --color-accent-soft: #2a3358;
+
+  --color-base: #1a1a1e;
+  --color-surface: #232329;
+  --color-elevated: #2c2c34;
+  --color-input: #34343d;
+
+  --color-border-subtle: #3a3a44;
+
+  --color-fg: #ffffff;
+  --color-fg-secondary: #a0a0ac;
+  --color-fg-tertiary: #6b6b76;
+
+  --color-clip-video: #3d5a8a;
+  --color-clip-audio: #4a7a5c;
+  --color-timeline-track: #3a3a44;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+/* 时间轴横向滚动条样式（webkit） */
+.timeline-scroll::-webkit-scrollbar {
+  height: 10px;
+}
+.timeline-scroll::-webkit-scrollbar-track {
+  background: var(--color-elevated);
+  border-radius: 5px;
+}
+.timeline-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-fg-tertiary);
+  border-radius: 5px;
+}
+.timeline-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--color-fg-secondary);
+}
+.timeline-scroll::-webkit-scrollbar-thumb:active {
+  background: var(--color-accent);
+}
+
+/* Firefox 滚动条样式 */
+.timeline-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-fg-tertiary) var(--color-elevated);
+}

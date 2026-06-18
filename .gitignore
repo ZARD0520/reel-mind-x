@@ -1,0 +1,29 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# turbo
+.turbo/
+
+# prisma generated client
+packages/db/generated/
+
+# uploaded media (本地存储)
+apps/api/storage/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / os
+.DS_Store
+*.tsbuildinfo
