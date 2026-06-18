@@ -140,6 +140,8 @@ export const useEditorStore = create<EditorState>((set) => ({
         const idx = tracks.findIndex((t) => t.id === target.trackId);
         if (idx === -1) return state;
         const tk = tracks[idx]!;
+        // 类型隔离：音频素材只能进音频轨，视频/图片只能进视频轨。类型不符则忽略本次拖放。
+        if (tk.kind !== kind) return state;
         clip.start = resolveMove(target.atFrame, duration, tk.clips);
         tracks[idx] = { ...tk, clips: [...tk.clips, clip] };
       } else if (target && 'newTrackAt' in target) {

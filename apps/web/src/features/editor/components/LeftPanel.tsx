@@ -13,6 +13,13 @@ const TABS: { key: string; label: string; icon: LucideIcon }[] = [
   { key: 'effect', label: '特效', icon: Sparkles },
 ];
 
+// 素材时长按探测时的参考 fps=30 折算成 mm:ss（见后端 media-probe REFERENCE_FPS）。
+const ASSET_FPS = 30;
+function formatAssetDuration(frames: number): string {
+  const total = Math.round(frames / ASSET_FPS);
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 function AssetThumb({
   asset,
   onAdd,
@@ -43,8 +50,21 @@ function AssetThumb({
         ) : asset.kind === 'video' && asset.url ? (
           <video src={asset.url} className="h-full w-full object-cover" muted preload="metadata" />
         ) : (
-          <Icon className="h-[22px] w-[22px] text-fg-tertiary" />
+          <div className="flex flex-col items-center gap-1 text-fg-tertiary">
+            <Icon className="h-[22px] w-[22px]" />
+            {asset.durationInFrames ? (
+              <span className="text-[10px] tabular-nums">
+                {formatAssetDuration(asset.durationInFrames)}
+              </span>
+            ) : null}
+          </div>
         )}
+        {/* 时长角标（视频/音频，左上） */}
+        {asset.kind === 'video' && asset.durationInFrames ? (
+          <span className="absolute left-1 top-1 rounded bg-black/65 px-1 py-0.5 text-[9px] tabular-nums text-fg">
+            {formatAssetDuration(asset.durationInFrames)}
+          </span>
+        ) : null}
         <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-1.5 py-0.5 text-[10px] text-fg">
           {asset.name}
         </span>
@@ -76,6 +96,15 @@ export function LeftPanel() {
     e.target.value = '';
   };
 
+  // 媒体 tab：图片/视频；音频 tab：仅音频。
+  const isMedia = active === 'media';
+  const isAudioTab = active === 'audio';
+  const showImport = isMedia || isAudioTab;
+  const acceptTypes = isAudioTab ? 'audio/*' : 'video/*,image/*';
+  const visibleAssets = assets.filter((a) =>
+    isAudioTab ? a.kind === 'audio' : a.kind === 'video' || a.kind === 'image',
+  );
+
   return (
     <div className="flex h-full border-r border-border-subtle bg-surface">
       <nav className="flex w-[72px] flex-col items-center gap-1.5 bg-base py-3">
@@ -98,7 +127,7 @@ export function LeftPanel() {
       </nav>
 
       <div className="flex w-[300px] flex-col gap-4 p-4">
-        {active !== 'media' ? (
+        {!showImport ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
             <span className="text-[15px] font-medium text-fg-secondary">敬请期待</span>
             <span className="text-[13px] text-fg-tertiary">
@@ -110,7 +139,7 @@ export function LeftPanel() {
             <input
               ref={fileInput}
               type="file"
-              accept="video/*,image/*,audio/*"
+              accept={acceptTypes}
               className="hidden"
               onChange={onPick}
             />
@@ -126,16 +155,18 @@ export function LeftPanel() {
                 <Plus className="h-[26px] w-[26px] text-accent" />
               )}
               <span className="text-[13px] font-medium text-fg-secondary">
-                {upload.isPending ? '上传中…' : '导入素材'}
+                {upload.isPending ? '上传中…' : isAudioTab ? '导入音频' : '导入素材'}
               </span>
             </button>
 
-            <h2 className="text-[13px] font-semibold">本地素材</h2>
-            {assets.length === 0 ? (
-              <p className="text-[13px] text-fg-tertiary">还没有素材，点上方导入</p>
+            <h2 className="text-[13px] font-semibold">{isAudioTab ? '本地音频' : '本地素材'}</h2>
+            {visibleAssets.length === 0 ? (
+              <p className="text-[13px] text-fg-tertiary">
+                还没有{isAudioTab ? '音频' : '素材'}，点上方导入
+              </p>
             ) : (
               <div className="grid grid-cols-2 gap-2.5 overflow-y-auto">
-                {assets.map((asset) => (
+                {visibleAssets.map((asset) => (
                   <AssetThumb
                     key={asset.id}
                     asset={asset}

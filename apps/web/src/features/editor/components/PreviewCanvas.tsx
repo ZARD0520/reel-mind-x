@@ -5,6 +5,7 @@ import { useAssets } from '../hooks';
 import { useEditorStore } from '../store';
 import { TransformBox } from './TransformBox';
 import { AudioMixer } from './AudioMixer';
+import { VideoLayer } from './VideoLayer';
 
 const STAGE_W = 640;
 const STAGE_H = 360;
@@ -17,30 +18,33 @@ function formatTimecode(totalSeconds: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-interface ActiveItem {
+interface ActiveLayer {
   clip: Clip;
   asset: Asset;
   track: Track;
 }
 
-/** 当前帧对应的最顶层可见视频/图片片段（从 tracks 末尾往前找，越后越上层） */
-function findActiveItem(
+/**
+ * 当前帧命中的所有可见视频/图片片段，按图层顺序（底→顶）返回。
+ * tracks 数组开头＝底层、末尾＝顶层，正序遍历即底→顶；靠后的盖在靠前的上面。
+ */
+function findActiveLayers(
   timeline: Timeline,
   frame: number,
   assetById: Map<string, Asset>,
-): ActiveItem | null {
-  for (let i = timeline.tracks.length - 1; i >= 0; i--) {
-    const track = timeline.tracks[i];
-    if (!track || track.kind !== 'video' || track.hidden) continue;
+): ActiveLayer[] {
+  const f = Math.floor(frame);
+  const layers: ActiveLayer[] = [];
+  for (const track of timeline.tracks) {
+    if (track.kind !== 'video' || track.hidden) continue;
     for (const clip of track.clips) {
-      const f = Math.floor(frame);
       if (f >= clip.start && f < clip.start + clip.durationInFrames) {
         const asset = assetById.get(clip.assetId);
-        if (asset?.status === 'ready' && asset.url) return { clip, asset, track };
+        if (asset?.status === 'ready' && asset.url) layers.push({ clip, asset, track });
       }
     }
   }
-  return null;
+  return layers;
 }
 
 interface PreviewCanvasProps {
@@ -61,18 +65,15 @@ export function PreviewCanvas({
   const timeline = useEditorStore((s) => s.timeline);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const { data: assets = [] } = useAssets();
-  const videoRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
   const fps = timeline?.settings.fps ?? 30;
   const projectW = timeline?.settings.width ?? 1920;
   const projectH = timeline?.settings.height ?? 1080;
   const assetById = new Map(assets.map((a) => [a.id, a]));
-  const activeItem = timeline
-    ? findActiveItem(timeline, currentFrame, assetById)
-    : null;
-  const isVideo = activeItem?.asset.kind === 'video';
-  const isImage = activeItem?.asset.kind === 'image';
+  // 当前帧所有可见层（底→顶）。
+  const layers = timeline ? findActiveLayers(timeline, currentFrame, assetById) : [];
+  const hasVisual = layers.length > 0;
 
   // 内容（object-contain）在 scale=1 时的显示尺寸与居中留白偏移。
   const contentScale = Math.min(STAGE_W / projectW, STAGE_H / projectH);
@@ -83,55 +84,12 @@ export function PreviewCanvas({
   // transform.x/y 是项目像素，映射到舞台显示空间的比例。
   const displayScale = contentScale;
 
-  // 选中且为当前活动片段时，显示交互变换框（非全屏）。
-  const showBox = !!activeItem && activeItem.clip.id === selectedClipId;
+  // 选中片段若在当前可见层里，显示交互变换框（非全屏）。
+  const selectedLayer = layers.find((l) => l.clip.id === selectedClipId);
 
-  // 顶层视频自带音轨是否静音：轨道静音 或 片段静音。
-  const videoMuted =
-    !!activeItem && (activeItem.track.muted || activeItem.clip.transform.volume === 0);
-
-  // 当前内容的 CSS transform（缩放 + 位移，围绕内容中心）。
-  const contentTransform = activeItem
-    ? `translate(${activeItem.clip.transform.x * displayScale}px, ${activeItem.clip.transform.y * displayScale}px) scale(${activeItem.clip.transform.scale})`
-    : undefined;
-
-  /** 切片段时更新 video src（只在 url 变化时 load，避免频繁 reload） */
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !isVideo || !activeItem) return;
-    const url = activeItem.asset.url!;
-    if ((video.getAttribute('src') ?? '') !== url) {
-      video.setAttribute('src', url);
-      video.load();
-    }
-  }, [isVideo, activeItem?.asset.url]);
-
-  /**
-   * 播放/scrub 同步：
-   * - 播放中：用浏览器原生播放（流畅），仅当与时间轴时钟漂移 > 0.3s 时才纠偏，
-   *   避免每帧 setCurrentTime 反复 seek 导致卡顿。
-   * - 暂停/拖动：精确 seek 到当前帧（scrubbing）。
-   */
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !isVideo || !activeItem) {
-      video?.pause();
-      return;
-    }
-    const targetTime = Math.max(
-      0,
-      (Math.floor(currentFrame) - activeItem.clip.start + activeItem.clip.trimStart) / fps,
-    );
-    video.muted = videoMuted;
-    if (isPlaying) {
-      if (Math.abs(video.currentTime - targetTime) > 0.3) video.currentTime = targetTime;
-      if (video.paused) void video.play().catch(() => undefined);
-    } else {
-      if (!video.paused) video.pause();
-      video.currentTime = targetTime;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentFrame, isPlaying, isVideo, activeItem?.clip.id, fps, videoMuted]);
+  /** 单层的 CSS transform（缩放 + 位移，围绕内容中心）。 */
+  const layerTransform = (clip: Clip): string =>
+    `translate(${clip.transform.x * displayScale}px, ${clip.transform.y * displayScale}px) scale(${clip.transform.scale})`;
 
   const timecode = formatTimecode(currentFrame / fps);
   const totalTimecode = formatTimecode(totalFrames / fps);
@@ -169,28 +127,34 @@ export function PreviewCanvas({
           }`}
           style={isFullscreen ? undefined : { width: 640, height: 360 }}
         >
-          {/* video element：常驻 DOM，避免 ref 失效；src 改变时更新 */}
-          <video
-            ref={videoRef}
-            className={`absolute inset-0 h-full w-full object-contain ${isVideo ? 'block' : 'hidden'}`}
-            style={{ transform: contentTransform, transformOrigin: 'center' }}
-            playsInline
-            preload="auto"
-            muted={false}
-          />
-          {/* 图片 */}
-          {isImage && (
-            <img
-              src={activeItem.asset.url!}
-              alt={activeItem.asset.name}
-              className="absolute inset-0 h-full w-full object-contain"
-              style={{ transform: contentTransform, transformOrigin: 'center' }}
-            />
+          {/* 多层叠加：按图层顺序（底→顶）渲染每个命中片段，各自 transform */}
+          {layers.map(({ clip, asset, track }, i) =>
+            asset.kind === 'image' ? (
+              <img
+                key={clip.id}
+                src={asset.url!}
+                alt={asset.name}
+                className="absolute inset-0 h-full w-full object-contain"
+                style={{ transform: layerTransform(clip), transformOrigin: 'center', zIndex: i }}
+              />
+            ) : (
+              <div key={clip.id} className="absolute inset-0" style={{ zIndex: i }}>
+                <VideoLayer
+                  clip={clip}
+                  asset={asset}
+                  muted={track.muted || clip.transform.volume === 0}
+                  fps={fps}
+                  currentFrame={currentFrame}
+                  isPlaying={isPlaying}
+                  transform={layerTransform(clip)}
+                />
+              </div>
+            ),
           )}
-          {/* 交互式变换框（选中当前片段、非全屏时） */}
-          {showBox && !isFullscreen && activeItem && (
+          {/* 交互式变换框（选中片段在可见层里、非全屏时） */}
+          {selectedLayer && !isFullscreen && (
             <TransformBox
-              clip={activeItem.clip}
+              clip={selectedLayer.clip}
               displayScale={displayScale}
               baseWidth={baseWidth}
               baseHeight={baseHeight}
@@ -198,8 +162,8 @@ export function PreviewCanvas({
               baseTop={baseTop}
             />
           )}
-          {/* 无片段 / 纯音频 → 占位 */}
-          {!isVideo && !isImage && (
+          {/* 无可见片段 / 纯音频 → 占位 */}
+          {!hasVisual && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-fg-tertiary">
               <span className="font-mono text-5xl font-bold text-input">{timecode}</span>
               <span className="text-[13px]">{timeline?.tracks.length ? '无视频片段' : '从左侧添加素材'}</span>

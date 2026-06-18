@@ -315,14 +315,14 @@ export function Timeline({
     const asset = assetFromDrag(e);
     if (asset) addAsset(asset, { trackId, atFrame: frameFromClientX(e.clientX) });
   };
-  // 拖到底部空白：新建一轨（视频放顶层＝数组末尾）。
+  // 拖到底部空白：新建一轨,放到最底层（数组开头＝时间轴最下面一行，不盖住现有内容）。
   const onDropToNew = (e: React.DragEvent) => {
     e.preventDefault();
     setDropNewActive(false);
     const asset = assetFromDrag(e);
     if (asset) {
       addAsset(asset, {
-        newTrackAt: timeline.tracks.length,
+        newTrackAt: 0,
         atFrameForNew: frameFromClientX(e.clientX),
       });
     }
