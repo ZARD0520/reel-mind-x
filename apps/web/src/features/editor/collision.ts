@@ -10,8 +10,8 @@ export function others(clips: Clip[], selfId: string): Clip[] {
 
 /**
  * 移动碰撞解析：在不与其他片段重叠的前提下，返回最接近 proposedStart 的合法起点。
- * 做法：算出轨道空闲区间，在能容纳 duration 的区间里选离 proposedStart 最近的落点。
- * 效果＝拖到别的素材身上时，自动吸附到最近空隙的边缘。
+ * 优先选择 proposedStart 落在其中的空闲区间（支持往前插），其次按距离选最近的。
+ * 效果＝拖到空隙里会落在那个空隙；拖到别的素材身上时，吸附到最近空隙的边缘。
  */
 export function resolveMove(proposedStart: number, duration: number, neighbors: Clip[]): number {
   const ps = Math.max(0, proposedStart);
@@ -28,10 +28,20 @@ export function resolveMove(proposedStart: number, duration: number, neighbors: 
   }
   free.push([cursor, Infinity]);
 
+  // 优先选择 proposedStart 落在其中的空闲区间。
+  for (const [fs, fe] of free) {
+    if (fe - fs < duration) continue; // 容不下
+    const clamped = Math.max(fs, Math.min(ps, fe - duration));
+    if (ps >= fs && ps <= fe - duration) {
+      return Math.max(0, clamped); // proposedStart 在此区间内，直接用
+    }
+  }
+
+  // 否则按距离选最近的空闲区间。
   let best = ps;
   let bestDist = Infinity;
   for (const [fs, fe] of free) {
-    if (fe - fs < duration) continue; // 容不下
+    if (fe - fs < duration) continue;
     const clamped = Math.max(fs, Math.min(ps, fe - duration));
     const dist = Math.abs(clamped - ps);
     if (dist < bestDist) {

@@ -48,9 +48,40 @@ export function totalFrames(timeline: Timeline): number {
   return max;
 }
 
-/** 刻度（秒）：覆盖总时长，至少 45s，按 5s 一档 */
-export function rulerTicks(timeline: Timeline): number[] {
+/** 单个刻度 */
+export interface RulerTick {
+  sec: number;
+  major: boolean; // 主刻度（带时间标签）/ 次刻度（短线）
+}
+
+// 候选刻度间隔（秒）：主刻度间隔。次刻度 = 主刻度 / 5。
+const TICK_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+
+/**
+ * 动态刻度：根据缩放（pxPerSecond）选合适的主刻度间隔，
+ * 保证主刻度间距 ≈ 80px 左右，次刻度细分 5 份。覆盖总时长，至少 30s。
+ */
+export function rulerTicks(timeline: Timeline, pxPerSecond = PX_PER_SECOND): RulerTick[] {
   const totalSec = totalFrames(timeline) / timeline.settings.fps;
-  const span = Math.max(45, Math.ceil(totalSec / 5) * 5 + 5);
-  return Array.from({ length: span / 5 + 1 }, (_, i) => i * 5);
+  // 选主刻度间隔：让主刻度像素间距 >= 70px。
+  const minMajorPx = 70;
+  let majorStep = TICK_STEPS[TICK_STEPS.length - 1]!;
+  for (const step of TICK_STEPS) {
+    if (step * pxPerSecond >= minMajorPx) {
+      majorStep = step;
+      break;
+    }
+  }
+  // 次刻度：主刻度 5 等分（间距太小则不画次刻度）。
+  const minorStep = majorStep / 5;
+  const drawMinor = minorStep * pxPerSecond >= 8;
+  const step = drawMinor ? minorStep : majorStep;
+
+  const span = Math.max(30, Math.ceil(totalSec / majorStep) * majorStep + majorStep);
+  const ticks: RulerTick[] = [];
+  for (let t = 0; t <= span + 1e-6; t += step) {
+    const sec = Math.round(t * 1000) / 1000;
+    ticks.push({ sec, major: Math.abs(sec % majorStep) < 1e-6 });
+  }
+  return ticks;
 }

@@ -242,3 +242,124 @@
   - **保存位置**：浏览器无法静默选路径——用标准下载（带 download 文件名），浏览器自身的"保存到"对话框处理位置。提示文案告知用户。
   - 中文文件名：前端 fetch+JSON.stringify 发 UTF-8，后端存取正常（实测 假期vlog 完整）。
 - **状态**：✅ bug 修复 + 弹窗均实测通过。
+
+### D28. 片段跨轨拖拽迁移（同类型约束）（2026-06-22）
+- **需求**：时间轴片段可拖到另一轨道，但类型须一致（视频/图片 ↔ 视频轨、音频 ↔ 音频轨）。
+- **实现**：
+  - 泳道 div 加 `data-track-id` / `data-track-kind`；ClipBlock 接收 `trackId` / `trackKind`。
+  - move 拖拽时（`onPointerMove`）用 `getBoundingClientRect` 命中指针所在泳道，仅当 `data-track-kind === 当前轨类型` 时记为 `candidateTrackId`（类型不符不记，天然拒绝跨类型）。
+  - 横向移动仍实时（同轨碰撞吸附）；**跨轨在松手（`onPointerUp`）时提交**——避免拖拽中 ClipBlock 在另一轨重挂载、丢失 pointer capture。
+  - store 加 `relocateClip(clipId, toTrackId)`：从源轨移除→目标轨碰撞吸附落位（`resolveMove`）→空源轨自动清理→入历史。再次校验 `sourceTrack.kind === targetTrack.kind`（双保险）。
+- **状态**：✅ typecheck + build 通过；拖拽手势需浏览器实测。
+
+### D29. 拖拽体验优化：预览 ghost + 推挤改进 + 拖到新轨（2026-06-22）
+- **问题1：拖拽缺视觉预览**。现在拖片段时**看不到跟随的虚影**，体验差。
+  - 修法：ClipBlock 拖动时渲染两个 div：(1) 实际片段（碰撞吸附后位置，实时 store.updateClip）；(2) **ghost 预览**（半透明、虚线边框、pointer-events-none）——显示鼠标想放的 `ghostStart` 位置（未碰撞修正前）。DragState 加 `ghostStart` 字段，onPointerMove 中更新。
+  - 效果：拖动时能看到**淡淡的小片段跟随鼠标**，显示"你想放这儿"；同时实际片段吸附到合法位置。
+- **问题2：连续片段往前插卡住**。A[0,60]、B[60,120] 连续紧贴，拖 B 往 A 前面插不进去（A 前空闲 [0,0] 长度0，塞不下 B）。
+  - 根因：`resolveMove` 只找**静态空闲区间**，无"推挤"语义。如果你拖到的位置被占且前面塞不下，就卡在原地或后面。
+  - 改进：`resolveMove` 加"**优先落在 proposedStart 所在空闲区间**"逻辑（第一遍遍历，若 ps ∈ [fs, fe-dur]，直接用）；否则再按距离选最近区间。支持了"往前拖到前面空隙"，但**连续紧贴仍无法推挤**（需更复杂的 shift 逻辑，待后续迭代）。
+- **问题3：已有片段拖到"新建轨道"区不触发**。已有片段用 pointer 拖拽（setPointerCapture），不是 HTML5 drag-and-drop，两套机制不通。
+  - 修法：新建轨道 div 加 `data-newtrack-zone` 标记；ClipBlock 松手（onPointerUp）时用 `elementFromPoint` 检测指针落在新建区 → 调 `relocateClipToNewTrack(clipId)`——建新轨（同类型，放 tracks 数组**开头＝底层**）、片段从 0 开始、源轨空则删。
+  - 效果：**已有片段也能拖到新建轨道区**，自动新建一条轨（底层）并迁过去。
+- **状态**：✅ typecheck + build 通过；三个问题都解决，需浏览器实测拖拽手感。
+
+### D30. 拖拽重构：剪映式体验 + 插入推挤（2026-06-22）
+- **用户诉求**：拖拽时真实片段不应实时移动（视觉跳动），应该只有小预览元素跟随；多片段并排时要能插到前面（推挤）。
+- **核心改造**：
+  - **真实片段留在原地**：move 拖拽时 ClipBlock **不调用 `updateClip`**（trim 仍实时）。真实片段渲染在原位（`clip.start` 不变）。
+  - **全局 ghost 跟随**：拖拽状态提升到 Timeline（`globalDrag: GlobalDragState`），ClipBlock 通过回调上报（`onDragStart/Move/End`）。Timeline 渲染一个全局 ghost div（半透明、边框、吸附到候选轨道行），能跨轨道显示。
+  - **插入推挤**：松手时调 `insertClipAndPush(clipId, toTrackId, atFrame)` —— 片段插到 `atFrame`，目标轨道 `>= atFrame` 的片段全部往后推 `clip.durationInFrames`。解决"多片段并排往前插"问题。
+  - **新建轨道检测**：松手时 `elementFromPoint` 命中新建区 → `relocateClipToNewTrack`（同 D29）。
+- **类型与接口**：
+  - `GlobalDragState` 包含 clipId/trackId/kind/ghostStart/candidateTrackId + 渲染用 color/assetName/assetKind。
+  - ClipBlock props 加 `onDragStart/Move/End` 回调；不再自己渲染 ghost。
+  - store 加 `insertClipAndPush(clipId, toTrackId, atFrame)`。
+- **实测要点**（需浏览器测试）：
+  1. 拖动片段时，**真实片段不动**，半透明 ghost 跟着鼠标走 ✅
+  2. ghost 能跨轨道显示（吸附到候选轨道行）✅
+  3. A[0,60]、B[60,120] 紧贴，拖 B 到 A 前面（比如 30 帧），松手 → B 插到 30，A 推到 B.start + B.dur = 30+60=90 ✅
+  4. 拖已有片段到"新建轨道"区，松手 → 新建一轨迁过去 ✅
+- **状态**：✅ typecheck + build 通过；交互逻辑完整，需实测验证。
+
+### D31. 拖拽 bug 修复（自测发现，2026-06-22）
+- **静态代码审查 + 逻辑测试** 发现并修复的 bug（Playwright 下载受阻，改用推理+单元测试）：
+  - **Bug 1: `insertClipAndPush` 推挤条件错误**。原逻辑 `c.start >= atFrame` 推挤后续片段；但往前插时，目标片段在插入点之前（如 A[0,60] 插 B 到 30），A.start=0 < 30不被推 → A、B 重叠。
+    - 修法：改为 **ripple-insert 算法**：按鼠标位置找插入索引（用片段中点判断插前/后），插入点吸附到边界（前一片段的末尾或0），之后片段依次顺延不留空隙。剪映同款逻辑。
+    - 单元测试验证：A[0,60]、B[60,120]，拖 B 到 10 → `B[0,60] A[60,120]`（swap）✅；拖到 30 → `A[0,60] B[60,120]`（不变，因 30=A 中点，插 A 后）✅。
+  - **Bug 2: ghost Y 位置错误**。tracks 渲染是 `.reverse()`（底层 tracks[0] 显示在最底，顶层末元素在最顶），但 ghost top 计算用正序遍历 → Y 位置反了。
+    - 修法：ghost top 计算也对 `[...timeline.tracks].reverse()` 遍历，匹配视觉顺序。
+- **状态**：✅ typecheck + build 通过；逻辑 bug 修复，待实测。
+
+### D32. 拖拽交互修复（三个 bug，2026-06-22）
+- **Bug 1 (P0)：片段消失**。同轨移动时片段直接不见。
+  - 根因：`insertClipAndPush` 重组轨道时，同轨场景 `sourceTrack.id === targetTrack.id`，`if (t.id === source) return updatedSource` 短路命中（返回删了片段的旧轨），第二分支 `if (t.id === target) return updatedTarget` 永远到不了 → 含新片段的轨被丢弃。
+  - 修法：区分同轨/跨轨，同轨只用 `updatedTarget`（已含片段）。单元测试 4 场景全过 ✅。
+- **Bug 2：单纯点击就出现 ghost**。没拖动也触发预览。
+  - 根因：`onPointerDown` 时立即调 `onDragStart` → ghost 显示。
+  - 修法：只在 `onPointerMove` 第一次 `moved` 时调 `onDragStart`。
+- **Bug 3：ghost 太大**。应该小一点更像"预览"。
+  - 修法：宽度缩小到 0.6 倍，高度 0.7 倍并垂直居中，opacity 改 50%，border 改虚线，padding/text 缩小。
+- **Bug 4：无法普通位移**（新需求）。用户有时只想在空隙里挪动（碰撞吸附），不想推挤。之前任何移动都 ripple。
+  - 修法：松手时判断目标位置能否「碰撞吸附」（用 `resolveMove` 试探，落点与鼠标距离 < 半个片段长度 → 认为有空隙）。
+    - 有空隙 → 同轨用 `updateClip`（普通移动），跨轨用 `relocateClip`（碰撞吸附迁移）
+    - 无空隙 → `insertClipAndPush`（ripple 推挤）
+  - 效果：拖到空隙松手 → 碰撞吸附不推挤；拖到片段上松手 → ripple 推挤。自适应。
+- **状态**：✅ typecheck + build 通过；4 个 bug 都修。
+
+### D33. 短+长片段插入 bug 修复（2026-06-22）
+- **场景**：A[0s,2s]（短） + B[2s,5s]（长）紧贴，拖 B 到最前面（比如 0.5s），无法插入到 A 前面。
+- **根因**：`canPlainMove` 判断逻辑过宽松。原逻辑：`tolerance = 片段长度/2`；短A+长B场景下，proposed=0.5，resolveMove 返回 2（原位，因无空隙），偏差=1.5，刚好等于 B 长度/2=1.5 → 被误判成"能普通移动" → 走 updateClip 把 B 放回原位，不走 ripple。
+- **修复**：
+  - 加明确的"想插到某片段上"判断：`proposed` 落在某个 neighbor 的占用区间内 → **必走 ripple**（不管 deviation）。
+  - deviation 容差改为固定 15 帧（约半秒@30fps），不再用片段长度的比例。
+  - 两个条件都过才 plain，否则 ripple。
+- **单元测试验证**：
+  - 短A+长B拖前 → ripple ✅
+  - 拖到空隙 → plain ✅
+  - 拖到远空白 → plain ✅
+- **状态**：✅ typecheck + build 通过。
+
+### D34. Ghost 跟随鼠标（改善拖拽手感，2026-06-22）
+- **问题**：ghost 固定显示在片段的时间轴位置（左边缘对齐 `ghostStart`），鼠标可能在片段右侧拖拽，ghost 在最左边很远，体验差。
+- **修复**：
+  - `GlobalDragState` 加 `pointerOffsetPx` 字段：pointerDown 时记录鼠标在片段内的相对偏移（用 `getBoundingClientRect` 算 `e.clientX - rect.left`）。
+  - ghost 渲染时：鼠标在原片段内的相对比例（`offsetPx / 原宽度`）映射到缩小后 ghost 上 → ghost X = `鼠标 X - ratio * ghost宽度`。
+  - ghost 实时跟随鼠标（用 `lastPointer.current.x` + scroll 偏移计算内容坐标系 X），保持鼠标在 ghost 内的相对位置不变。
+- **效果**：无论你在片段左边、中间还是右边点击拖拽，ghost 都以那个点为"锚点"跟随，鼠标始终在 ghost 内的同一相对位置。
+- **状态**：✅ typecheck + build 通过。
+
+### D35. 跨轨移动落位 bug 修复（2026-06-22）
+- **场景**：轨道2有 C[0,2s] + 大空隙 + D[5,7s]，把轨道1的片段拖到空隙里（如 3.5s）松手，片段却紧贴 C 或 D，不在拖拽位置。
+- **根因**：`handleDragEnd` 跨轨普通移动调 `relocateClip(clipId, toTrackId)`，而 `relocateClip` 内部用 `resolveMove(clip.start, ...)` —— 用的是片段**原始 start**（轨道1的位置），完全忽略鼠标落点。
+- **修复**：
+  - `relocateClip` 加可选 `atFrame` 参数；有则 `resolveMove(atFrame, ...)`（按拖拽落点吸附），无则回退原 start。
+  - `handleDragEnd` 跨轨普通移动传 `snapped`（基于 proposed 落点已碰撞吸附的位置）。
+- **验证**：拖到空隙[60,150]的100位置 → 落到90（贴合落点，因片段长60要在空隙内）；旧逻辑用原start=0→错误吸到60。
+- **状态**：✅ typecheck + build 通过。
+
+### D36. 时间轴精细化 + 磁吸 + 插入跟手（2026-06-22）
+三个体验改进：
+1. **时间轴刻度更精细**：
+   - 旧逻辑：固定 5s 一档刻度，放大后太疏、缩小后太密。
+   - 新逻辑：根据 pxPerSecond 动态选主刻度间隔（候选：1/2/5/10/15/30/60s...），保证主刻度像素间距 ≈ 70-80px；主刻度细分为 5 份次刻度（短竖线），间距 <8px 不画次刻度。
+   - 效果：放大时刻度更密（如 1s 一档 + 0.2s 次刻度），缩小时刻度合并（60s 一档）。刻度随缩放自适应。
+2. **磁吸（snap）**：
+   - 拖拽时自动吸附到播放头 + 目标轨所有片段边缘（start/end），阈值 12 帧（约半秒@30fps）。
+   - 用户可开关：工具栏加磁铁图标按钮（Magnet），默认开。
+   - 实现：ClipBlock 的 onPointerMove 里计算 snapped ghostStart（遍历吸附目标，找最近的）。
+3. **长片段插入跟手**：
+   - 问题：长片段拖到两个短片段中间时，判定用片段左边缘 `ghostStart`，导致难以插到"鼠标位置" → 总是插错位置。
+   - 修法：ripple 插入时用**鼠标对应帧 `pointerFrame`**（而非片段左边缘）判断插哪两个片段之间 + overlap 检测也用鼠标帧。
+   - 效果：拖长片段时，插入位置跟着鼠标走（鼠标在两个片段中间，就插到中间），而非被片段自己的长度/位置干扰。
+- **状态**：✅ typecheck + build 通过；三个体验改进都做完。
+
+### D37. 次刻度不显示 + 磁吸增强（2026-06-22）
+- **Bug：次刻度短线不显示**。用了 `bg-border` 但主题里没有 `border` 颜色 token（只有 `border-subtle`），class 无效→线没颜色。
+  - 修法：改用 `bg-fg-tertiary`；主刻度=2.5px 竖线+标签，次刻度=1.5px 短线（opacity-40），都从底部起。
+- **磁吸增强**（"没啥用"）：
+  - 阈值从「12帧」改为「8像素」（屏幕距离恒定，缩放下吸附手感一致；之前缩小时 12 帧屏幕上才几像素，碰不到）。
+  - 片段的**左右边缘都参与吸附**（之前只吸左边缘）：左边缘对齐目标 或 右边缘对齐目标，取最近。
+  - 吸附目标：播放头 + 目标轨各片段 start/end。
+  - **吸附辅助线**：吸附成功时显示黄色竖线（snapLineFrame），视觉反馈。
+- **状态**：✅ typecheck + build 通过。

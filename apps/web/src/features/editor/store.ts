@@ -80,6 +80,12 @@ interface EditorState {
   updateClipTransform: (clipId: string, patch: Partial<Clip['transform']>) => void;
   /** 设置片段播放速率，并按源时长重算时间轴占用长度（碰撞内 clamp）。不入历史。 */
   setClipSpeed: (clipId: string, speed: number) => void;
+  /** 把片段迁移到另一轨道（同类型），碰撞吸附到目标轨最近合法位置（或指定位置）。入历史。 */
+  relocateClip: (clipId: string, toTrackId: string, atFrame?: number) => void;
+  /** 把片段插入目标轨道指定帧位置，推挤该位置及之后的片段往后让位。入历史。 */
+  insertClipAndPush: (clipId: string, toTrackId: string, atFrame: number) => void;
+  /** 把片段迁移到一条新建的轨道（放在数组开头＝底层）。入历史。 */
+  relocateClipToNewTrack: (clipId: string) => void;
   /** 在指定帧处分割选中片段为两段（分割点须落在片段内部） */
   splitClip: (clipId: string, atFrame: number) => void;
   /** 复制片段，放到同轨最近的空闲位置并选中 */
@@ -273,6 +279,110 @@ export const useEditorStore = create<EditorState>((set) => ({
         };
       });
       return { timeline: { ...state.timeline, tracks } };
+    }),
+
+  relocateClip: (clipId, toTrackId, atFrame) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      const sourceTrack = state.timeline.tracks.find((t) => t.clips.some((c) => c.id === clipId));
+      const targetTrack = state.timeline.tracks.find((t) => t.id === toTrackId);
+      if (!sourceTrack || !targetTrack || sourceTrack.id === targetTrack.id) return state;
+      // 类型不一致禁止迁移（视频/图片 ↔ 视频轨、音频 ↔ 音频轨）。
+      if (sourceTrack.kind !== targetTrack.kind) return state;
+
+      const clip = sourceTrack.clips.find((c) => c.id === clipId)!;
+      // 从源移除。
+      const updatedSource = { ...sourceTrack, clips: sourceTrack.clips.filter((c) => c.id !== clipId) };
+      // 在目标里碰撞吸附：用指定落点（拖拽位置），未指定则用原 start。
+      const desiredStart = atFrame ?? clip.start;
+      const safeStart = resolveMove(desiredStart, clip.durationInFrames, targetTrack.clips);
+      const updatedClip = { ...clip, start: safeStart };
+      const updatedTarget = { ...targetTrack, clips: [...targetTrack.clips, updatedClip] };
+
+      const tracks = state.timeline.tracks.map((t) => {
+        if (t.id === sourceTrack.id) return updatedSource.clips.length > 0 ? updatedSource : null;
+        if (t.id === targetTrack.id) return updatedTarget;
+        return t;
+      }).filter((t): t is Track => t !== null);
+
+      return { ...pushPast(state), timeline: { ...state.timeline, tracks } };
+    }),
+
+  insertClipAndPush: (clipId, toTrackId, atFrame) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      const sourceTrack = state.timeline.tracks.find((t) => t.clips.some((c) => c.id === clipId));
+      const targetTrack = state.timeline.tracks.find((t) => t.id === toTrackId);
+      if (!sourceTrack || !targetTrack) return state;
+      if (sourceTrack.kind !== targetTrack.kind) return state;
+
+      const clip = sourceTrack.clips.find((c) => c.id === clipId)!;
+      const sameTrack = sourceTrack.id === targetTrack.id;
+
+      // Ripple插入：在目标轨已有片段里（排除被移动的自己）找插入索引，吸附边界，后续顺延。
+      const sorted = targetTrack.clips.filter((c) => c.id !== clipId).sort((a, b) => a.start - b.start);
+      let insertIdx = sorted.length;
+      for (let i = 0; i < sorted.length; i++) {
+        const mid = sorted[i]!.start + sorted[i]!.durationInFrames / 2;
+        if (atFrame < mid) {
+          insertIdx = i;
+          break;
+        }
+      }
+      const insertStart = insertIdx === 0 ? 0 : sorted[insertIdx - 1]!.start + sorted[insertIdx - 1]!.durationInFrames;
+      const newClips: Clip[] = [];
+      for (let i = 0; i < insertIdx; i++) newClips.push(sorted[i]!);
+      newClips.push({ ...clip, start: insertStart });
+      let cursor = insertStart + clip.durationInFrames;
+      for (let i = insertIdx; i < sorted.length; i++) {
+        newClips.push({ ...sorted[i]!, start: cursor });
+        cursor += sorted[i]!.durationInFrames;
+      }
+      const updatedTarget = { ...targetTrack, clips: newClips };
+
+      const tracks = state.timeline.tracks
+        .map((t) => {
+          // 同轨移动：源=目标，只用重排后的 updatedTarget（已含被移动片段）。
+          if (sameTrack && t.id === targetTrack.id) return updatedTarget;
+          // 跨轨：源轨移除该片段（空则删），目标轨用 updatedTarget。
+          if (!sameTrack && t.id === sourceTrack.id) {
+            const remaining = sourceTrack.clips.filter((c) => c.id !== clipId);
+            return remaining.length > 0 ? { ...sourceTrack, clips: remaining } : null;
+          }
+          if (!sameTrack && t.id === targetTrack.id) return updatedTarget;
+          return t;
+        })
+        .filter((t): t is Track => t !== null);
+
+      return { ...pushPast(state), timeline: { ...state.timeline, tracks } };
+    }),
+
+  relocateClipToNewTrack: (clipId) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      const sourceTrack = state.timeline.tracks.find((t) => t.clips.some((c) => c.id === clipId));
+      if (!sourceTrack) return state;
+
+      const clip = sourceTrack.clips.find((c) => c.id === clipId)!;
+      const updatedSource = { ...sourceTrack, clips: sourceTrack.clips.filter((c) => c.id !== clipId) };
+      // 新轨道：同类型，片段从 0 开始（无需碰撞吸附，空轨）。
+      const newTrack: Track = {
+        id: crypto.randomUUID(),
+        kind: sourceTrack.kind,
+        muted: false,
+        hidden: false,
+        clips: [{ ...clip, start: 0 }],
+      };
+      // 新轨放数组开头（底层）。
+      const tracks = [
+        newTrack,
+        ...state.timeline.tracks.map((t) => {
+          if (t.id === sourceTrack.id) return updatedSource.clips.length > 0 ? updatedSource : null;
+          return t;
+        }).filter((t): t is Track => t !== null),
+      ];
+
+      return { ...pushPast(state), timeline: { ...state.timeline, tracks } };
     }),
 
   splitClip: (clipId, atFrame) =>
