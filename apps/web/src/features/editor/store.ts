@@ -90,6 +90,8 @@ interface EditorState {
   splitClip: (clipId: string, atFrame: number) => void;
   /** 复制片段，放到同轨最近的空闲位置并选中 */
   duplicateClip: (clipId: string) => void;
+  /** 更新项目设置（分辨率、fps 等）。入历史。 */
+  updateSettings: (patch: Partial<Pick<Timeline['settings'], 'width' | 'height' | 'fps'>>) => void;
   /** 把一个快照压入历史（拖拽结束时提交 pre-drag 快照） */
   commitHistory: (snapshot: Timeline) => void;
   undo: () => void;
@@ -446,6 +448,15 @@ export const useEditorStore = create<EditorState>((set) => ({
         ...pushPast(state),
         timeline: { ...state.timeline, tracks },
         selectedClipId: newId,
+      };
+    }),
+
+  updateSettings: (patch) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      return {
+        ...pushPast(state),
+        timeline: { ...state.timeline, settings: { ...state.timeline.settings, ...patch } },
       };
     }),
 

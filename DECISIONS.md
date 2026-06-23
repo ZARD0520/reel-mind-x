@@ -363,3 +363,58 @@
   - 吸附目标：播放头 + 目标轨各片段 start/end。
   - **吸附辅助线**：吸附成功时显示黄色竖线（snapLineFrame），视觉反馈。
 - **状态**：✅ typecheck + build 通过。
+
+### D38. 彻底改成剪映式拖拽（真片段实时移动+磁吸有感）2026-06-22
+**用户诉求**："拖拽时感觉不到磁吸（只是 ghost 改位置），松手才看到黄线；剪映是拖的时候就有吸附感。直接拖真实片段，trim 时也要磁吸。"
+
+**核心重构**（回到剪映体验）：
+1. **同轨 move：真实片段实时移动 + 磁吸**
+   - 拖拽时直接 `updateClip({start: snappedStart})`，真片段跟手（不再用小 ghost）。
+   - 磁吸实时生效：左/右边缘靠近目标（播放头、片段边缘、0 点）8px 内就"咬"住 + 显示黄线。
+   - 松手：已实时移动完，只需 commitHistory。
+2. **跨轨 move：ghost 预览 + 松手迁移**
+   - 拖拽时真片段回原位（避免源轨抖动），ghost 在目标轨预览（真实大小，不缩小）。
+   - 松手：relocate 到 ghostStart（已磁吸）。
+3. **trim 磁吸**
+   - trim-left：左边缘靠近目标就吸 + 黄线。
+   - trim-right：右边缘靠近目标就吸 + 黄线。
+   - 吸附目标同 move：播放头、本轨各片段 start/end、0 点。
+4. **吸附阈值统一 8px**（屏幕距离），不随缩放变。
+5. **黄色辅助线**：吸附成功时立即显示竖线（0.5px 宽，黄色），贯穿所有轨道。
+
+**去掉**：缩小 ghost 跟手（之前为了"预览"），现在同轨拖真片段 + 跨轨用真实大小 ghost。
+
+**状态**：✅ typecheck + build 通过。剪映感达成：拖时就吸、视觉即时反馈、trim 也吸。
+
+### D39. 磁吸三个 bug 修复（2026-06-22）
+**Bug 1：黄线粘住不消失**
+- 根因：`onDragMove` 只传 `ghostStart`/`candidateTrackId`，没传 `snapLineFrame`。Timeline 渲染黄线读的是 `globalDrag.snapLineFrame`（从没更新），显示残留值。
+- 修法：扩展 `handleDragMove` 接受 `snapLineFrame`，ClipBlock 每次都上报（吸到就传帧位置，离开范围就传 null）。
+
+**Bug 2：黄线不及时出现**
+- 同 Bug 1 根因（snapLineFrame 没正确同步）。修复后实时同步。
+
+**Bug 3：同轨拖动片段可以重叠**
+- 根因：实时移动用 `updateClip({start: snappedStart})`，snappedStart 是磁吸后的位置，**没做碰撞检测** → 可能覆盖邻居。
+- 修法：同轨移动前先 `resolveMove(snappedStart, duration, neighbors)` 约束到合法空隙，避免重叠。磁吸仍生效（黄线显示吸附目标），但片段实际位置受碰撞约束。
+
+**trim 分支也同步修复**：trim-left/right 都上报 snapLineFrame。
+
+**状态**：✅ typecheck + build 通过；三个 bug 都修。黄线实时跟随、离开就消失、片段不重叠。
+
+### D40. trim 黄线不显示 bug 修复（2026-06-22）
+- **问题**：trim 裁剪片段时，虽然代码里有磁吸逻辑 + 上报 snapLineFrame，但黄线不显示。
+- **根因**：trim 分支没调 `onDragStart`，所以 `globalDrag` 是 null，黄线渲染条件（`globalDrag && globalDrag.snapLineFrame !== null`）第一层就不满足。
+- **修法**：trim-left/right 分支第一次 `moved` 时也调 `onDragStart(drag.current)`（和 move 分支一样），确保 globalDrag 初始化，黄线能渲染。
+- **效果**：现在 trim 左右边缘时，靠近播放头/片段边缘就吸附 + 显示黄线。
+- **状态**：✅ typecheck + build 通过。
+
+### D41. 项目比例选择（16:9、9:16 等）2026-06-22
+- **需求**：支持常见比例快捷选择（16:9 横屏、9:16 竖屏、1:1 方形、4:3、21:9 超宽）。
+- **实现**：
+  - Timeline settings 已有 `width/height`（默认 1920x1080），现加 `updateSettings` action 更新分辨率并入历史。
+  - PreviewCanvas 加比例选择器（预览区顶部工具栏，5 个按钮）：点击切换比例，保持宽度 1920，调整高度以匹配选中比例（如 16:9 → 1920x1080，9:16 → 1920x3413）。
+  - 预览舞台尺寸动态计算：按 `projectW/projectH` 在最大容器（640x480）内 object-contain，letterbox/pillarbox 自适应。
+  - 当前比例高亮（蓝色按钮）。
+  - 右侧显示当前分辨率（如 `1920 × 1080`）。
+- **状态**：✅ typecheck + build 通过。

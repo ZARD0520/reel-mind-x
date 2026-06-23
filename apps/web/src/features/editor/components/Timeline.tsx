@@ -96,7 +96,7 @@ interface ClipBlockProps {
   onSelect: () => void;
   // 拖拽回调（Timeline 统一管理，ClipBlock 上报）
   onDragStart: (drag: GlobalDragState) => void;
-  onDragMove: (update: Partial<Pick<GlobalDragState, 'ghostStart' | 'candidateTrackId'>>) => void;
+  onDragMove: (update: Partial<Pick<GlobalDragState, 'ghostStart' | 'candidateTrackId' | 'snapLineFrame'>>) => void;
   onDragEnd: () => void;
 }
 
@@ -163,104 +163,138 @@ function ClipBlock({
     if (dFrames !== 0) drag.current.moved = true;
     const neighbors = others(trackClips, clip.id);
 
+    // 收集吸附目标（帧）：播放头 + 目标轨各片段 start/end。
+    const collectSnapTargets = (forTrackId: string): number[] => {
+      const targets: number[] = [currentFrame, 0];
+      const tl = useEditorStore.getState().timeline;
+      const tk = tl?.tracks.find((t) => t.id === forTrackId);
+      tk?.clips.forEach((c) => {
+        if (c.id !== clip.id) targets.push(c.start, c.start + c.durationInFrames);
+      });
+      return targets;
+    };
+    const snapPxToFrames = pxToFrames(8, fps, pxPerSecond); // 8px 吸附阈值
+
     if (type === 'move') {
-      // 第一次真正移动时才显示 ghost（避免单纯点击就出现）
-      if (!wasMoved && drag.current.moved) {
-        onDragStart(drag.current);
-      }
-
-      const rawProposed = Math.max(0, origStart + dFrames);
-      let snappedStart = rawProposed;
-      let snapLine: number | null = null;
-
-      // 磁吸：靠近播放头/片段边缘时吸附（用户可开关）。
-      if (snapEnabled) {
-        // 阈值用「像素」更直观（屏幕距离恒定），转成帧。约 8px。
-        const SNAP_PX = 8;
-        const snapThresholdFrames = pxToFrames(SNAP_PX, fps, pxPerSecond);
-        // 吸附目标点（帧）：播放头 + 目标轨各片段的 start/end。
-        const snapTargets: number[] = [currentFrame];
-        const tl = useEditorStore.getState().timeline;
-        if (tl) {
-          const targetT = tl.tracks.find((t) => t.id === (drag.current!.candidateTrackId ?? trackId));
-          if (targetT) {
-            targetT.clips.forEach((c) => {
-              if (c.id !== clip.id) snapTargets.push(c.start, c.start + c.durationInFrames);
-            });
-          }
-        }
-        // 片段的左边缘和右边缘都尝试吸附，取最近的。
-        let bestDist = snapThresholdFrames + 1;
-        for (const target of snapTargets) {
-          // 左边缘对齐 target
-          const dLeft = Math.abs(rawProposed - target);
-          if (dLeft < bestDist) {
-            bestDist = dLeft;
-            snappedStart = target;
-            snapLine = target;
-          }
-          // 右边缘对齐 target（start = target - duration）
-          const dRight = Math.abs(rawProposed + origDuration - target);
-          if (dRight < bestDist) {
-            bestDist = dRight;
-            snappedStart = Math.max(0, target - origDuration);
-            snapLine = target;
-          }
-        }
-        if (bestDist > snapThresholdFrames) snapLine = null; // 没吸附到
-      }
-
-      drag.current.ghostStart = snappedStart;
-      drag.current.snapLineFrame = snapLine;
-
       // 检测指针命中哪个轨道（跨轨迁移）。
       const lanes = document.querySelectorAll<HTMLDivElement>('[data-track-id]');
-      let targetTrackId: string | null = trackId; // 默认本轨
+      let targetTrackId = trackId;
       for (const lane of lanes) {
         const rect = lane.getBoundingClientRect();
-        if (
-          e.clientX >= rect.left &&
-          e.clientX < rect.right &&
-          e.clientY >= rect.top &&
-          e.clientY < rect.bottom
-        ) {
-          const tid = lane.getAttribute('data-track-id');
+        if (e.clientX >= rect.left && e.clientX < rect.right && e.clientY >= rect.top && e.clientY < rect.bottom) {
           const tkind = lane.getAttribute('data-track-kind');
-          if (tkind === trackKind) targetTrackId = tid; // 只允许同类型
+          if (tkind === trackKind) targetTrackId = lane.getAttribute('data-track-id') ?? trackId;
           break;
         }
       }
       drag.current.candidateTrackId = targetTrackId;
 
-      // 上报给 Timeline（更新全局 ghost 显示）。move 时真实片段不动。
-      onDragMove({ ghostStart: rawProposed, candidateTrackId: targetTrackId });
+      // 磁吸：片段左/右边缘靠近目标点就吸（实时作用到真实片段）。
+      const raw = Math.max(0, origStart + dFrames);
+      let snappedStart = raw;
+      let snapLine: number | null = null;
+      if (snapEnabled) {
+        const targets = collectSnapTargets(targetTrackId);
+        let best = snapPxToFrames + 1;
+        for (const t of targets) {
+          const dL = Math.abs(raw - t);
+          if (dL < best) { best = dL; snappedStart = t; snapLine = t; }
+          const dR = Math.abs(raw + origDuration - t);
+          if (dR < best) { best = dR; snappedStart = Math.max(0, t - origDuration); snapLine = t; }
+        }
+        if (best > snapPxToFrames) snapLine = null; // 没吸附到就清空
+      }
+      drag.current.ghostStart = snappedStart;
+      drag.current.snapLineFrame = snapLine;
+
+      // 同轨：实时移动真实片段（剪映感），但要碰撞检测避免重叠。
+      if (targetTrackId === trackId) {
+        if (!wasMoved && drag.current.moved) onDragStart(drag.current);
+        // 碰撞检测：snappedStart 可能让片段覆盖邻居，用 resolveMove 约束到合法位置。
+        const safeStart = resolveMove(snappedStart, origDuration, neighbors);
+        updateClip(clip.id, { start: safeStart });
+        // 上报 snapLine（即使碰撞约束后位置变了，黄线还是显示吸附目标）
+        onDragMove({ ghostStart: safeStart, candidateTrackId: targetTrackId, snapLineFrame: snapLine });
+      } else {
+        if (!wasMoved && drag.current.moved) onDragStart(drag.current);
+        // 跨轨：真实片段回原位，ghost 预览。
+        updateClip(clip.id, { start: origStart });
+        onDragMove({ ghostStart: snappedStart, candidateTrackId: targetTrackId, snapLineFrame: snapLine });
+      }
     } else if (type === 'trim-right') {
-      const sourceMax = asset?.durationInFrames
-        ? asset.durationInFrames - clip.trimStart
-        : Infinity;
-      const newDuration = resolveTrimRight(clip, neighbors, origDuration, dFrames, sourceMax);
+      // 第一次移动时触发 dragStart（渲染黄线需要 globalDrag）
+      if (!wasMoved && drag.current.moved) onDragStart(drag.current);
+      const sourceMax = asset?.durationInFrames ? asset.durationInFrames - clip.trimStart : Infinity;
+      let newDuration = resolveTrimRight(clip, neighbors, origDuration, dFrames, sourceMax);
+      // trim-right 磁吸：右边缘（start+duration）靠近目标就吸。
+      let snapLine: number | null = null;
+      if (snapEnabled) {
+        const targets = collectSnapTargets(trackId);
+        const rightEdge = clip.start + newDuration;
+        for (const t of targets) {
+          if (Math.abs(rightEdge - t) <= snapPxToFrames) {
+            newDuration = Math.max(MIN_FRAMES, t - clip.start);
+            snapLine = t;
+            break;
+          }
+        }
+      }
+      drag.current.snapLineFrame = snapLine;
+      onDragMove({ ghostStart: clip.start, candidateTrackId: trackId, snapLineFrame: snapLine });
       updateClip(clip.id, { durationInFrames: newDuration });
     } else {
-      const next = resolveTrimLeft(
+      // 第一次移动时触发 dragStart
+      if (!wasMoved && drag.current.moved) onDragStart(drag.current);
+      let next = resolveTrimLeft(
         clip,
         neighbors,
         { start: origStart, trimStart: origTrimStart, durationInFrames: origDuration },
         dFrames,
       );
+      // trim-left 磁吸：左边缘（start）靠近目标就吸。
+      let snapLine: number | null = null;
+      if (snapEnabled) {
+        const targets = collectSnapTargets(trackId);
+        for (const t of targets) {
+          if (Math.abs(next.start - t) <= snapPxToFrames) {
+            const delta = t - origStart;
+            next = {
+              start: t,
+              trimStart: origTrimStart + delta,
+              durationInFrames: origDuration - delta,
+            };
+            snapLine = t;
+            break;
+          }
+        }
+      }
+      drag.current.snapLineFrame = snapLine;
+      onDragMove({ ghostStart: clip.start, candidateTrackId: trackId, snapLineFrame: snapLine });
       updateClip(clip.id, next);
     }
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (drag.current) {
-      const { moved, type } = drag.current;
+      const { moved, type, candidateTrackId } = drag.current;
 
       if (type === 'move') {
-        // move 由 Timeline 处理落位（onDragEnd 触发 insertClipAndPush/relocate）。
-        if (moved) onDragEnd();
+        if (moved) {
+          if (candidateTrackId && candidateTrackId !== trackId) {
+            // 跨轨：迁移到目标轨的拖拽落点。
+            onDragEnd();
+          } else {
+            // 同轨：已实时移动，提交历史即可。
+            commitHistory(drag.current.snapshot);
+            onDragEnd();
+          }
+        } else {
+          onDragEnd(); // 清理 ghost 状态
+        }
       } else {
-        // trim 提交历史（trim 实时调用 updateClip，history在此入栈）。
+        // trim 提交历史。
         if (moved) commitHistory(drag.current.snapshot);
+        onDragEnd();
       }
 
       drag.current = null;
@@ -394,7 +428,7 @@ export function Timeline({
     setGlobalDrag(d);
   };
   const handleDragMove = (
-    update: Partial<Pick<GlobalDragState, 'ghostStart' | 'candidateTrackId'>>,
+    update: Partial<Pick<GlobalDragState, 'ghostStart' | 'candidateTrackId' | 'snapLineFrame'>>,
   ) => {
     if (!dragRef.current) return;
     dragRef.current = { ...dragRef.current, ...update, moved: true };
@@ -416,35 +450,12 @@ export function Timeline({
     }
 
     const targetTrackId = d.candidateTrackId ?? d.trackId;
+    // 同轨：已在 onPointerMove 实时移动并在 onPointerUp commit，无需再处理。
+    if (targetTrackId === d.trackId) return;
+
+    // 跨轨：迁移到目标轨的 ghostStart 位置（已磁吸）。
     const proposed = Math.max(0, Math.round(d.ghostStart));
-    const targetTrack = timeline.tracks.find((t) => t.id === targetTrackId);
-    if (!targetTrack) return;
-
-    // 优先尝试「普通位移」：目标轨里能找到容纳片段、且接近落点的空隙就直接放（不推挤）。
-    const neighbors = targetTrack.clips.filter((c) => c.id !== d.clipId);
-    const snapped = resolveMove(proposed, d.origDuration, neighbors);
-    const pointerFrame = frameFromClientX(lastPointer.current.x);
-
-    // 判断是否「想插入到某片段上」：鼠标位置落在某个 neighbor 的占用区间内 → 走 ripple。
-    const overlapsSomeClip = neighbors.some(
-      (c) => pointerFrame >= c.start && pointerFrame < c.start + c.durationInFrames
-    );
-    // 或者 snapped 和 proposed 差距太大（超过 15 帧，约半秒@30fps）→ 说明无空隙。
-    const snapDeviation = Math.abs(snapped - proposed);
-    const canPlainMove = !overlapsSomeClip && snapDeviation <= 15;
-
-    if (canPlainMove && targetTrackId === d.trackId) {
-      // 同轨普通位移：直接改 start（碰撞吸附），不推挤。
-      useEditorStore.getState().updateClip(d.clipId, { start: snapped });
-      useEditorStore.getState().commitHistory(d.snapshot);
-    } else if (canPlainMove && targetTrackId !== d.trackId) {
-      // 跨轨但目标位置有空隙：迁过去，落到拖拽位置（碰撞吸附），不推挤。
-      useEditorStore.getState().relocateClip(d.clipId, targetTrackId, snapped);
-    } else {
-      // 落点被占满 或 想插到某片段上 → ripple 插入推挤。
-      // 用「鼠标对应帧」判断插哪两个片段之间（而非片段左边缘，长片段才好插中间）。
-      useEditorStore.getState().insertClipAndPush(d.clipId, targetTrackId, pointerFrame);
-    }
+    useEditorStore.getState().relocateClip(d.clipId, targetTrackId, proposed);
   };
 
   // 拖拽中跟踪鼠标位置（用于松手时命中检测 + ghost 的 Y 定位）。
@@ -791,11 +802,10 @@ export function Timeline({
             />
           )}
 
-          {/* 拖拽 ghost（剪映式半透明预览，吸附到候选轨道行） */}
-          {globalDrag && (() => {
+          {/* 拖拽 ghost：仅跨轨时显示（同轨真实片段实时移动，无需 ghost） */}
+          {globalDrag && globalDrag.candidateTrackId !== globalDrag.trackId && (() => {
             const targetId = globalDrag.candidateTrackId ?? globalDrag.trackId;
-            // 计算候选轨道行的 top（刻度尺 + 之前各轨道高度累加）。
-            // tracks 渲染是 reverse，所以 top 要反向算。
+            // 计算候选轨道行的 top（tracks 渲染是 reverse）。
             let top = RULER_H;
             let laneH = VIDEO_TRACK_H;
             const reversed = [...timeline.tracks].reverse();
@@ -805,30 +815,21 @@ export function Timeline({
               if (t.id === targetId) { laneH = h; break; }
               top += h;
             }
-            const origWpx = framesToPx(globalDrag.origDuration, fps, pxPerSecond);
-            const gw = origWpx * 0.6; // 缩小到 60%
-            const gh = Math.round(laneH * 0.7); // 高度也缩小
-            const topOffset = Math.round((laneH - gh) / 2); // 垂直居中
-            // ghost 跟随鼠标：鼠标在原片段内的相对比例，映射到缩小后的 ghost 上。
-            const ratio = origWpx > 0 ? globalDrag.pointerOffsetPx / origWpx : 0.5;
-            const scrollEl = scrollRef.current;
-            const containerLeft = scrollEl?.getBoundingClientRect().left ?? 0;
-            const scrollLeft = scrollEl?.scrollLeft ?? 0;
-            // 鼠标在内容坐标系里的 x（相对 content 容器）
-            const pointerContentX = lastPointer.current.x - containerLeft + scrollLeft;
-            const gx = pointerContentX - ratio * gw;
+            // 跨轨 ghost：真实大小（不缩小），左边缘对齐 ghostStart（已磁吸）。
+            const gw = framesToPx(globalDrag.origDuration, fps, pxPerSecond);
+            const gx = LEFT_W + framesToPx(globalDrag.ghostStart, fps, pxPerSecond);
             return (
               <div
-                className="pointer-events-none absolute z-50 flex items-center gap-1 overflow-hidden rounded-md border border-dashed border-accent px-1.5 opacity-50 shadow-md"
+                className="pointer-events-none absolute z-50 flex items-center gap-1.5 overflow-hidden rounded-md border-2 border-dashed border-accent px-2 opacity-60 shadow-lg"
                 style={{
                   left: gx,
-                  top: top + topOffset,
+                  top,
                   width: Math.max(gw, 20),
-                  height: gh,
+                  height: laneH,
                   backgroundColor: globalDrag.color,
                 }}
               >
-                <span className="truncate text-[11px] font-medium text-fg">{globalDrag.assetName}</span>
+                <span className="truncate text-xs font-medium text-fg">{globalDrag.assetName}</span>
               </div>
             );
           })()}

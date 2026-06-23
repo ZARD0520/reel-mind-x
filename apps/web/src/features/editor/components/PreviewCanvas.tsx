@@ -7,8 +7,18 @@ import { TransformBox } from './TransformBox';
 import { AudioMixer } from './AudioMixer';
 import { VideoLayer } from './VideoLayer';
 
-const STAGE_W = 640;
-const STAGE_H = 360;
+// 预览舞台最大尺寸（容器）；实际画布按项目比例 object-contain。
+const MAX_PREVIEW_W = 640;
+const MAX_PREVIEW_H = 480;
+
+// 常见项目比例（宽:高）
+const ASPECT_RATIOS = [
+  { label: '16:9 横屏', w: 16, h: 9 },
+  { label: '9:16 竖屏', w: 9, h: 16 },
+  { label: '1:1 方形', w: 1, h: 1 },
+  { label: '4:3 标清', w: 4, h: 3 },
+  { label: '21:9 超宽', w: 21, h: 9 },
+] as const;
 
 function formatTimecode(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -64,6 +74,7 @@ export function PreviewCanvas({
 }: PreviewCanvasProps) {
   const timeline = useEditorStore((s) => s.timeline);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
+  const updateSettings = useEditorStore((s) => s.updateSettings);
   const { data: assets = [] } = useAssets();
   const stageRef = useRef<HTMLDivElement>(null);
 
@@ -75,12 +86,22 @@ export function PreviewCanvas({
   const layers = timeline ? findActiveLayers(timeline, currentFrame, assetById) : [];
   const hasVisual = layers.length > 0;
 
+  // 预览舞台尺寸：按项目比例在最大容器内 object-contain。
+  const projectAspect = projectW / projectH;
+  let stageW = MAX_PREVIEW_W;
+  let stageH = MAX_PREVIEW_H;
+  if (projectAspect > stageW / stageH) {
+    stageH = stageW / projectAspect;
+  } else {
+    stageW = stageH * projectAspect;
+  }
+
   // 内容（object-contain）在 scale=1 时的显示尺寸与居中留白偏移。
-  const contentScale = Math.min(STAGE_W / projectW, STAGE_H / projectH);
+  const contentScale = Math.min(stageW / projectW, stageH / projectH);
   const baseWidth = projectW * contentScale;
   const baseHeight = projectH * contentScale;
-  const baseLeft = (STAGE_W - baseWidth) / 2;
-  const baseTop = (STAGE_H - baseHeight) / 2;
+  const baseLeft = (stageW - baseWidth) / 2;
+  const baseTop = (stageH - baseHeight) / 2;
   // transform.x/y 是项目像素，映射到舞台显示空间的比例。
   const displayScale = contentScale;
 
@@ -107,6 +128,14 @@ export function PreviewCanvas({
     else void stageRef.current?.requestFullscreen();
   };
 
+  // 切换项目比例：保持宽度 1920，调整高度以匹配选中比例。
+  const setAspectRatio = (w: number, h: number) => {
+    const newH = Math.round((1920 * h) / w);
+    updateSettings({ width: 1920, height: newH });
+  };
+
+  const currentAspect = (projectW / projectH).toFixed(3);
+
   return (
     <div className="flex h-full flex-1 flex-col bg-base">
       {/* 音频混音：播放所有命中的音频片段（隐藏元素） */}
@@ -118,6 +147,30 @@ export function PreviewCanvas({
           isPlaying={isPlaying}
         />
       )}
+      {/* 比例选择器 */}
+      <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2">
+        <span className="text-xs text-fg-tertiary">画布比例</span>
+        {ASPECT_RATIOS.map((ar) => {
+          const arValue = (ar.w / ar.h).toFixed(3);
+          const active = arValue === currentAspect;
+          return (
+            <button
+              key={ar.label}
+              onClick={() => setAspectRatio(ar.w, ar.h)}
+              className={`rounded px-2 py-1 text-xs ${
+                active
+                  ? 'bg-accent text-white'
+                  : 'bg-surface text-fg-secondary hover:bg-elevated'
+              }`}
+            >
+              {ar.label}
+            </button>
+          );
+        })}
+        <span className="ml-auto text-xs tabular-nums text-fg-tertiary">
+          {projectW} × {projectH}
+        </span>
+      </div>
       <div className="flex flex-1 items-center justify-center p-8">
         <div
           ref={stageRef}
@@ -125,7 +178,7 @@ export function PreviewCanvas({
           className={`relative overflow-hidden rounded-lg border border-border-subtle bg-black ${
             isFullscreen ? 'flex h-full w-full cursor-pointer items-center justify-center' : ''
           }`}
-          style={isFullscreen ? undefined : { width: 640, height: 360 }}
+          style={isFullscreen ? undefined : { width: stageW, height: stageH }}
         >
           {/* 多层叠加：按图层顺序（底→顶）渲染每个命中片段，各自 transform/opacity */}
           {layers.map(({ clip, asset, track }, i) =>
