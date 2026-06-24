@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Asset, Clip, Timeline, Track, TrackKind } from '@reel/contracts';
+import type { Asset, Clip, TextClip, TextStyle, Timeline, Track, TrackKind } from '@reel/contracts';
 import { MIN_FRAMES, nextClipStart, others, resolveMove } from './collision';
 
 // 图片默认时长（秒）；落帧时乘 project fps。
@@ -34,7 +34,10 @@ function newTrack(kind: TrackKind): Track {
 
 /** 移除无片段的轨道（空轨自动消失） */
 function pruneEmptyTracks(tracks: Track[]): Track[] {
-  return tracks.filter((t) => t.clips.length > 0);
+  return tracks.filter((t) => {
+    if (t.kind === 'text') return (t.textClips?.length ?? 0) > 0;
+    return t.clips.length > 0;
+  });
 }
 
 /** 拖放落点：放到已有轨道某帧，或在某索引新建一轨 */
@@ -92,6 +95,16 @@ interface EditorState {
   duplicateClip: (clipId: string) => void;
   /** 更新项目设置（分辨率、fps 等）。入历史。 */
   updateSettings: (patch: Partial<Pick<Timeline['settings'], 'width' | 'height' | 'fps'>>) => void;
+  /** 添加文本片段到时间轴，放在画布中心，默认 5s。入历史。 */
+  addTextClip: (text: string) => void;
+  /** 更新文本片段属性（内容/样式/位置/时间）。不入历史（高频调用，结束时 commitHistory）。 */
+  updateTextClip: (id: string, patch: Partial<Omit<TextClip, 'id' | 'style'>> & { style?: Partial<TextClip['style']> }) => void;
+  /** 删除文本片段。入历史。 */
+  removeTextClip: (id: string) => void;
+  /** 把文本片段迁移到另一文本轨道，碰撞吸附到目标轨最近合法位置（或指定位置）。入历史。 */
+  relocateTextClip: (clipId: string, toTrackId: string, atFrame?: number) => void;
+  /** 把文本片段迁移到一条新建的文本轨道（放在末尾＝顶层）。入历史。 */
+  relocateTextClipToNewTrack: (clipId: string) => void;
   /** 把一个快照压入历史（拖拽结束时提交 pre-drag 快照） */
   commitHistory: (snapshot: Timeline) => void;
   undo: () => void;
@@ -230,8 +243,13 @@ export const useEditorStore = create<EditorState>((set) => ({
     set((state) => {
       if (!state.timeline) return state;
       const tracks = state.timeline.tracks
-        .map((t) => ({ ...t, clips: t.clips.filter((c) => c.id !== clipId) }))
-        .filter((t) => t.clips.length > 0); // 空轨道一并清理
+        .map((t) => {
+          if (t.kind === 'text' && t.textClips) {
+            return { ...t, textClips: t.textClips.filter((tc) => tc.id !== clipId) };
+          }
+          return { ...t, clips: t.clips.filter((c) => c.id !== clipId) };
+        })
+        .filter((t) => (t.kind === 'text' ? (t.textClips?.length ?? 0) > 0 : t.clips.length > 0)); // 空轨道清理
       return {
         ...pushPast(state),
         timeline: { ...state.timeline, tracks },
@@ -395,29 +413,52 @@ export const useEditorStore = create<EditorState>((set) => ({
       let didSplit = false;
 
       const tracks = state.timeline.tracks.map((t) => {
-        if (!t.clips.some((c) => c.id === clipId)) return t;
-        const clips: Clip[] = [];
-        for (const c of t.clips) {
-          // 分割点必须严格落在片段内部（两侧各留 ≥1 帧）。
-          if (c.id === clipId && frame > c.start && frame < c.start + c.durationInFrames) {
-            const leftDur = frame - c.start;
-            clips.push({ ...c, durationInFrames: leftDur });
-            clips.push({
-              ...c,
-              id: newId,
-              start: frame,
-              trimStart: c.trimStart + leftDur, // 右段从源的对应位置开始
-              durationInFrames: c.durationInFrames - leftDur,
-            });
-            didSplit = true;
-          } else {
-            clips.push(c);
+        // 处理 media clip
+        if (t.clips.some((c) => c.id === clipId)) {
+          const clips: Clip[] = [];
+          for (const c of t.clips) {
+            if (c.id === clipId && frame > c.start && frame < c.start + c.durationInFrames) {
+              const leftDur = frame - c.start;
+              clips.push({ ...c, durationInFrames: leftDur });
+              clips.push({
+                ...c,
+                id: newId,
+                start: frame,
+                trimStart: c.trimStart + leftDur,
+                durationInFrames: c.durationInFrames - leftDur,
+              });
+              didSplit = true;
+            } else {
+              clips.push(c);
+            }
           }
+          return { ...t, clips };
         }
-        return { ...t, clips };
+
+        // 处理 text clip
+        if (t.kind === 'text' && t.textClips?.some((tc) => tc.id === clipId)) {
+          const textClips: TextClip[] = [];
+          for (const tc of t.textClips!) {
+            if (tc.id === clipId && frame > tc.start && frame < tc.start + tc.durationInFrames) {
+              const leftDur = frame - tc.start;
+              textClips.push({ ...tc, durationInFrames: leftDur });
+              textClips.push({
+                ...tc,
+                id: newId,
+                start: frame,
+                durationInFrames: tc.durationInFrames - leftDur,
+              });
+              didSplit = true;
+            } else {
+              textClips.push(tc);
+            }
+          }
+          return { ...t, textClips };
+        }
+        return t;
       });
 
-      if (!didSplit) return state; // 播放头不在片段内，不动
+      if (!didSplit) return state;
       return {
         ...pushPast(state),
         timeline: { ...state.timeline, tracks },
@@ -428,27 +469,46 @@ export const useEditorStore = create<EditorState>((set) => ({
   duplicateClip: (clipId) =>
     set((state) => {
       if (!state.timeline) return state;
-      const track = findTrack(state.timeline.tracks, clipId);
-      const src = track?.clips.find((c) => c.id === clipId);
-      if (!track || !src) return state;
+      // 先找media clip
+      let track = findTrack(state.timeline.tracks, clipId);
+      let src = track?.clips.find((c) => c.id === clipId);
 
-      // 放到原片段右侧最近的空闲位置（碰撞吸附）。
-      const newId = uuid();
-      const start = resolveMove(
-        src.start + src.durationInFrames,
-        src.durationInFrames,
-        others(track.clips, clipId),
-      );
-      const dup: Clip = { ...src, id: newId, start };
+      if (track && src) {
+        // 复制 media clip
+        const newId = uuid();
+        const start = resolveMove(src.start + src.durationInFrames, src.durationInFrames, others(track.clips, clipId));
+        const dup: Clip = { ...src, id: newId, start };
+        const tracks = state.timeline.tracks.map((t) =>
+          t.id === track!.id ? { ...t, clips: [...t.clips, dup] } : t,
+        );
+        return {
+          ...pushPast(state),
+          timeline: { ...state.timeline, tracks },
+          selectedClipId: newId,
+        };
+      }
 
-      const tracks = state.timeline.tracks.map((t) =>
-        t.id === track.id ? { ...t, clips: [...t.clips, dup] } : t,
-      );
-      return {
-        ...pushPast(state),
-        timeline: { ...state.timeline, tracks },
-        selectedClipId: newId,
-      };
+      // 找 text clip
+      for (const t of state.timeline.tracks) {
+        if (t.kind === 'text' && t.textClips) {
+          const tc = t.textClips.find((tc) => tc.id === clipId);
+          if (tc) {
+            const newId = uuid();
+            const others = t.textClips.filter((c) => c.id !== clipId);
+            const start = resolveMove(tc.start + tc.durationInFrames, tc.durationInFrames, others);
+            const dup: TextClip = { ...tc, id: newId, start };
+            const tracks = state.timeline.tracks.map((tr) =>
+              tr.id === t.id ? { ...tr, textClips: [...(tr.textClips ?? []), dup] } : tr,
+            );
+            return {
+              ...pushPast(state),
+              timeline: { ...state.timeline, tracks },
+              selectedClipId: newId,
+            };
+          }
+        }
+      }
+      return state;
     }),
 
   updateSettings: (patch) =>
@@ -458,6 +518,177 @@ export const useEditorStore = create<EditorState>((set) => ({
         ...pushPast(state),
         timeline: { ...state.timeline, settings: { ...state.timeline.settings, ...patch } },
       };
+    }),
+
+  addTextClip: (text) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      const fps = state.timeline.settings.fps;
+      const newId = uuid();
+      const duration = fps * 5;
+      // 找第一个 text 轨道，没有就创建
+      let textTrack = state.timeline.tracks.find((t) => t.kind === 'text');
+      // 起始位置：追加到该轨末尾（避免覆盖已有文本）
+      const startFrame = textTrack
+        ? (textTrack.textClips ?? []).reduce((max, tc) => Math.max(max, tc.start + tc.durationInFrames), 0)
+        : 0;
+      const newText: TextClip = {
+        id: newId,
+        text,
+        start: startFrame,
+        durationInFrames: duration,
+        x: 0,
+        y: 0,
+        scale: 1,
+        rotation: 0,
+        opacity: 1,
+        style: {
+          fontFamily: 'Arial',
+          fontSize: 48,
+          color: '#FFFFFF',
+          align: 'center',
+          bold: false,
+          italic: false,
+          strokeColor: null,
+          strokeWidth: 2,
+          backgroundColor: null,
+        },
+      };
+      let tracks = state.timeline.tracks;
+      if (!textTrack) {
+        textTrack = {
+          id: uuid(),
+          kind: 'text',
+          muted: false,
+          hidden: false,
+          clips: [],
+          textClips: [],
+        };
+        tracks = [...tracks, textTrack];
+      }
+      tracks = tracks.map((t) =>
+        t.id === textTrack!.id ? { ...t, textClips: [...(t.textClips ?? []), newText] } : t,
+      );
+      return {
+        ...pushPast(state),
+        timeline: { ...state.timeline, tracks },
+        selectedClipId: newId,
+      };
+    }),
+
+  updateTextClip: (id, patch) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      const tracks = state.timeline.tracks.map((t) => {
+        if (t.kind !== 'text' || !t.textClips) return t;
+        const textClips = t.textClips.map((tc) =>
+          tc.id === id ? { ...tc, ...patch, style: patch.style ? { ...tc.style, ...patch.style } : tc.style } : tc,
+        );
+        return { ...t, textClips };
+      });
+      return { timeline: { ...state.timeline, tracks } };
+    }),
+
+  removeTextClip: (id) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      const tracks = state.timeline.tracks.map((t) => {
+        if (t.kind !== 'text' || !t.textClips) return t;
+        return { ...t, textClips: t.textClips.filter((tc) => tc.id !== id) };
+      });
+      return {
+        ...pushPast(state),
+        timeline: { ...state.timeline, tracks },
+        selectedClipId: state.selectedClipId === id ? null : state.selectedClipId,
+      };
+    }),
+
+  relocateTextClip: (clipId, toTrackId, atFrame) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      let sourceTrack: Track | undefined;
+      let textClip: TextClip | undefined;
+      for (const t of state.timeline.tracks) {
+        if (t.kind === 'text' && t.textClips) {
+          const tc = t.textClips.find((tc) => tc.id === clipId);
+          if (tc) {
+            sourceTrack = t;
+            textClip = tc;
+            break;
+          }
+        }
+      }
+      const targetTrack = state.timeline.tracks.find((t) => t.id === toTrackId);
+      if (!sourceTrack || !textClip || !targetTrack || sourceTrack.id === targetTrack.id) return state;
+      if (targetTrack.kind !== 'text') return state;
+
+      // 从源移除
+      const updatedSource = {
+        ...sourceTrack,
+        textClips: sourceTrack.textClips!.filter((tc) => tc.id !== clipId),
+      };
+      // 在目标里碰撞吸附
+      const desiredStart = atFrame ?? textClip.start;
+      const neighbors = targetTrack.textClips ?? [];
+      const safeStart = resolveMove(desiredStart, textClip.durationInFrames, neighbors);
+      const updatedClip = { ...textClip, start: safeStart };
+      const updatedTarget = {
+        ...targetTrack,
+        textClips: [...(targetTrack.textClips ?? []), updatedClip],
+      };
+
+      const tracks = state.timeline.tracks
+        .map((t) => {
+          if (t.id === sourceTrack!.id) return (updatedSource.textClips?.length ?? 0) > 0 ? updatedSource : null;
+          if (t.id === targetTrack!.id) return updatedTarget;
+          return t;
+        })
+        .filter((t): t is Track => t !== null);
+
+      return { ...pushPast(state), timeline: { ...state.timeline, tracks } };
+    }),
+
+  relocateTextClipToNewTrack: (clipId) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      let sourceTrack: Track | undefined;
+      let textClip: TextClip | undefined;
+      for (const t of state.timeline.tracks) {
+        if (t.kind === 'text' && t.textClips) {
+          const tc = t.textClips.find((tc) => tc.id === clipId);
+          if (tc) {
+            sourceTrack = t;
+            textClip = tc;
+            break;
+          }
+        }
+      }
+      if (!sourceTrack || !textClip) return state;
+
+      const updatedSource = {
+        ...sourceTrack,
+        textClips: sourceTrack.textClips!.filter((tc) => tc.id !== clipId),
+      };
+      // 新文本轨道：放在末尾（顶层），片段从 0 开始
+      const newTrack: Track = {
+        id: crypto.randomUUID(),
+        kind: 'text',
+        muted: false,
+        hidden: false,
+        clips: [],
+        textClips: [{ ...textClip, start: 0 }],
+      };
+      const tracks = [
+        ...state.timeline.tracks
+          .map((t) => {
+            if (t.id === sourceTrack!.id) return (updatedSource.textClips?.length ?? 0) > 0 ? updatedSource : null;
+            return t;
+          })
+          .filter((t): t is Track => t !== null),
+        newTrack,
+      ];
+
+      return { ...pushPast(state), timeline: { ...state.timeline, tracks } };
     }),
 
   commitHistory: (snapshot) =>

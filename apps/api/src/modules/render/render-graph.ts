@@ -1,4 +1,4 @@
-import type { Clip, Timeline, Track } from '@reel/contracts';
+import type { Clip, TextClip, Timeline, Track } from '@reel/contracts';
 import type { Asset } from '@reel/contracts';
 
 /** 渲染用素材：在对外 Asset 上补 localPath（本机文件路径，worker 喂 FFmpeg）。 */
@@ -145,7 +145,45 @@ export function buildGraph(timeline: Timeline, assetById: Map<string, RenderAsse
     );
     last = out;
   });
-  const videoOut = visuals.length > 0 ? 'vout' : 'base';
+  let videoOut = visuals.length > 0 ? 'vout' : 'base';
+
+  // 文本叠加：drawtext 滤镜（每个 textClip 一个 drawtext，链式叠加）。
+  const textClips = timeline.tracks
+    .filter((t) => t.kind === 'text')
+    .flatMap((t) => t.textClips ?? []);
+  textClips.forEach((tc, i) => {
+    const { text, start, durationInFrames, x, y, scale, opacity, style } = tc;
+    const startSec = start / fps;
+    const endSec = (start + durationInFrames) / fps;
+    const fontSize = Math.round(style.fontSize * scale);
+    // 位置：x/y 是相对画面中心偏移（项目像素），drawtext 的 x/y 是绝对左上角坐标。
+    // 中心对齐：x='(w-text_w)/2 + offset', y='(h-text_h)/2 + offset'
+    const drawX = `(w-text_w)/2+${f(x)}`;
+    const drawY = `(h-text_h)/2+${f(y)}`;
+    // 转义：FFmpeg drawtext text 参数需转义特殊字符（: = ' \ 等）。
+    const escapedText = text.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
+    const parts: string[] = [
+      `text='${escapedText}'`,
+      `fontsize=${fontSize}`,
+      `fontcolor=${style.color.replace('#', '0x')}@${f(opacity)}`, // RGBA: 0xRRGGBB@alpha
+      `x='${drawX}'`,
+      `y='${drawY}'`,
+      `enable='between(t,${f(startSec)},${f(endSec)})'`,
+    ];
+    if (style.bold) parts.push(`font='Arial Bold'`);
+    if (style.strokeColor) {
+      parts.push(`borderw=${style.strokeWidth}`);
+      parts.push(`bordercolor=${style.strokeColor.replace('#', '0x')}`);
+    }
+    if (style.backgroundColor) {
+      parts.push(`box=1`);
+      parts.push(`boxcolor=${style.backgroundColor.replace('#', '0x')}@1`);
+      parts.push(`boxborderw=5`);
+    }
+    const out = i === textClips.length - 1 ? 'vfinal' : `txt${i}`;
+    filters.push(`[${videoOut}]drawtext=${parts.join(':')}[${out}]`);
+    videoOut = out;
+  });
 
   // 音频：atrim→变速(atempo)→volume→adelay 到 start，再 amix。
   const aLabels: string[] = [];

@@ -77,7 +77,11 @@ export function EditorPage() {
     if (!timeline) return PREVIEW_FPS * 30;
     let max = PREVIEW_FPS * 5;
     for (const t of timeline.tracks) {
+      // 包含媒体片段和文本片段的末尾
       for (const c of t.clips) max = Math.max(max, c.start + c.durationInFrames);
+      if (t.kind === 'text' && t.textClips) {
+        for (const tc of t.textClips) max = Math.max(max, tc.start + tc.durationInFrames);
+      }
     }
     return max;
   })();

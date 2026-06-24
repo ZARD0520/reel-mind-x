@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Maximize, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
-import type { Asset, Clip, Timeline, Track } from '@reel/contracts';
+import type { Asset, Clip, TextClip, Timeline, Track } from '@reel/contracts';
 import { useAssets } from '../hooks';
 import { useEditorStore } from '../store';
 import { TransformBox } from './TransformBox';
 import { AudioMixer } from './AudioMixer';
 import { VideoLayer } from './VideoLayer';
+import { TextLayer } from './TextLayer';
 
 // 预览舞台最大尺寸（容器）；实际画布按项目比例 object-contain。
 const MAX_PREVIEW_W = 640;
@@ -55,6 +56,71 @@ function findActiveLayers(
     }
   }
   return layers;
+}
+
+/** 文本拖拽框：简化版 TransformBox，只做 move（不做 scale）。拖动改 textClip.x/y。 */
+function TextDragBox({
+  textClip,
+  displayScale,
+  baseWidth,
+  baseHeight,
+  baseLeft,
+  baseTop,
+}: {
+  textClip: TextClip;
+  displayScale: number;
+  baseWidth: number;
+  baseHeight: number;
+  baseLeft: number;
+  baseTop: number;
+}) {
+  const updateTextClip = useEditorStore((s) => s.updateTextClip);
+  const commitHistory = useEditorStore((s) => s.commitHistory);
+  const drag = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+  const snapshot = useRef<ReturnType<typeof useEditorStore.getState>['timeline']>(null);
+  const moved = useRef(false);
+
+  // 文本在舞台上的中心位置（显示空间）
+  const cx = baseLeft + baseWidth / 2 + textClip.x * displayScale;
+  const cy = baseTop + baseHeight / 2 + textClip.y * displayScale;
+  // 拖拽框尺寸（文本大概区域，用于视觉指示）— 简化为固定 200x100
+  const boxW = 200;
+  const boxH = 100;
+  const left = cx - boxW / 2;
+  const top = cy - boxH / 2;
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    snapshot.current = useEditorStore.getState().timeline;
+    moved.current = false;
+    drag.current = { startX: e.clientX, startY: e.clientY, origX: textClip.x, origY: textClip.y };
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d) return;
+    moved.current = true;
+    const dx = (e.clientX - d.startX) / displayScale;
+    const dy = (e.clientY - d.startY) / displayScale;
+    updateTextClip(textClip.id, { x: d.origX + dx, y: d.origY + dy });
+  };
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    if (moved.current && snapshot.current) commitHistory(snapshot.current);
+    drag.current = null;
+    (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+  };
+
+  return (
+    <div
+      className="absolute cursor-move border-2 border-dashed border-indigo-400 bg-indigo-500/10"
+      style={{ left, top, width: boxW, height: boxH }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    />
+  );
 }
 
 interface PreviewCanvasProps {
@@ -107,6 +173,21 @@ export function PreviewCanvas({
 
   // 选中片段若在当前可见层里，显示交互变换框（非全屏）。
   const selectedLayer = layers.find((l) => l.clip.id === selectedClipId);
+
+  // 选中文本片段若当前帧可见，显示拖拽框（非全屏）。
+  const selectedText = (() => {
+    if (!timeline || !selectedClipId) return null;
+    const f = Math.floor(currentFrame);
+    for (const track of timeline.tracks) {
+      if (track.kind === 'text' && track.textClips) {
+        const tc = track.textClips.find(
+          (tc) => tc.id === selectedClipId && f >= tc.start && f < tc.start + tc.durationInFrames,
+        );
+        if (tc) return tc;
+      }
+    }
+    return null;
+  })();
 
   /** 单层的 CSS transform（位移 + 缩放 + 旋转，围绕内容中心）。 */
   const layerTransform = (clip: Clip): string =>
@@ -215,10 +296,40 @@ export function PreviewCanvas({
               </div>
             ),
           )}
+          {/* 文本图层：当前帧命中的文本片段，叠加在视频之上 */}
+          {timeline?.tracks
+            .filter((t) => t.kind === 'text')
+            .flatMap((t) => t.textClips ?? [])
+            .filter((tc) => {
+              const f = Math.floor(currentFrame);
+              return f >= tc.start && f < tc.start + tc.durationInFrames;
+            })
+            .map((tc) => (
+              <TextLayer
+                key={tc.id}
+                textClip={tc}
+                displayScale={displayScale}
+                baseLeft={baseLeft}
+                baseTop={baseTop}
+                baseWidth={baseWidth}
+                baseHeight={baseHeight}
+              />
+            ))}
           {/* 交互式变换框（选中片段在可见层里、非全屏时） */}
           {selectedLayer && !isFullscreen && (
             <TransformBox
               clip={selectedLayer.clip}
+              displayScale={displayScale}
+              baseWidth={baseWidth}
+              baseHeight={baseHeight}
+              baseLeft={baseLeft}
+              baseTop={baseTop}
+            />
+          )}
+          {/* 文本拖拽框（选中文本片段且当前帧可见、非全屏时） */}
+          {selectedText && !isFullscreen && (
+            <TextDragBox
+              textClip={selectedText}
               displayScale={displayScale}
               baseWidth={baseWidth}
               baseHeight={baseHeight}
@@ -237,7 +348,7 @@ export function PreviewCanvas({
       </div>
 
       <div className="flex h-13 items-center justify-between border-t border-border-subtle bg-surface px-5 py-3">
-        <span className="text-[13px] text-fg-secondary">{timecode}</span>
+        <span className="text-[13px] tabular-nums text-fg-secondary">{timecode} / {totalTimecode}</span>
         <div className="flex items-center gap-[18px]">
           <button
             type="button"
@@ -261,16 +372,13 @@ export function PreviewCanvas({
             <SkipForward className="h-[18px] w-[18px]" />
           </button>
         </div>
-        <div className="flex items-center gap-3.5">
-          <span className="text-[13px] text-fg-tertiary">{totalTimecode}</span>
-          <button
-            type="button"
-            onClick={toggleFullscreen}
-            className="text-fg-secondary hover:text-fg"
-          >
-            <Maximize className="h-[17px] w-[17px]" />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className="text-fg-secondary hover:text-fg"
+        >
+          <Maximize className="h-[17px] w-[17px]" />
+        </button>
       </div>
     </div>
   );

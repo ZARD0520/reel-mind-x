@@ -418,3 +418,114 @@
   - 当前比例高亮（蓝色按钮）。
   - 右侧显示当前分辨率（如 `1920 × 1080`）。
 - **状态**：✅ typecheck + build 通过。
+
+### D42. 文本功能（第一阶段：schema + 预览 + 添加）2026-06-22
+**数据模型**：独立 `TextClip` 数组（不放 Track 里），挂在 Timeline 根，作为最顶层叠加。
+- **TextClip schema**：id/text/start/durationInFrames/x/y/scale/rotation/opacity + style（字体/大小/颜色/对齐/加粗/斜体/描边/背景）。
+- **Timeline.textClips**：数组，按 start/duration 显示，z-index 最高。
+
+**Store actions**：
+- `addTextClip(text)`：添加文本片段到时间轴，默认 5s/画布中心/白色 48px Arial。
+- `updateTextClip(id, patch)`：更新文本属性（内容/样式/位置/时间），高频不入历史。
+- `removeTextClip(id)`：删除文本片段。
+
+**预览渲染**（PreviewCanvas + TextLayer）：
+- 当前帧命中的文本片段用 DOM 渲染（flexbox 居中 + x/y偏移 + scale/rotate/opacity）。
+- 样式：fontFamily/fontSize/color/align/bold/italic + strokeColor/strokeWidth（描边）+ backgroundColor（背景）。
+- 定位：容器填满画面区，flex 居中，再按 x/y 偏移（像素，相对画面中心）。
+
+**添加文本按钮**（LeftPanel 文本 tab）：
+- "添加文本"按钮，点击调 `addTextClip('双击编辑文本')`，文本出现在预览区。
+
+**剩余工作（待续）**：
+1. **时间轴文本轨道**：Timeline 需显示文本片段（TextClipBlock），支持拖拽/trim（复用 ClipBlock 逻辑）。
+2. **属性面板编辑**：PropertiesPanel 检测选中 textClip，显示文本输入框 + 字体/大小/颜色选择器。
+3. **Transform 编辑**：预览区拖拽/缩放文本（TransformBox 扩展支持 textClip）。
+4. **导出 FFmpeg drawtext**：worker render 时根据 textClips 生成 drawtext 滤镜命令，需处理中文字体（embed font file）。
+
+**状态**：✅ schema + store + 预览渲染 + 添加按钮 done；build 通过。可添加文本并在预览区看到，但**不能拖拽/编辑/导出**（续做）。
+
+### D43. 文本功能（第二阶段：时间轴 + 编辑 + 导出）2026-06-22
+**时间轴文本块**（Timeline + TextClipBlock）：
+- 新增 TextClipBlock 组件（inline in Timeline.tsx）：简化版 ClipBlock，只支持 move（无 trim）。
+- 文本轨道行：独立行（不归属任何 track），置顶显示所有 textClips，左侧图标 Type（紫色），右侧渲染文本块（紫色背景）。
+- 拖拽：实时移动 + 磁吸（吸播放头/0点，阈值 8px），与 ClipBlock 一致。
+- 复用全局 drag 状态 + snapLine 渲染。
+
+**属性面板编辑**（PropertiesPanel + TextPanel）：
+- `useSelectedTextClip` 检测选中文本片段，显示 TextPanel（替代 media clip 面板）。
+- 文本内容 textarea（3行），字号滑块（12-200px），颜色选择器。
+- 样式：加粗/斜体按钮，对齐（左/中/右）按钮组。
+- 描边：checkbox 开关 + 颜色选择器（strokeColor）。
+- 不透明度滑块（0-1）。
+- `updateTextClip` 类型改为支持 partial style deep merge。
+
+**导出 FFmpeg drawtext**（render-graph.ts）：
+- 视觉层合成完（videoOut）后，遍历 timeline.textClips，逐个叠加 drawtext 滤镜。
+- drawtext 参数：text（转义 : = ' \）、fontsize、fontcolor（0xRRGGBB@alpha）、x/y（画面中心+偏移）、enable（时间窗口）。
+- 支持：加粗（font='Arial Bold'）、描边（borderw/bordercolor）、背景（box/boxcolor/boxborderw）。
+- **中文字体限制**：当前用系统默认字体（Arial），中文可能显示方块或 fallback。完整中文支持需嵌入字体文件（大坑，后续优化）。
+
+**状态**：✅ 时间轴拖拽文本 + 属性编辑（内容/样式）+ 导出（drawtext 基础）全 done；API + Web build 通过。英文/数字可正常导出，中文待字体优化。
+
+**未完成（可选优化）**：
+- 预览区拖拽文本调位置（TransformBox 扩展支持 textClip）— 可用时间轴调时间 + 属性面板改内容，够用。
+- 中文字体嵌入（需 font file + fontfile 参数）— 影响导出中文显示。
+
+### D44. 预览区拖拽文本位置（2026-06-22）
+**需求**：选中文本片段时，预览区显示拖拽框，拖动调文本位置（x/y）。
+
+**实现**（PreviewCanvas + TextDragBox）：
+- `TextDragBox` 组件（inline）：简化版 TransformBox，只做 move（不做 scale/rotate）。
+- 选中文本片段 + 当前帧可见 → 显示紫色虚线拖拽框（200x100 固定尺寸，居中在文本位置）。
+- 拖动：实时更新 `textClip.x/y`（项目像素，相对画面中心），提交历史。
+- 拖拽框居中跟随：`cx = baseLeft + baseWidth/2 + x*displayScale`，与 TextLayer 定位一致。
+- 显示"拖动调位置"提示文字（半透明白色，框内居中）。
+
+**与 TransformBox 区别**：
+- TransformBox：操作 `clip.transform.x/y/scale/rotation`，调 `updateClipTransform`。
+- TextDragBox：操作 `textClip.x/y`（平级字段），调 `updateTextClip`。
+
+**状态**：✅ typecheck + build 通过。选中文本时预览区显示拖拽框，可拖动调位置（实时预览 + 历史可撤销）。
+
+**文本功能现已完整**：添加 → 拖拽时间 → 编辑内容/样式 → 预览拖拽位置 → 导出（英文完美，中文待字体优化）。
+
+### D45. 文本片段选中 bug 修复（2026-06-22）
+**问题**：点击视频片段后再点文本片段，选中闪一下就消失（无法选中文本）。
+
+**根因**：事件冒泡导致选中被清空。
+- 点击流程：`pointerDown → pointerUp → click`
+- TextClipBlock 的 `onPointerDown` 有 `e.stopPropagation()`，阻止了 pointerDown 冒泡 → `onSelect(textClip.id)` 成功选中 ✅
+- 但 **click 事件没阻止冒泡** → 冒泡到文本轨道的 lane div → 触发 `handleLaneClick` → `onSelectClip(null)` 清空选中 ❌
+- 结果：选中瞬间又被清空，视觉上"闪一下"。
+
+**修复**：
+1. TextClipBlock 的 div 加 `onClick={(e) => e.stopPropagation()}`，阻止 click 冒泡。
+2. `onPointerUp` 改为总是调 `onDragEnd()`（即使未移动），清理 ghost 状态，与 ClipBlock 一致。
+
+**状态**：✅ typecheck + build 通过。文本片段现在可以正常选中，不再闪消失。
+
+### D46. 文本块交互增强（磁吸/trim/鼠标样式）2026-06-22
+**改进点**：
+1. **删除预览区拖拽提示**（TextDragBox）— 空白虚线框，无提示文字。
+2. **磁吸增强** — 文本块移动/trim 时吸附所有轨道片段边缘：
+   - 收集所有视频/音频轨道的 clip.start + clip.end
+   - 收集其他文本片段的 start + end
+   - 播放头 + 0 点
+   - 统一 8px 阈值（屏幕距离）
+3. **鼠标样式统一** — 文本块鼠标样式与视频块一致：
+   - 主体区域：`cursor-grab`（抓手）
+   - 左右边缘热区（2px 宽）：`cursor-ew-resize`（双向箭头）
+4. **Trim 支持** — 文本块可拖动左右边缘调时长：
+   - **trim-left**：左边缘右拉减少时长（增加 start），左拉增加时长（减少 start）
+   - **trim-right**：右边缘右拉增加时长，左拉减少时长
+   - 最小时长 MIN_FRAMES（30 帧 = 1 秒@30fps）
+   - trim 时也磁吸（边缘靠近目标就吸附 + 黄线）
+
+**实现**：
+- TextClipBlock 完整重写，支持 3 种 DragType（move/trim-left/trim-right）
+- `collectSnapTargets()` 遍历所有轨道 + 所有文本片段，收集边缘
+- 左右两个绝对定位的 trim handle（2px 宽，z-index:10，hover 半透明白色高亮）
+- onPointerMove 分支处理 move/trim-left/trim-right，逻辑与 ClipBlock 对齐
+
+**状态**：✅ typecheck + build 通过。文本块现在交互与视频块一致（拖动 + trim + 磁吸全功能）。

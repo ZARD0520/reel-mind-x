@@ -96,9 +96,51 @@ export const ClipSchema = z.object({
 });
 export type Clip = z.infer<typeof ClipSchema>;
 
+// ───────────────────────── 文本片段 TextClip ─────────────────────────
+
+/** 文本样式（预览与导出保持一致） */
+export const TextStyleSchema = z.object({
+  fontFamily: z.string().default('Arial'),
+  fontSize: z.number().int().positive().default(48),
+  color: z.string().default('#FFFFFF'), // hex color
+  /** 文本对齐：left|center|right */
+  align: z.enum(['left', 'center', 'right']).default('center'),
+  /** 是否加粗 */
+  bold: z.boolean().default(false),
+  /** 是否斜体 */
+  italic: z.boolean().default(false),
+  /** 描边颜色（null=无描边） */
+  strokeColor: z.string().nullable().default(null),
+  /** 描边宽度（px） */
+  strokeWidth: z.number().int().nonnegative().default(2),
+  /** 背景颜色（null=透明） */
+  backgroundColor: z.string().nullable().default(null),
+});
+export type TextStyle = z.infer<typeof TextStyleSchema>;
+
+/** 文本片段：独立于 Clip，直接挂在 Timeline 根 */
+export const TextClipSchema = z.object({
+  id: z.string().uuid(),
+  /** 文本内容（支持多行，\n分隔） */
+  text: z.string().min(1).max(2000),
+  start: z.number().int().nonnegative(),
+  durationInFrames: z.number().int().positive(),
+  /** 位置：相对画面中心偏移（像素，基于项目分辨率） */
+  x: z.number().default(0),
+  y: z.number().default(0),
+  /** 缩放比例（相对默认尺寸） */
+  scale: z.number().positive().default(1),
+  /** 旋转角度（度） */
+  rotation: z.number().default(0),
+  /** 不透明度 0..1 */
+  opacity: z.number().min(0).max(1).default(1),
+  style: TextStyleSchema.default({}),
+});
+export type TextClip = z.infer<typeof TextClipSchema>;
+
 // ───────────────────────── 轨道 Track ─────────────────────────
 
-export const TrackKindSchema = z.enum(['video', 'audio']);
+export const TrackKindSchema = z.enum(['video', 'audio', 'text']);
 export type TrackKind = z.infer<typeof TrackKindSchema>;
 
 /** 轨道：clips 按 start 排布；tracks 数组顺序即图层顺序（越后越上层） */
@@ -109,6 +151,8 @@ export const TrackSchema = z.object({
   /** 隐藏轨道：预览跳过该视频轨（顶层优先时可隐藏顶层看下层），不影响导出 */
   hidden: z.boolean().default(false),
   clips: z.array(ClipSchema).default([]),
+  /** 文本轨道（kind='text' 时用此字段，video/audio 轨道忽略） */
+  textClips: z.array(TextClipSchema).optional(),
 });
 export type Track = z.infer<typeof TrackSchema>;
 

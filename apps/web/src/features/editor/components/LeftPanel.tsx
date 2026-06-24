@@ -13,6 +13,28 @@ const TABS: { key: string; label: string; icon: LucideIcon }[] = [
   { key: 'effect', label: '特效', icon: Sparkles },
 ];
 
+// AI 生成分区占位：媒体/音频/文本各复用一份，功能开发中。
+function AiGenSection({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <h2 className="flex items-center gap-1.5 text-[13px] font-semibold">
+        <Sparkles className="h-[15px] w-[15px] text-accent" />
+        AI 生成
+      </h2>
+      <button
+        type="button"
+        disabled
+        title="即将上线"
+        className="flex h-20 flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-border-subtle bg-input/50 text-fg-tertiary"
+      >
+        <Sparkles className="h-[22px] w-[22px] text-accent/70" />
+        <span className="text-[12px] font-medium">{label}</span>
+        <span className="text-[10px]">敬请期待</span>
+      </button>
+    </div>
+  );
+}
+
 // 素材时长按探测时的参考 fps=30 折算成 mm:ss（见后端 media-probe REFERENCE_FPS）。
 const ASSET_FPS = 30;
 function formatAssetDuration(frames: number): string {
@@ -127,7 +149,24 @@ export function LeftPanel() {
       </nav>
 
       <div className="flex w-[300px] flex-col gap-4 p-4">
-        {!showImport ? (
+        {active === 'text' ? (
+          // 文本 tab：AI 生成 + 添加文本
+          <div className="flex flex-col gap-4">
+            <AiGenSection label="AI 生成文案" />
+            <h2 className="text-[13px] font-semibold">本地文本</h2>
+            <button
+              type="button"
+              onClick={() => useEditorStore.getState().addTextClip('双击编辑文本')}
+              className="flex h-24 flex-col items-center justify-center gap-2 rounded-[10px] border border-border-subtle bg-input hover:border-accent"
+            >
+              <Plus className="h-[26px] w-[26px] text-accent" />
+              <span className="text-[13px] font-medium text-fg-secondary">添加文本</span>
+            </button>
+            <div className="flex-1 text-center text-[13px] text-fg-tertiary">
+              点击添加文本到时间轴，然后拖拽调整位置和持续时间。
+            </div>
+          </div>
+        ) : !showImport ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
             <span className="text-[15px] font-medium text-fg-secondary">敬请期待</span>
             <span className="text-[13px] text-fg-tertiary">
@@ -143,6 +182,9 @@ export function LeftPanel() {
               className="hidden"
               onChange={onPick}
             />
+            <AiGenSection label={isAudioTab ? 'AI 生成音频' : 'AI 生成图片/视频'} />
+
+            <h2 className="text-[13px] font-semibold">{isAudioTab ? '本地音频' : '本地素材'}</h2>
             <button
               type="button"
               onClick={() => fileInput.current?.click()}
@@ -158,8 +200,6 @@ export function LeftPanel() {
                 {upload.isPending ? '上传中…' : isAudioTab ? '导入音频' : '导入素材'}
               </span>
             </button>
-
-            <h2 className="text-[13px] font-semibold">{isAudioTab ? '本地音频' : '本地素材'}</h2>
             {visibleAssets.length === 0 ? (
               <p className="text-[13px] text-fg-tertiary">
                 还没有{isAudioTab ? '音频' : '素材'}，点上方导入

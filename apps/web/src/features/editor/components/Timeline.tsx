@@ -10,13 +10,14 @@ import {
   Magnet,
   Scissors,
   Trash2,
+  Type,
   Volume2,
   VolumeX,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { Asset, Clip, Timeline as TimelineState, Track } from '@reel/contracts';
+import type { Asset, Clip, TextClip, Timeline as TimelineState, Track } from '@reel/contracts';
 import {
   DEFAULT_ZOOM,
   framesToPx,
@@ -61,7 +62,7 @@ interface GlobalDragState {
   type: DragType;
   clipId: string;
   trackId: string;
-  trackKind: 'video' | 'audio';
+  trackKind: 'video' | 'audio' | 'text';
   startX: number;
   startY: number;
   origStart: number;
@@ -352,6 +353,252 @@ function ClipBlock({
   );
 }
 
+// ─── TextClipBlock（文本片段块，支持移动 + trim 调时长） ───────────────────────
+
+interface TextClipBlockProps {
+  textClip: TextClip;
+  trackId: string;
+  trackTextClips: TextClip[];
+  fps: number;
+  pxPerSecond: number;
+  selected: boolean;
+  currentFrame: number;
+  snapEnabled: boolean;
+  onSelect: () => void;
+  onDragStart: (drag: GlobalDragState) => void;
+  onDragMove: (update: Partial<Pick<GlobalDragState, 'ghostStart' | 'candidateTrackId' | 'snapLineFrame'>>) => void;
+  onDragEnd: () => void;
+}
+
+function TextClipBlock({
+  textClip,
+  trackId,
+  trackTextClips,
+  fps,
+  pxPerSecond,
+  selected,
+  currentFrame,
+  snapEnabled,
+  onSelect,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+}: TextClipBlockProps) {
+  const updateTextClip = useEditorStore((s) => s.updateTextClip);
+  const commitHistory = useEditorStore((s) => s.commitHistory);
+  const drag = useRef<GlobalDragState | null>(null);
+
+  const w = Math.max(20, framesToPx(textClip.durationInFrames, fps, pxPerSecond));
+  const left = framesToPx(textClip.start, fps, pxPerSecond);
+  const active = currentFrame >= textClip.start && currentFrame < textClip.start + textClip.durationInFrames;
+
+  // 收集磁吸目标：播放头 + 所有轨道所有片段的 start/end + 0 点
+  const collectSnapTargets = (forTrackId: string): number[] => {
+    const targets = [currentFrame, 0];
+    const tl = useEditorStore.getState().timeline;
+    if (!tl) return targets;
+    const tk = tl.tracks.find((t) => t.id === forTrackId);
+    if (tk?.kind === 'text' && tk.textClips) {
+      for (const tc of tk.textClips) {
+        if (tc.id !== textClip.id) {
+          targets.push(tc.start, tc.start + tc.durationInFrames);
+        }
+      }
+    }
+    return targets;
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>, type: 'move' | 'trim-left' | 'trim-right') => {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const snapshot = useEditorStore.getState().timeline;
+    if (!snapshot) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const d: GlobalDragState = {
+      type,
+      clipId: textClip.id,
+      trackId,
+      trackKind: 'text',
+      startX: e.clientX,
+      startY: e.clientY,
+      origStart: textClip.start,
+      origDuration: textClip.durationInFrames,
+      origTrimStart: 0,
+      snapshot,
+      moved: false,
+      candidateTrackId: trackId,
+      ghostStart: textClip.start,
+      pointerOffsetPx: e.clientX - rect.left,
+      snapLineFrame: null,
+      color: '#6366F1',
+      assetName: textClip.text.substring(0, 20),
+      assetKind: 'image',
+    };
+    drag.current = d;
+    onSelect();
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return;
+    const { type, startX, origStart, origDuration } = drag.current;
+    const dFrames = pxToFrames(e.clientX - startX, fps, pxPerSecond);
+    const wasMoved = drag.current.moved;
+    if (dFrames !== 0) drag.current.moved = true;
+
+    const snapPxToFrames = pxToFrames(8, fps, pxPerSecond);
+
+    if (type === 'move') {
+      // 检测指针命中哪个文本轨道（跨轨迁移）
+      const lanes = document.querySelectorAll<HTMLDivElement>('[data-track-id]');
+      let targetTrackId = trackId;
+      for (const lane of lanes) {
+        const rect = lane.getBoundingClientRect();
+        if (e.clientX >= rect.left && e.clientX < rect.right && e.clientY >= rect.top && e.clientY < rect.bottom) {
+          const tkind = lane.getAttribute('data-track-kind');
+          if (tkind === 'text') targetTrackId = lane.getAttribute('data-track-id') ?? trackId;
+          break;
+        }
+      }
+      drag.current.candidateTrackId = targetTrackId;
+
+      const raw = Math.max(0, origStart + dFrames);
+      let snappedStart = raw;
+      let snapLine: number | null = null;
+
+      if (snapEnabled) {
+        const targets = collectSnapTargets(targetTrackId);
+        let best = snapPxToFrames + 1;
+        for (const t of targets) {
+          const dL = Math.abs(raw - t);
+          if (dL < best) { best = dL; snappedStart = t; snapLine = t; }
+          const dR = Math.abs(raw + origDuration - t);
+          if (dR < best) { best = dR; snappedStart = Math.max(0, t - origDuration); snapLine = t; }
+        }
+        if (best > snapPxToFrames) snapLine = null;
+      }
+
+      drag.current.ghostStart = snappedStart;
+      drag.current.snapLineFrame = snapLine;
+
+      // 同轨：实时移动真实片段（碰撞检测避免重叠）
+      if (targetTrackId === trackId) {
+        if (!wasMoved && drag.current.moved) onDragStart(drag.current);
+        const neighbors = trackTextClips.filter((tc) => tc.id !== textClip.id);
+        const safeStart = resolveMove(snappedStart, origDuration, neighbors);
+        updateTextClip(textClip.id, { start: safeStart });
+        onDragMove({ ghostStart: safeStart, candidateTrackId: targetTrackId, snapLineFrame: snapLine });
+      } else {
+        // 跨轨：真实片段回原位，ghost 预览
+        if (!wasMoved && drag.current.moved) onDragStart(drag.current);
+        updateTextClip(textClip.id, { start: origStart });
+        onDragMove({ ghostStart: snappedStart, candidateTrackId: targetTrackId, snapLineFrame: snapLine });
+      }
+    } else if (type === 'trim-right') {
+      // trim-right：右边缘右拉增加时长，左拉减少时长（最小 MIN_FRAMES）
+      let newDuration = Math.max(MIN_FRAMES, origDuration + dFrames);
+      let snapLine: number | null = null;
+
+      if (snapEnabled) {
+        const targets = collectSnapTargets(trackId);
+        const rightEdge = textClip.start + newDuration;
+        for (const t of targets) {
+          if (Math.abs(rightEdge - t) <= snapPxToFrames) {
+            newDuration = Math.max(MIN_FRAMES, t - textClip.start);
+            snapLine = t;
+            break;
+          }
+        }
+      }
+
+      drag.current.snapLineFrame = snapLine;
+      if (!wasMoved && drag.current.moved) onDragStart(drag.current);
+      onDragMove({ ghostStart: textClip.start, candidateTrackId: trackId, snapLineFrame: snapLine });
+      updateTextClip(textClip.id, { durationInFrames: newDuration });
+    } else {
+      // trim-left：左边缘右拉减少时长（增加 start），左拉增加时长（减少 start）
+      const newStart = Math.max(0, origStart + dFrames);
+      let newDuration = Math.max(MIN_FRAMES, origDuration - dFrames);
+      let snapLine: number | null = null;
+
+      if (snapEnabled) {
+        const targets = collectSnapTargets(trackId);
+        for (const t of targets) {
+          if (Math.abs(newStart - t) <= snapPxToFrames) {
+            const clampedStart = t;
+            newDuration = Math.max(MIN_FRAMES, origStart + origDuration - clampedStart);
+            updateTextClip(textClip.id, { start: clampedStart, durationInFrames: newDuration });
+            snapLine = t;
+            drag.current.snapLineFrame = snapLine;
+            if (!wasMoved && drag.current.moved) onDragStart(drag.current);
+            onDragMove({ ghostStart: clampedStart, candidateTrackId: trackId, snapLineFrame: snapLine });
+            return;
+          }
+        }
+      }
+
+      drag.current.snapLineFrame = snapLine;
+      if (!wasMoved && drag.current.moved) onDragStart(drag.current);
+      onDragMove({ ghostStart: newStart, candidateTrackId: trackId, snapLineFrame: snapLine });
+      updateTextClip(textClip.id, { start: newStart, durationInFrames: newDuration });
+    }
+  };
+
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (drag.current) {
+      const { moved, candidateTrackId } = drag.current;
+      if (moved) {
+        if (candidateTrackId && candidateTrackId !== trackId) {
+          // 跨轨：迁移到目标轨
+          onDragEnd();
+        } else {
+          // 同轨：已实时移动，提交历史即可
+          commitHistory(drag.current.snapshot);
+          onDragEnd();
+        }
+      } else {
+        onDragEnd();
+      }
+    }
+    drag.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  return (
+    <div
+      className={`absolute flex cursor-grab items-center overflow-hidden rounded border px-2 ${
+        selected
+          ? 'border-accent bg-indigo-500/90 shadow-md'
+          : active
+            ? 'border-indigo-400 bg-indigo-500/80'
+            : 'border-indigo-600 bg-indigo-500/70'
+      }`}
+      style={{ left, width: w, height: VIDEO_TRACK_H - 4 }}
+      onPointerDown={(e) => onPointerDown(e, 'move')}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* 左边缘 trim 热区 */}
+      <div
+        className="absolute left-0 top-0 z-10 h-full w-2 cursor-ew-resize hover:bg-white/15"
+        onPointerDown={(e) => onPointerDown(e, 'trim-left')}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onClick={(e) => e.stopPropagation()}
+      />
+      <span className="truncate text-xs font-medium text-white">{textClip.text}</span>
+      {/* 右边缘 trim 热区 */}
+      <div
+        className="absolute right-0 top-0 z-10 h-full w-2 cursor-ew-resize hover:bg-white/15"
+        onPointerDown={(e) => onPointerDown(e, 'trim-right')}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
+}
+
 // ─── Timeline ────────────────────────────────────────────────────────────────
 
 interface TimelineProps {
@@ -403,7 +650,8 @@ export function Timeline({
 
   const trackColor = (t: Track) =>
     t.kind === 'audio' ? 'var(--color-clip-audio)' : 'var(--color-clip-video)';
-  const trackHeight = (t: Track) => (t.kind === 'audio' ? AUDIO_TRACK_H : VIDEO_TRACK_H);
+  const trackHeight = (t: Track) =>
+    t.kind === 'audio' ? AUDIO_TRACK_H : t.kind === 'text' ? VIDEO_TRACK_H : VIDEO_TRACK_H;
 
   /** 由指针 clientX 推算时间轴帧（双向滚动 + 左列宽度） */
   const frameFromClientX = (clientX: number): number => {
@@ -440,12 +688,18 @@ export function Timeline({
     setGlobalDrag(null);
     if (!d) return;
 
+    const isText = d.trackKind === 'text';
+
     // 松手在"新建轨道"区域？
     const overNew = document
       .elementFromPoint(lastPointer.current.x, lastPointer.current.y)
       ?.closest('[data-newtrack-zone]');
     if (overNew) {
-      useEditorStore.getState().relocateClipToNewTrack(d.clipId);
+      if (isText) {
+        useEditorStore.getState().relocateTextClipToNewTrack(d.clipId);
+      } else {
+        useEditorStore.getState().relocateClipToNewTrack(d.clipId);
+      }
       return;
     }
 
@@ -455,7 +709,11 @@ export function Timeline({
 
     // 跨轨：迁移到目标轨的 ghostStart 位置（已磁吸）。
     const proposed = Math.max(0, Math.round(d.ghostStart));
-    useEditorStore.getState().relocateClip(d.clipId, targetTrackId, proposed);
+    if (isText) {
+      useEditorStore.getState().relocateTextClip(d.clipId, targetTrackId, proposed);
+    } else {
+      useEditorStore.getState().relocateClip(d.clipId, targetTrackId, proposed);
+    }
   };
 
   // 拖拽中跟踪鼠标位置（用于松手时命中检测 + ghost 的 Y 定位）。
@@ -504,6 +762,7 @@ export function Timeline({
   };
 
   const canSplit = !!selectedClipId;
+  // 仅 media 片段（含 transform）；文本片段无 transform，静音按钮对其不生效。
   const selectedClip = selectedClipId
     ? timeline.tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId)
     : undefined;
@@ -697,6 +956,7 @@ export function Timeline({
                 .reverse()
                 .map(({ track, idx }) => {
                   const isAudio = track.kind === 'audio';
+                  const isText = track.kind === 'text';
                   const off = isAudio ? track.muted : track.hidden;
                   return (
                     <div
@@ -722,8 +982,10 @@ export function Timeline({
                       >
                         <GripVertical className="h-4 w-4" />
                       </div>
-                      {/* 眼睛(视频)/喇叭(音频) 垂直居中 */}
-                      {isAudio ? (
+                      {/* 图标：文本/音频/视频 */}
+                      {isText ? (
+                        <Type className="h-4 w-4 text-indigo-400" />
+                      ) : isAudio ? (
                         <button
                           title={track.muted ? '取消静音' : '静音'}
                           onClick={() => toggleTrackMuted(track.id)}
@@ -751,12 +1013,30 @@ export function Timeline({
                       onDragOver={allowDrop}
                       onDrop={(e) => onDropToTrack(e, track.id)}
                     >
-                      {track.clips.map((clip) => (
+                      {isText
+                        ? (track.textClips ?? []).map((tc) => (
+                            <TextClipBlock
+                              key={tc.id}
+                              textClip={tc}
+                              trackId={track.id}
+                              trackTextClips={track.textClips ?? []}
+                              fps={fps}
+                              pxPerSecond={pxPerSecond}
+                              selected={tc.id === selectedClipId}
+                              currentFrame={currentFrame}
+                              snapEnabled={snapEnabled}
+                              onSelect={() => onSelectClip(tc.id)}
+                              onDragStart={handleDragStart}
+                              onDragMove={handleDragMove}
+                              onDragEnd={handleDragEnd}
+                            />
+                          ))
+                        : track.clips.map((clip) => (
                         <ClipBlock
                           key={clip.id}
                           clip={clip}
                           trackId={track.id}
-                          trackKind={track.kind}
+                          trackKind={track.kind as 'video' | 'audio'}
                           trackClips={track.clips}
                           asset={assetById.get(clip.assetId)}
                           fps={fps}

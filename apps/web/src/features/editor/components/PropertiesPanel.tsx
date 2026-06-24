@@ -1,5 +1,5 @@
 import { useEditorStore } from '../store';
-import type { Clip } from '@reel/contracts';
+import type { Clip, TextClip } from '@reel/contracts';
 
 type TabKey = '画面' | '音频' | '变速';
 const TABS: TabKey[] = ['画面', '音频', '变速'];
@@ -47,12 +47,157 @@ function useSelectedClip(): { clip: Clip; isAudioTrack: boolean } | null {
   return null;
 }
 
+/** 找到选中的文本片段 */
+function useSelectedTextClip(): TextClip | null {
+  const timeline = useEditorStore((s) => s.timeline);
+  const selectedClipId = useEditorStore((s) => s.selectedClipId);
+  if (!timeline || !selectedClipId) return null;
+  for (const track of timeline.tracks) {
+    if (track.kind === 'text' && track.textClips) {
+      const tc = track.textClips.find((tc) => tc.id === selectedClipId);
+      if (tc) return tc;
+    }
+  }
+  return null;
+}
+
+/** 文本编辑面板 */
+function TextPanel({ textClip }: { textClip: TextClip }) {
+  const updateTextClip = useEditorStore((s) => s.updateTextClip);
+  const id = textClip.id;
+  const s = textClip.style;
+
+  return (
+    <div className="flex h-full w-[300px] flex-col border-l border-border-subtle bg-surface">
+      <div className="flex h-[46px] items-center border-b border-border-subtle px-3">
+        <span className="text-sm font-semibold text-fg">文本</span>
+      </div>
+      <div className="flex flex-col gap-4 overflow-y-auto p-[18px]">
+        {/* 文本内容 */}
+        <section className="flex flex-col gap-2">
+          <h3 className="text-[13px] font-semibold">内容</h3>
+          <textarea
+            value={textClip.text}
+            onChange={(e) => updateTextClip(id, { text: e.target.value })}
+            rows={3}
+            className="w-full resize-none rounded-md border border-border-subtle bg-base px-2 py-1.5 text-[13px] text-fg outline-none focus:border-accent"
+          />
+        </section>
+
+        {/* 字体大小 */}
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[13px] text-fg-secondary">字号</span>
+            <span className="text-[13px] tabular-nums text-fg-tertiary">{s.fontSize}px</span>
+          </div>
+          <input
+            type="range"
+            min={12}
+            max={200}
+            step={1}
+            value={s.fontSize}
+            onChange={(e) => updateTextClip(id, { style: { fontSize: Number(e.target.value) } })}
+            className="reel-slider h-1 w-full cursor-pointer appearance-none rounded-full bg-timeline-track"
+          />
+        </section>
+
+        {/* 颜色 + 样式 */}
+        <section className="flex flex-col gap-2">
+          <h3 className="text-[13px] font-semibold">样式</h3>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-[13px] text-fg-secondary">
+              颜色
+              <input
+                type="color"
+                value={s.color}
+                onChange={(e) => updateTextClip(id, { style: { color: e.target.value } })}
+                className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent"
+              />
+            </label>
+            <button
+              onClick={() => updateTextClip(id, { style: { bold: !s.bold } })}
+              className={`h-7 w-7 rounded font-bold ${s.bold ? 'bg-accent text-white' : 'bg-elevated text-fg-secondary'}`}
+            >
+              B
+            </button>
+            <button
+              onClick={() => updateTextClip(id, { style: { italic: !s.italic } })}
+              className={`h-7 w-7 rounded italic ${s.italic ? 'bg-accent text-white' : 'bg-elevated text-fg-secondary'}`}
+            >
+              I
+            </button>
+          </div>
+          {/* 对齐 */}
+          <div className="flex gap-1.5">
+            {(['left', 'center', 'right'] as const).map((a) => (
+              <button
+                key={a}
+                onClick={() => updateTextClip(id, { style: { align: a } })}
+                className={`flex-1 rounded px-2 py-1 text-[12px] ${
+                  s.align === a ? 'bg-accent text-white' : 'bg-elevated text-fg-secondary'
+                }`}
+              >
+                {a === 'left' ? '左' : a === 'center' ? '中' : '右'}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {/* 描边 */}
+        <section className="flex flex-col gap-2">
+          <label className="flex items-center justify-between text-[13px] text-fg-secondary">
+            描边
+            <input
+              type="checkbox"
+              checked={s.strokeColor !== null}
+              onChange={(e) =>
+                updateTextClip(id, { style: { strokeColor: e.target.checked ? '#000000' : null } })
+              }
+            />
+          </label>
+          {s.strokeColor !== null && (
+            <input
+              type="color"
+              value={s.strokeColor}
+              onChange={(e) => updateTextClip(id, { style: { strokeColor: e.target.value } })}
+              className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent"
+            />
+          )}
+        </section>
+
+        {/* 不透明度 */}
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[13px] text-fg-secondary">不透明度</span>
+            <span className="text-[13px] tabular-nums text-fg-tertiary">{Math.round(textClip.opacity * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={textClip.opacity}
+            onChange={(e) => updateTextClip(id, { opacity: Number(e.target.value) })}
+            className="reel-slider h-1 w-full cursor-pointer appearance-none rounded-full bg-timeline-track"
+          />
+        </section>
+      </div>
+    </div>
+  );
+}
+
 export function PropertiesPanel() {
   const active = useEditorStore((s) => s.propTab);
   const setActive = useEditorStore((s) => s.setPropTab);
   const updateTransform = useEditorStore((s) => s.updateClipTransform);
   const setClipSpeed = useEditorStore((s) => s.setClipSpeed);
   const selected = useSelectedClip();
+  const selectedText = useSelectedTextClip();
+
+  // 选中文本片段时显示文本面板
+  if (selectedText) {
+    return <TextPanel textClip={selectedText} />;
+  }
 
   const header = (
     <div className="flex h-[46px] items-center border-b border-border-subtle px-2">
