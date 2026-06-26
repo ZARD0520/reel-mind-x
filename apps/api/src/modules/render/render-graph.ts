@@ -1,3 +1,4 @@
+import { existsSync } from 'fs';
 import type { Asset, Clip, Timeline, Track } from '@reel/contracts';
 
 export type RenderAsset = Asset & { localPath: string | null };
@@ -37,6 +38,30 @@ function f(n: number): string {
 
 function silence(label: string, durationSec: number): string {
   return `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${f(durationSec)},asetpts=PTS-STARTPTS[${label}]`;
+}
+
+function escapeDrawtextValue(value: string): string {
+  return value.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
+}
+
+function resolveFontFile(bold: boolean): string | null {
+  const candidates = bold
+    ? [
+        'C:/Windows/Fonts/msyhbd.ttc',
+        'C:/Windows/Fonts/simhei.ttf',
+        '/System/Library/Fonts/PingFang.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc',
+      ]
+    : [
+        'C:/Windows/Fonts/msyh.ttc',
+        'C:/Windows/Fonts/simhei.ttf',
+        'C:/Windows/Fonts/simsun.ttc',
+        '/System/Library/Fonts/PingFang.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+        '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+      ];
+  return candidates.find((file) => existsSync(file)) ?? null;
 }
 
 interface VisualEntry {
@@ -157,6 +182,7 @@ export function buildGraph(timeline: Timeline, assetById: Map<string, RenderAsse
     const drawX = `(w-text_w)/2+${f(x)}`;
     const drawY = `(h-text_h)/2+${f(y)}`;
     const escapedText = text.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
+    const fontFile = resolveFontFile(style.bold);
     const parts: string[] = [
       `text='${escapedText}'`,
       `fontsize=${fontSize}`,
@@ -165,7 +191,8 @@ export function buildGraph(timeline: Timeline, assetById: Map<string, RenderAsse
       `y='${drawY}'`,
       `enable='between(t,${f(startSec)},${f(endSec)})'`,
     ];
-    if (style.bold) parts.push(`font='Arial Bold'`);
+    if (fontFile) parts.push(`fontfile='${escapeDrawtextValue(fontFile)}'`);
+    else if (style.bold) parts.push(`font='Arial Bold'`);
     if (style.strokeColor) {
       parts.push(`borderw=${style.strokeWidth}`);
       parts.push(`bordercolor=${style.strokeColor.replace('#', '0x')}`);
