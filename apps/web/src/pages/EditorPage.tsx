@@ -68,6 +68,20 @@ export function EditorPage() {
   }, [timeline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 播放时钟
+  // 计算时间轴总时长（秒，用于导出文件大小估算）
+  const exportTotalFrames = (() => {
+    if (!timeline) return 0;
+    let max = 0;
+    for (const t of timeline.tracks) {
+      for (const c of t.clips) max = Math.max(max, c.start + c.durationInFrames);
+      if (t.kind === 'text' && t.textClips) {
+        for (const tc of t.textClips) max = Math.max(max, tc.start + tc.durationInFrames);
+      }
+    }
+    return max;
+  })();
+  const durationSec = exportTotalFrames / (timeline?.settings.fps ?? 30);
+
   const [currentFrame, setCurrentFrame] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const lastRef = useRef(0);
@@ -132,6 +146,9 @@ export function EditorPage() {
         onUndo={undo}
         onRedo={redo}
         onRename={(name) => updateProject.mutate({ name })}
+        durationSec={durationSec}
+        width={timeline?.settings.width ?? 1920}
+        height={timeline?.settings.height ?? 1080}
         onBeforeExport={async () => {
           if (saveTimer.current) clearTimeout(saveTimer.current);
           if (timeline) await updateProject.mutateAsync({ timeline });

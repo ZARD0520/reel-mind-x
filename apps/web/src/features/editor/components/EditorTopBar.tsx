@@ -25,6 +25,11 @@ interface EditorTopBarProps {
   onRename?: (name: string) => void;
   /** 导出前刷新保存最新 timeline（返回 Promise，待保存完成再入队渲染） */
   onBeforeExport?: () => Promise<void>;
+  /** 项目时长（秒），用于估算文件大小 */
+  durationSec: number;
+  /** 项目分辨率，用于估算文件大小 */
+  width: number;
+  height: number;
 }
 
 export function EditorTopBar({
@@ -37,6 +42,9 @@ export function EditorTopBar({
   onRedo,
   onRename,
   onBeforeExport,
+  durationSec,
+  width,
+  height,
 }: EditorTopBarProps) {
   const navigate = useNavigate();
   const shortId = projectId.slice(0, 8);
@@ -191,6 +199,9 @@ export function EditorTopBar({
                   onName={setExportName}
                   onQuality={setExportQuality}
                   onConfirm={confirmExport}
+                  durationSec={durationSec}
+                  width={width}
+                  height={height}
                 />
               ) : (
                 <ExportBody
@@ -215,17 +226,36 @@ function ExportSettings({
   onName,
   onQuality,
   onConfirm,
+  durationSec,
+  width,
+  height,
 }: {
   name: string;
   quality: 'high' | 'medium' | 'low';
   onName: (v: string) => void;
   onQuality: (v: 'high' | 'medium' | 'low') => void;
   onConfirm: () => void;
+  durationSec: number;
+  width: number;
+  height: number;
 }) {
+  // 粗略估算文件大小（MB）：基于分辨率、时长、质量档的典型码率。
+  const estimateSize = (q: 'high' | 'medium' | 'low'): number => {
+    const pixels = width * height;
+    const scale = q === 'low' ? 0.5 : 1;
+    const scaledPixels = pixels * scale * scale;
+    // 典型码率（Mbps）：1080p@high≈10, @medium≈5, @low≈1.5; 按像素数线性缩放。
+    const base1080p = { high: 10, medium: 5, low: 1.5 }[q];
+    const mbps = base1080p * (scaledPixels / (1920 * 1080));
+    // 音频码率（Mbps）
+    const audioMbps = { high: 0.192, medium: 0.128, low: 0.096 }[q];
+    return ((mbps + audioMbps) * durationSec) / 8; // bit -> byte -> MB
+  };
+
   const QUALITIES: { key: 'high' | 'medium' | 'low'; label: string; desc: string }[] = [
-    { key: 'high', label: '高清', desc: '原分辨率 · 高码率' },
-    { key: 'medium', label: '标准', desc: '原分辨率 · 中码率' },
-    { key: 'low', label: '流畅', desc: '半分辨率 · 低码率 · 文件小' },
+    { key: 'high', label: '高清', desc: `原分辨率 · 高码率 · ~${Math.round(estimateSize('high'))} MB` },
+    { key: 'medium', label: '标准', desc: `原分辨率 · 中码率 · ~${Math.round(estimateSize('medium'))} MB` },
+    { key: 'low', label: '流畅', desc: `半分辨率 · 低码率 · ~${Math.round(estimateSize('low'))} MB` },
   ];
   return (
     <div className="flex flex-col gap-3.5">
@@ -310,15 +340,20 @@ function ExportBody({
       <ProgressView label="完成" percent={100} />
       <a
         href={job.outputUrl ?? '#'}
-        download={job.fileName ?? '导出视频.mp4'}
+        target="_blank"
+        rel="noopener noreferrer"
         className="flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[13px] font-semibold text-fg hover:bg-accent-hover"
       >
         <Download className="h-4 w-4" />
-        下载视频
+        预览视频
       </a>
-      <p className="text-center text-[11px] text-fg-tertiary">
-        点击下载，浏览器会让你选择保存位置
-      </p>
+      <a
+        href={job.outputUrl ?? '#'}
+        download={job.fileName ?? '导出视频.mp4'}
+        className="text-center text-[12px] text-accent hover:underline"
+      >
+        或点此下载
+      </a>
     </div>
   );
 }

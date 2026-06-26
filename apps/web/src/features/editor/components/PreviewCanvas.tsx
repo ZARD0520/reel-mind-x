@@ -143,6 +143,8 @@ export function PreviewCanvas({
   const updateSettings = useEditorStore((s) => s.updateSettings);
   const { data: assets = [] } = useAssets();
   const stageRef = useRef<HTMLDivElement>(null);
+  // 全屏时容器实际尺寸（用于重新计算 displayScale）
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
 
   const fps = timeline?.settings.fps ?? 30;
   const projectW = timeline?.settings.width ?? 1920;
@@ -156,6 +158,11 @@ export function PreviewCanvas({
   const projectAspect = projectW / projectH;
   let stageW = MAX_PREVIEW_W;
   let stageH = MAX_PREVIEW_H;
+  // 全屏时用实际容器尺寸代替固定值
+  if (containerSize) {
+    stageW = containerSize.w;
+    stageH = containerSize.h;
+  }
   if (projectAspect > stageW / stageH) {
     stageH = stageW / projectAspect;
   } else {
@@ -199,7 +206,17 @@ export function PreviewCanvas({
   // 跟踪全屏状态：全屏时单击画面切换播放/暂停。
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
-    const onFsChange = () => setIsFullscreen(document.fullscreenElement === stageRef.current);
+    const onFsChange = () => {
+      const isFull = document.fullscreenElement === stageRef.current;
+      setIsFullscreen(isFull);
+      // 全屏时更新容器实际尺寸，用于重新计算 displayScale
+      if (isFull && stageRef.current) {
+        const rect = stageRef.current.getBoundingClientRect();
+        setContainerSize({ w: rect.width, h: rect.height });
+      } else {
+        setContainerSize(null);
+      }
+    };
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);

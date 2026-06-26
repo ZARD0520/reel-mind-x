@@ -1,45 +1,42 @@
-import type { Clip, TextClip, Timeline, Track } from '@reel/contracts';
-import type { Asset } from '@reel/contracts';
+import type { Asset, Clip, Timeline, Track } from '@reel/contracts';
 
-/** 渲染用素材：在对外 Asset 上补 localPath（本机文件路径，worker 喂 FFmpeg）。 */
 export type RenderAsset = Asset & { localPath: string | null };
 
-/** 一个 FFmpeg 输入（对应一个 clip 引用的素材文件） */
 export interface GraphInput {
   path: string;
-  /** 图片需 -loop/-t；视频不需要 */
   options: string[];
 }
 
 export interface BuiltGraph {
   inputs: GraphInput[];
   complexFilter: string[];
-  /** 输出映射的 video/audio 标签 */
   maps: string[];
   hasAudio: boolean;
   durationSec: number;
 }
 
-/** 变速时 atempo 仅支持 [0.5,2]，超范围拆成链式相乘。speed=1 返回空。 */
 function atempoChain(speed: number): number[] {
   if (Math.abs(speed - 1) < 1e-3) return [];
-  let s = speed;
+  let value = speed;
   const parts: number[] = [];
-  while (s > 2) {
+  while (value > 2) {
     parts.push(2);
-    s /= 2;
+    value /= 2;
   }
-  while (s < 0.5) {
+  while (value < 0.5) {
     parts.push(0.5);
-    s *= 2;
+    value *= 2;
   }
-  parts.push(Number(s.toFixed(4)));
+  parts.push(Number(value.toFixed(4)));
   return parts;
 }
 
-/** 浮点保留 4 位，避免滤镜字符串过长/精度噪声。 */
 function f(n: number): string {
   return Number(n.toFixed(4)).toString();
+}
+
+function silence(label: string, durationSec: number): string {
+  return `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${f(durationSec)},asetpts=PTS-STARTPTS[${label}]`;
 }
 
 interface VisualEntry {
@@ -48,22 +45,17 @@ interface VisualEntry {
   asset: RenderAsset;
   startSec: number;
   endSec: number;
+  sourceDurationSec: number;
 }
+
 interface AudioEntry {
   inputIdx: number;
   clip: Clip;
   startSec: number;
+  sourceDurationSec: number;
   trackMuted: boolean;
 }
 
-/**
- * 由 timeline 构建 FFmpeg 输入与 filter_complex。
- * 语义对齐前端预览：
- * - 视频/图片层按轨道顺序（数组开头=底层）叠加，各自 scale/位移/旋转/不透明度。
- * - 片段 start/duration 决定在成片时间轴的出现窗口；trimStart 决定取源起点；speed 变速。
- * - 多音频轨 + 视频自带音轨混音；音量/静音。
- * 注意：hidden 只影响预览，导出仍包含（与 schema 注释一致）。
- */
 export function buildGraph(timeline: Timeline, assetById: Map<string, RenderAsset>): BuiltGraph {
   const { fps, width: W, height: H } = timeline.settings;
   const inputs: GraphInput[] = [];
@@ -75,97 +67,100 @@ export function buildGraph(timeline: Timeline, assetById: Map<string, RenderAsse
     for (const clip of track.clips) {
       const asset = assetById.get(clip.assetId);
       if (!asset?.localPath) continue;
+
       totalFrames = Math.max(totalFrames, clip.start + clip.durationInFrames);
+
       const startSec = clip.start / fps;
       const endSec = (clip.start + clip.durationInFrames) / fps;
       const trimStartSec = clip.trimStart / fps;
-      const idx = inputs.length;
+      const sourceDurationSec =
+        asset.kind === 'image' ? endSec - startSec : (clip.durationInFrames * clip.transform.speed) / fps;
+      const inputIdx = inputs.length;
 
       if (track.kind === 'video' && (asset.kind === 'video' || asset.kind === 'image')) {
         if (asset.kind === 'image') {
           inputs.push({ path: asset.localPath, options: ['-loop', '1', '-t', f(endSec - startSec)] });
         } else {
-          inputs.push({ path: asset.localPath, options: ['-ss', f(trimStartSec)] });
+          inputs.push({
+            path: asset.localPath,
+            options: ['-ss', f(trimStartSec), '-t', f(sourceDurationSec), '-ac', '2'],
+          });
         }
-        visuals.push({ inputIdx: idx, clip, asset, startSec, endSec });
-        // 视频自带音轨也参与混音。
+        visuals.push({ inputIdx, clip, asset, startSec, endSec, sourceDurationSec });
         if (asset.kind === 'video') {
-          audios.push({ inputIdx: idx, clip, startSec, trackMuted: track.muted });
+          audios.push({ inputIdx, clip, startSec, sourceDurationSec, trackMuted: track.muted });
         }
       } else if (track.kind === 'audio' && asset.kind === 'audio') {
-        inputs.push({ path: asset.localPath, options: ['-ss', f(trimStartSec)] });
-        audios.push({ inputIdx: idx, clip, startSec, trackMuted: track.muted });
+        inputs.push({
+          path: asset.localPath,
+          options: ['-ss', f(trimStartSec), '-t', f(sourceDurationSec), '-ac', '2'],
+        });
+        audios.push({ inputIdx, clip, startSec, sourceDurationSec, trackMuted: track.muted });
       }
     }
   };
-  // 数组开头=底层，正序遍历即底→顶。
+
   for (const track of timeline.tracks) collect(track);
 
   const durationSec = Math.max(totalFrames / fps, 0.1);
-  const filters: string[] = [];
+  if (!Number.isFinite(durationSec) || durationSec <= 0 || durationSec > 86400) {
+    throw new Error(`Invalid durationSec: ${durationSec} (totalFrames=${totalFrames}, fps=${fps})`);
+  }
 
-  // 黑底基底。
+  const filters: string[] = [];
   filters.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${f(durationSec)}[base]`);
 
-  // 逐层视频/图片：scale(contain×transform.scale) → rotate → opacity → overlay。
   let last = 'base';
   visuals.forEach((v, i) => {
     const t = v.clip.transform;
-    const speed = asset_isVideo(v.asset) ? t.speed : 1;
+    const speed = v.asset.kind === 'video' ? t.speed : 1;
     const vlabel = `v${i}`;
-    const chain: string[] = [];
-    chain.push(`[${v.inputIdx}:v]`);
     const parts: string[] = [];
-    // 变速（仅视频，setpts）。
-    if (asset_isVideo(v.asset) && Math.abs(speed - 1) > 1e-3) {
+
+    parts.push(`trim=duration=${f(v.sourceDurationSec)}`);
+    parts.push('setpts=PTS-STARTPTS');
+    if (v.asset.kind === 'video' && Math.abs(speed - 1) > 1e-3) {
       parts.push(`setpts=${f(1 / speed)}*PTS`);
     }
-    // contain 适配到画布，再乘 transform.scale（保持等比，超出由 overlay 裁剪）。
-    parts.push(
-      `scale=w='min(${W}*${f(t.scale)}\\,iw*${H}*${f(t.scale)}/ih)':h=-1:eval=init`,
-    );
-    parts.push(`format=rgba`);
+    parts.push(`setpts=PTS+${f(v.startSec)}/TB`);
+    parts.push(`scale=w='min(${W}*${f(t.scale)}\\,iw*${H}*${f(t.scale)}/ih)':h=-1:eval=init`);
+    parts.push('format=rgba');
     if (Math.abs(t.rotation) > 1e-3) {
-      const rad = `${f((t.rotation * Math.PI) / 180)}`;
+      const rad = f((t.rotation * Math.PI) / 180);
       parts.push(`rotate=${rad}:ow=rotw(${rad}):oh=roth(${rad}):c=none`);
     }
     if (t.opacity < 0.999) {
       parts.push(`colorchannelmixer=aa=${f(t.opacity)}`);
     }
-    chain.push(parts.join(','));
-    chain.push(`[${vlabel}]`);
-    filters.push(chain.join(''));
+    filters.push(`[${v.inputIdx}:v]${parts.join(',')}[${vlabel}]`);
 
-    // overlay：居中 + 位移；按片段时间窗口 enable。
     const x = `(W-w)/2+${f(t.x)}`;
     const y = `(H-h)/2+${f(t.y)}`;
     const out = i === visuals.length - 1 ? 'vout' : `ov${i}`;
     filters.push(
-      `[${last}][${vlabel}]overlay=x='${x}':y='${y}':enable='between(t,${f(v.startSec)},${f(v.endSec)})'[${out}]`,
+      `[${last}][${vlabel}]overlay=x='${x}':y='${y}':eof_action=pass:repeatlast=0:enable='between(t,${f(v.startSec)},${f(v.endSec)})'[${out}]`,
     );
     last = out;
   });
+
   let videoOut = visuals.length > 0 ? 'vout' : 'base';
 
-  // 文本叠加：drawtext 滤镜（每个 textClip 一个 drawtext，链式叠加）。
   const textClips = timeline.tracks
     .filter((t) => t.kind === 'text')
     .flatMap((t) => t.textClips ?? []);
+
   textClips.forEach((tc, i) => {
     const { text, start, durationInFrames, x, y, scale, opacity, style } = tc;
     const startSec = start / fps;
     const endSec = (start + durationInFrames) / fps;
     const fontSize = Math.round(style.fontSize * scale);
-    // 位置：x/y 是相对画面中心偏移（项目像素），drawtext 的 x/y 是绝对左上角坐标。
-    // 中心对齐：x='(w-text_w)/2 + offset', y='(h-text_h)/2 + offset'
     const drawX = `(w-text_w)/2+${f(x)}`;
     const drawY = `(h-text_h)/2+${f(y)}`;
-    // 转义：FFmpeg drawtext text 参数需转义特殊字符（: = ' \ 等）。
     const escapedText = text.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
     const parts: string[] = [
       `text='${escapedText}'`,
       `fontsize=${fontSize}`,
-      `fontcolor=${style.color.replace('#', '0x')}@${f(opacity)}`, // RGBA: 0xRRGGBB@alpha
+      `fontcolor=${style.color.replace('#', '0x')}@${f(opacity)}`,
       `x='${drawX}'`,
       `y='${drawY}'`,
       `enable='between(t,${f(startSec)},${f(endSec)})'`,
@@ -176,53 +171,66 @@ export function buildGraph(timeline: Timeline, assetById: Map<string, RenderAsse
       parts.push(`bordercolor=${style.strokeColor.replace('#', '0x')}`);
     }
     if (style.backgroundColor) {
-      parts.push(`box=1`);
+      parts.push('box=1');
       parts.push(`boxcolor=${style.backgroundColor.replace('#', '0x')}@1`);
-      parts.push(`boxborderw=5`);
+      parts.push('boxborderw=5');
     }
     const out = i === textClips.length - 1 ? 'vfinal' : `txt${i}`;
     filters.push(`[${videoOut}]drawtext=${parts.join(':')}[${out}]`);
     videoOut = out;
   });
 
-  // 音频：atrim→变速(atempo)→volume→adelay 到 start，再 amix。
+  if (visuals.length > 0 || textClips.length > 0) {
+    const trimLabel = 'vtrimmed';
+    filters.push(`[${videoOut}]trim=duration=${f(durationSec)},setpts=PTS-STARTPTS[${trimLabel}]`);
+    videoOut = trimLabel;
+  }
+
   const aLabels: string[] = [];
   audios.forEach((a, i) => {
     const t = a.clip.transform;
-    if (t.volume <= 0 || a.trackMuted) return; // 静音不参与混音
-    const label = `a${i}`;
+    if (t.volume <= 0 || a.trackMuted) return;
+    const clipLabel = `aclip${i}`;
+    const outLabel = `a${i}`;
     const segs: string[] = [];
-    // 取与片段等长的源（timeline 占用 × speed = 源消耗秒数）。
-    segs.push(`atrim=duration=${f((a.clip.durationInFrames * t.speed) / fps)}`);
+    segs.push('aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo');
+    segs.push(`atrim=duration=${f(a.sourceDurationSec)}`);
     segs.push('asetpts=PTS-STARTPTS');
     for (const tp of atempoChain(t.speed)) segs.push(`atempo=${f(tp)}`);
     if (t.volume < 0.999) segs.push(`volume=${f(t.volume)}`);
-    const delayMs = Math.round(a.startSec * 1000);
-    if (delayMs > 0) segs.push(`adelay=${delayMs}|${delayMs}`);
-    filters.push(`[${a.inputIdx}:a]${segs.join(',')}[${label}]`);
-    aLabels.push(label);
+    filters.push(`[${a.inputIdx}:a]${segs.join(',')}[${clipLabel}]`);
+
+    const clipDurationSec = a.clip.durationInFrames / fps;
+    const tailDurationSec = Math.max(durationSec - a.startSec - clipDurationSec, 0);
+    const concatInputs: string[] = [];
+    if (a.startSec > 0) {
+      const preLabel = `asilencepre${i}`;
+      filters.push(silence(preLabel, a.startSec));
+      concatInputs.push(`[${preLabel}]`);
+    }
+    concatInputs.push(`[${clipLabel}]`);
+    if (tailDurationSec > 0) {
+      const tailLabel = `asilencetail${i}`;
+      filters.push(silence(tailLabel, tailDurationSec));
+      concatInputs.push(`[${tailLabel}]`);
+    }
+    filters.push(`${concatInputs.join('')}concat=n=${concatInputs.length}:v=0:a=1[${outLabel}]`);
+    aLabels.push(outLabel);
   });
 
   const maps: string[] = [`[${videoOut}]`];
   let hasAudio = false;
   if (aLabels.length === 1) {
-    maps.push(`[${aLabels[0]}]`);
+    filters.push(`[${aLabels[0]}]atrim=duration=${f(durationSec)},asetpts=PTS-STARTPTS[aout]`);
+    maps.push('[aout]');
     hasAudio = true;
   } else if (aLabels.length > 1) {
-    // amix 会按输入数平均音量；老版 ffmpeg 无 normalize 选项，故 amix 后乘回输入数补偿。
     const n = aLabels.length;
-    filters.push(
-      `${aLabels.map((l) => `[${l}]`).join('')}amix=inputs=${n}:duration=longest[amixraw]`,
-    );
-    filters.push(`[amixraw]volume=${n}[aout]`);
+    filters.push(`${aLabels.map((l) => `[${l}]`).join('')}amix=inputs=${n}:duration=longest[amixraw]`);
+    filters.push(`[amixraw]volume=${n},atrim=duration=${f(durationSec)},asetpts=PTS-STARTPTS[aout]`);
     maps.push('[aout]');
     hasAudio = true;
   }
 
   return { inputs, complexFilter: filters, maps, hasAudio, durationSec };
 }
-
-function asset_isVideo(a: RenderAsset): boolean {
-  return a.kind === 'video';
-}
-
