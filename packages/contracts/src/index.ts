@@ -243,3 +243,31 @@ export const RenderJobSchema = z.object({
 });
 export type RenderJob = z.infer<typeof RenderJobSchema>;
 
+// ───────────────────────── AI 混编任务 AiMix ─────────────────────────
+
+export const AiMixStyleSchema = z.enum(['hook', 'fast', 'steady']);
+export type AiMixStyle = z.infer<typeof AiMixStyleSchema>;
+
+export const CreateAiMixSchema = z.object({
+  projectId: z.string().uuid(),
+  assetIds: z.array(z.string().uuid()).min(1),
+  durationSec: z.number().int().min(10).max(60).default(30),
+  style: AiMixStyleSchema.default('fast'),
+  sellingPoints: z.array(z.string().min(1).max(120)).max(8).default([]),
+  cta: z.string().min(1).max(120).default('立即咨询'),
+});
+export type CreateAiMixInput = z.infer<typeof CreateAiMixSchema>;
+
+export const AiMixStatusSchema = z.enum(['queued', 'running', 'completed', 'failed']);
+export type AiMixStatus = z.infer<typeof AiMixStatusSchema>;
+
+export const AiMixJobSchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().uuid(),
+  status: AiMixStatusSchema,
+  progress: z.number().min(0).max(100).default(0),
+  draftTimeline: TimelineSchema.nullable(),
+  error: z.string().nullable(),
+  createdAt: z.coerce.date(),
+});
+export type AiMixJob = z.infer<typeof AiMixJobSchema>;

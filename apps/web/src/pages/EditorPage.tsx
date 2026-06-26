@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { useAssets, useProject, useUpdateProject } from '../features/editor/hooks';
 import { useEditorStore } from '../features/editor/store';
 import { EditorTopBar } from '../features/editor/components/EditorTopBar';
+import { AiMixDialog } from '../features/editor/components/AiMixDialog';
 import { LeftPanel } from '../features/editor/components/LeftPanel';
 import { PreviewCanvas } from '../features/editor/components/PreviewCanvas';
 import { PropertiesPanel } from '../features/editor/components/PropertiesPanel';
@@ -84,6 +85,7 @@ export function EditorPage() {
 
   const [currentFrame, setCurrentFrame] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [aiMixOpen, setAiMixOpen] = useState(false);
   const lastRef = useRef(0);
 
   const fps = timeline?.settings.fps ?? PREVIEW_FPS;
@@ -146,6 +148,7 @@ export function EditorPage() {
         onUndo={undo}
         onRedo={redo}
         onRename={(name) => updateProject.mutate({ name })}
+        onOpenAiMix={() => setAiMixOpen(true)}
         durationSec={durationSec}
         width={timeline?.settings.width ?? 1920}
         height={timeline?.settings.height ?? 1080}
@@ -172,6 +175,21 @@ export function EditorPage() {
         selectedClipId={selectedClipId}
         onSeek={handleSeek}
         onSelectClip={selectClip}
+      />
+      <AiMixDialog
+        open={aiMixOpen}
+        projectId={id}
+        assets={assets}
+        onClose={() => setAiMixOpen(false)}
+        onApply={(draftTimeline) => {
+          if (saveTimer.current) clearTimeout(saveTimer.current);
+          setIsPlaying(false);
+          setCurrentFrame(0);
+          setTimeline(draftTimeline);
+          selectClip(null);
+          updateProject.mutate({ timeline: draftTimeline });
+          setAiMixOpen(false);
+        }}
       />
     </div>
   );

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import type { Asset, Project, RenderJob } from '@reel/contracts';
+import type { AiMixJob, Asset, Project, RenderJob } from '@reel/contracts';
 import { api } from '../../lib/api';
 
 // ─── Projects ───────────────────────────────────────────────────────────────
@@ -76,6 +76,47 @@ export function useExport(projectId: string) {
   return {
     start: (opts: { fileName?: string; quality?: string }) => create.mutate(opts),
     starting: create.isPending,
+    job: job ?? null,
+    reset,
+  };
+}
+
+export function useAiMix(projectId: string) {
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: (opts: {
+      assetIds: string[];
+      durationSec?: number;
+      style?: string;
+      sellingPoints?: string[];
+      cta?: string;
+    }) => api.aiMix.create({ projectId, ...opts }) as Promise<AiMixJob>,
+    onSuccess: (job) => setJobId(job.id),
+  });
+
+  const { data: job } = useQuery<AiMixJob>({
+    queryKey: ['ai-mix', jobId],
+    queryFn: () => api.aiMix.get(jobId!) as Promise<AiMixJob>,
+    enabled: !!jobId,
+    refetchInterval: (q) => {
+      const s = q.state.data?.status;
+      return s === 'completed' || s === 'failed' ? false : 1000;
+    },
+  });
+
+  const reset = () => setJobId(null);
+
+  return {
+    start: (opts: {
+      assetIds: string[];
+      durationSec?: number;
+      style?: string;
+      sellingPoints?: string[];
+      cta?: string;
+    }) => create.mutate(opts),
+    starting: create.isPending,
+    error: create.error,
     job: job ?? null,
     reset,
   };

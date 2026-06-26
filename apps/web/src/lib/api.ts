@@ -52,4 +52,20 @@ export const api = {
       }),
     get: (id: string) => request(`/render/${id}`),
   },
+  aiMix: {
+    create: (body: {
+      projectId: string;
+      assetIds: string[];
+      durationSec?: number;
+      style?: string;
+      sellingPoints?: string[];
+      cta?: string;
+    }) =>
+      request('/ai-mix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    get: (id: string) => request(`/ai-mix/${id}`),
+  },
 } as const;

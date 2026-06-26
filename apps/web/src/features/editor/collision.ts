@@ -1,10 +1,12 @@
 import type { Clip } from '@reel/contracts';
 
+type TimelineSegment = Pick<Clip, 'id' | 'start' | 'durationInFrames'>;
+
 // 片段最小帧数（与 Timeline 一致）。
 export const MIN_FRAMES = 15;
 
 /** 同轨除自己外的其他片段 */
-export function others(clips: Clip[], selfId: string): Clip[] {
+export function others<T extends TimelineSegment>(clips: T[], selfId: string): T[] {
   return clips.filter((c) => c.id !== selfId);
 }
 
@@ -13,7 +15,7 @@ export function others(clips: Clip[], selfId: string): Clip[] {
  * 优先选择 proposedStart 落在其中的空闲区间（支持往前插），其次按距离选最近的。
  * 效果＝拖到空隙里会落在那个空隙；拖到别的素材身上时，吸附到最近空隙的边缘。
  */
-export function resolveMove(proposedStart: number, duration: number, neighbors: Clip[]): number {
+export function resolveMove(proposedStart: number, duration: number, neighbors: TimelineSegment[]): number {
   const ps = Math.max(0, proposedStart);
   const occ = neighbors
     .map((c) => [c.start, c.start + c.durationInFrames] as [number, number])

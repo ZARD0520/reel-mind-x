@@ -7,6 +7,7 @@ import {
   Loader2,
   Pencil,
   Redo2,
+  Sparkles,
   Undo2,
   Upload,
   X,
@@ -23,6 +24,7 @@ interface EditorTopBarProps {
   onUndo?: () => void;
   onRedo?: () => void;
   onRename?: (name: string) => void;
+  onOpenAiMix?: () => void;
   /** 导出前刷新保存最新 timeline（返回 Promise，待保存完成再入队渲染） */
   onBeforeExport?: () => Promise<void>;
   /** 项目时长（秒），用于估算文件大小 */
@@ -41,6 +43,7 @@ export function EditorTopBar({
   onUndo,
   onRedo,
   onRename,
+  onOpenAiMix,
   onBeforeExport,
   durationSec,
   width,
@@ -165,6 +168,14 @@ export function EditorTopBar({
             </>
           )}
         </div>
+        <button
+          type="button"
+          onClick={onOpenAiMix}
+          className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-elevated px-3.5 py-2 text-fg-secondary hover:text-fg"
+        >
+          <Sparkles className="h-[15px] w-[15px] text-accent" />
+          <span className="text-[13px] font-semibold">AI 混编</span>
+        </button>
         <div className="relative">
           <button
             type="button"

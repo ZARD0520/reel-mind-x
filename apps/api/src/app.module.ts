@@ -7,6 +7,7 @@ import { ZodValidationPipe } from 'nestjs-zod';
 import * as path from 'path';
 import { validateEnv, type Env } from './config/env';
 import { AgentModule } from './modules/agent/agent.module';
+import { AiMixModule } from './modules/ai-mix/ai-mix.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { RenderModule } from './modules/render/render.module';
@@ -41,6 +42,7 @@ import { PrismaModule } from './prisma/prisma.module';
     }),
     PrismaModule,
     AgentModule,
+    AiMixModule,
     AssetsModule,
     ProjectsModule,
     RenderModule,
