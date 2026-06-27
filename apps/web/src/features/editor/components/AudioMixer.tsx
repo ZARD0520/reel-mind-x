@@ -6,6 +6,8 @@ interface AudioMixerProps {
   assetById: Map<string, Asset>;
   currentFrame: number;
   isPlaying: boolean;
+  /** 音频播放权限是否已激活（防止 autoplay 拒绝） */
+  audioUnlocked: boolean;
 }
 
 /**
@@ -13,15 +15,15 @@ interface AudioMixerProps {
  * 音频解码极轻，几十路并发也不卡（区别于多路视频解码）。
  * 遵守：轨道静音(track.muted) 或 片段静音(transform.volume===0) → 不发声。
  */
-export function AudioMixer({ timeline, assetById, currentFrame, isPlaying }: AudioMixerProps) {
+export function AudioMixer({ timeline, assetById, currentFrame, isPlaying, audioUnlocked }: AudioMixerProps) {
   const fps = timeline.settings.fps;
   const audioClips = timeline.tracks
     .filter((t) => t.kind === 'audio')
-    .flatMap((t) => t.clips.map((clip) => ({ clip, trackMuted: t.muted })));
+    .flatMap((t) => t.clips.map((clip) => ({ clip, muted: t.muted || clip.transform.volume === 0 })));
 
   return (
     <div className="hidden">
-      {audioClips.map(({ clip, trackMuted }) => {
+      {audioClips.map(({ clip, muted }) => {
         const asset = assetById.get(clip.assetId);
         if (!asset?.url || asset.status !== 'ready') return null;
         return (
@@ -33,10 +35,11 @@ export function AudioMixer({ timeline, assetById, currentFrame, isPlaying }: Aud
             trimStart={clip.trimStart}
             volume={clip.transform.volume}
             speed={clip.transform.speed}
-            muted={trackMuted}
+            muted={muted}
             fps={fps}
             currentFrame={currentFrame}
             isPlaying={isPlaying}
+            audioUnlocked={audioUnlocked}
           />
         );
       })}
@@ -55,6 +58,7 @@ interface AudioVoiceProps {
   fps: number;
   currentFrame: number;
   isPlaying: boolean;
+  audioUnlocked: boolean;
 }
 
 function AudioVoice({
@@ -68,6 +72,7 @@ function AudioVoice({
   fps,
   currentFrame,
   isPlaying,
+  audioUnlocked,
 }: AudioVoiceProps) {
   const ref = useRef<HTMLAudioElement>(null);
 
@@ -84,11 +89,18 @@ function AudioVoice({
     el.playbackRate = speed;
     if (audible) {
       if (Math.abs(el.currentTime - targetTime) > 0.3) el.currentTime = targetTime;
-      if (el.paused) void el.play().catch(() => undefined);
+      // 等待 unlock，否则 play() 会被 autoplay 策略拒绝（NotAllowedError）且无法发声。
+      // 解锁一般在首次点击/按键后即完成，几乎无等待感知。
+      if (audioUnlocked && el.paused) {
+        void el.play().catch((err) => {
+          // 仍可能被拒（少见，用户可能关闭了媒体自动播放权限）。现在暴露错误帮助定位。
+          console.warn('[AudioVoice] play() rejected:', err.message || err);
+        });
+      }
     } else if (!el.paused) {
       el.pause();
     }
-  }, [currentFrame, isPlaying, muted, volume, speed, start, durationInFrames, trimStart, fps]);
+  }, [currentFrame, isPlaying, muted, volume, speed, start, durationInFrames, trimStart, fps, audioUnlocked]);
 
   return <audio ref={ref} src={url} preload="auto" />;
 }

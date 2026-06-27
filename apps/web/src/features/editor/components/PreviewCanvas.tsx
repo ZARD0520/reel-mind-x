@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Maximize, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 import type { Asset, Clip, TextClip, Timeline, Track } from '@reel/contracts';
 import { useAssets } from '../hooks';
+import { useAudioUnlock } from '../useAudioUnlock';
 import { useEditorStore } from '../store';
 import { TransformBox } from './TransformBox';
 import { AudioMixer } from './AudioMixer';
@@ -142,6 +143,7 @@ export function PreviewCanvas({
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const updateSettings = useEditorStore((s) => s.updateSettings);
   const { data: assets = [] } = useAssets();
+  const audioUnlocked = useAudioUnlock();
   const stageRef = useRef<HTMLDivElement>(null);
   // 全屏时容器实际尺寸（用于重新计算 displayScale）
   const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
@@ -243,6 +245,7 @@ export function PreviewCanvas({
           assetById={assetById}
           currentFrame={currentFrame}
           isPlaying={isPlaying}
+          audioUnlocked={audioUnlocked}
         />
       )}
       {/* 比例选择器 */}

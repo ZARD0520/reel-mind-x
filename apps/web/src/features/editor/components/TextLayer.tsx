@@ -1,5 +1,14 @@
 import type { TextClip } from '@reel/contracts';
 
+/**
+ * 预览字体栈：对齐导出端 FFmpeg `resolveFontFile` 实际使用的系统字体
+ * （Windows=微软雅黑 msyh.ttc / macOS=苹方 / Linux=Noto Sans CJK）。
+ * 导出忽略 style.fontFamily、按 bold 选字体文件，故预览也统一用此栈，
+ * 避免预览走浏览器对 'Arial' 的中文回退（宋体）而导出是雅黑，两端字体不一致。
+ */
+const PREVIEW_FONT_STACK =
+  '"Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", sans-serif';
+
 interface TextLayerProps {
   textClip: TextClip;
   /** 项目坐标 → 舞台显示坐标的缩放比例 */
@@ -17,10 +26,10 @@ interface TextLayerProps {
  */
 export function TextLayer({ textClip, displayScale, baseLeft, baseTop, baseWidth, baseHeight }: TextLayerProps) {
   const { text, x, y, scale, rotation, opacity, style } = textClip;
-  const { fontFamily, fontSize, color, align, bold, italic, strokeColor, strokeWidth, backgroundColor } = style;
+  const { fontSize, color, align, bold, italic, strokeColor, strokeWidth, backgroundColor } = style;
 
   const textStyle: React.CSSProperties = {
-    fontFamily,
+    fontFamily: PREVIEW_FONT_STACK,
     fontSize: fontSize * displayScale,
     color,
     fontWeight: bold ? 'bold' : 'normal',
@@ -29,8 +38,12 @@ export function TextLayer({ textClip, displayScale, baseLeft, baseTop, baseWidth
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
     lineHeight: 1.2,
-    ...(strokeColor && {
-      WebkitTextStroke: `${strokeWidth}px ${strokeColor}`,
+    ...(strokeColor && strokeWidth > 0 && {
+      // 描边宽度随显示缩放同步（与 fontSize 一致），否则预览缩小后描边相对字号过粗把字芯吃掉。
+      WebkitTextStroke: `${strokeWidth * displayScale}px ${strokeColor}`,
+      // paint-order=stroke：先描边后填充，填充盖在描边上 → 描边只露在字形外侧，
+      // 与导出端 FFmpeg drawtext 的外侧 borderw 语义一致（预览=成片），字芯保持清晰。
+      paintOrder: 'stroke',
     }),
     ...(backgroundColor && {
       backgroundColor,

@@ -9,6 +9,10 @@ export interface ProbeResult {
   durationInFrames: number | null;
   width: number | null;
   height: number | null;
+  /** 音频流编码名（如 aac/alac/mp3）；无音频或探测失败为 null */
+  audioCodec: string | null;
+  /** 视频流编码名（如 h264/hevc/prores）；无视频或探测失败为 null */
+  videoCodec: string | null;
 }
 
 const IMAGE_MIME = /^image\//;
@@ -35,12 +39,21 @@ export function probeMedia(
   return new Promise((resolve) => {
     ffmpeg.ffprobe(filePath, (err, data) => {
       if (err) {
-        resolve({ kind: kindFromMime(mime), durationInFrames: null, width: null, height: null });
+        resolve({
+          kind: kindFromMime(mime),
+          durationInFrames: null,
+          width: null,
+          height: null,
+          audioCodec: null,
+          videoCodec: null,
+        });
         return;
       }
       const stream = data.streams?.find((s) => s.width || s.codec_type === 'audio');
-      const hasVideo = data.streams?.some((s) => s.codec_type === 'video');
-      const hasAudio = data.streams?.some((s) => s.codec_type === 'audio');
+      const videoStream = data.streams?.find((s) => s.codec_type === 'video');
+      const audioStream = data.streams?.find((s) => s.codec_type === 'audio');
+      const hasVideo = !!videoStream;
+      const hasAudio = !!audioStream;
 
       let kind: AssetKind = kindFromMime(mime);
       if (IMAGE_MIME.test(mime)) kind = 'image';
@@ -56,6 +69,8 @@ export function probeMedia(
         durationInFrames,
         width: stream?.width ?? null,
         height: stream?.height ?? null,
+        audioCodec: audioStream?.codec_name ?? null,
+        videoCodec: videoStream?.codec_name ?? null,
       });
     });
   });
