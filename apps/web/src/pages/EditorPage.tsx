@@ -16,7 +16,7 @@ export function EditorPage() {
   const { data: assets = [] } = useAssets();
   const updateProject = useUpdateProject(id);
 
-  const { timeline, selectedClipId, setTimeline, selectClip } = useEditorStore();
+  const { timeline, selectedClipId, setTimeline, replaceTimeline, selectClip } = useEditorStore();
   const removeClip = useEditorStore((s) => s.removeClip);
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
@@ -185,7 +185,7 @@ export function EditorPage() {
           if (saveTimer.current) clearTimeout(saveTimer.current);
           setIsPlaying(false);
           setCurrentFrame(0);
-          setTimeline(draftTimeline);
+          replaceTimeline(draftTimeline); // 保留历史，可 undo 回退
           selectClip(null);
           updateProject.mutate({ timeline: draftTimeline });
           setAiMixOpen(false);

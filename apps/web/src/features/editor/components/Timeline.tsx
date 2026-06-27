@@ -392,17 +392,22 @@ function TextClipBlock({
   const left = framesToPx(textClip.start, fps, pxPerSecond);
   const active = currentFrame >= textClip.start && currentFrame < textClip.start + textClip.durationInFrames;
 
-  // 收集磁吸目标：播放头 + 所有轨道所有片段的 start/end + 0 点
+  // 收集磁吸目标：播放头 + 0 点 + 目标文本轨其它文本片段的 start/end
+  //                + 所有视频/音频轨片段的 start/end（文本可对齐到镜头/音频的始末）
   const collectSnapTargets = (forTrackId: string): number[] => {
     const targets = [currentFrame, 0];
     const tl = useEditorStore.getState().timeline;
     if (!tl) return targets;
-    const tk = tl.tracks.find((t) => t.id === forTrackId);
-    if (tk?.kind === 'text' && tk.textClips) {
-      for (const tc of tk.textClips) {
-        if (tc.id !== textClip.id) {
-          targets.push(tc.start, tc.start + tc.durationInFrames);
+    for (const tk of tl.tracks) {
+      if (tk.kind === 'text') {
+        // 仅目标文本轨内的其它文本片段参与对齐（排除自己）。
+        if (tk.id !== forTrackId) continue;
+        for (const tc of tk.textClips ?? []) {
+          if (tc.id !== textClip.id) targets.push(tc.start, tc.start + tc.durationInFrames);
         }
+      } else {
+        // 视频/音频轨：所有片段的始末都作为对齐点。
+        for (const c of tk.clips) targets.push(c.start, c.start + c.durationInFrames);
       }
     }
     return targets;

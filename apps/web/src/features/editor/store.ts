@@ -56,6 +56,11 @@ interface EditorState {
   propTab: '画面' | '音频' | '变速';
   setPropTab: (tab: '画面' | '音频' | '变速') => void;
   setTimeline: (timeline: Timeline) => void;
+  /**
+   * 整体替换时间轴但保留历史（与 setTimeline 不同：当前状态压入 past，可 undo 回退）。
+   * 用于「应用 AI 混编」这类整轨替换操作——应用后按 Ctrl+Z 即可回到混编前。
+   */
+  replaceTimeline: (timeline: Timeline) => void;
   selectClip: (clipId: string | null) => void;
   /**
    * 把素材放到时间轴。
@@ -143,6 +148,15 @@ export const useEditorStore = create<EditorState>((set) => ({
 
   // 初始化/加载项目：重置历史。
   setTimeline: (timeline) => set({ timeline, past: [], future: [] }),
+
+  // 整体替换但保留历史：当前状态压入 past，可 undo 回退（应用 AI 混编用）。
+  replaceTimeline: (timeline) =>
+    set((state) => ({
+      ...pushPast(state),
+      timeline,
+      selectedClipId: null,
+    })),
+
   selectClip: (clipId) => set({ selectedClipId: clipId }),
 
   addAsset: (asset, target) =>
