@@ -224,10 +224,19 @@ export function buildGraph(timeline: Timeline, assetById: Map<string, RenderAsse
     segs.push(`atrim=duration=${f(a.sourceDurationSec)}`);
     segs.push('asetpts=PTS-STARTPTS');
     for (const tp of atempoChain(t.speed)) segs.push(`atempo=${f(tp)}`);
+    // 淡入淡出基于「时间轴占用时长」（atempo 后音频流已是该长度），非源时长。
+    const clipDurationSec = a.clip.durationInFrames / fps;
+    if (t.fadeInDuration > 0) {
+      const d = Math.min(t.fadeInDuration, clipDurationSec);
+      segs.push(`afade=t=in:st=0:d=${f(d)}`);
+    }
+    if (t.fadeOutDuration > 0) {
+      const d = Math.min(t.fadeOutDuration, clipDurationSec);
+      segs.push(`afade=t=out:st=${f(clipDurationSec - d)}:d=${f(d)}`);
+    }
     if (t.volume < 0.999) segs.push(`volume=${f(t.volume)}`);
     filters.push(`[${a.inputIdx}:a]${segs.join(',')}[${clipLabel}]`);
 
-    const clipDurationSec = a.clip.durationInFrames / fps;
     const tailDurationSec = Math.max(durationSec - a.startSec - clipDurationSec, 0);
     const concatInputs: string[] = [];
     if (a.startSec > 0) {

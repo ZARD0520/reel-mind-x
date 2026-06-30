@@ -75,6 +75,10 @@ export const ClipTransformSchema = z.object({
   volume: z.number().min(0).max(1).default(1),
   /** 播放速率，1 = 原速。改变速率会按源时长重算片段在时间轴的占用长度。 */
   speed: z.number().positive().default(1),
+  /** 淡入时长（秒），0 表示无淡入 */
+  fadeInDuration: z.number().nonnegative().default(0),
+  /** 淡出时长（秒），0 表示无淡出 */
+  fadeOutDuration: z.number().nonnegative().default(0),
 });
 export type ClipTransform = z.infer<typeof ClipTransformSchema>;
 

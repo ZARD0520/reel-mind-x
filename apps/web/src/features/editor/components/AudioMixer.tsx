@@ -35,6 +35,8 @@ export function AudioMixer({ timeline, assetById, currentFrame, isPlaying, audio
             trimStart={clip.trimStart}
             volume={clip.transform.volume}
             speed={clip.transform.speed}
+            fadeInDuration={clip.transform.fadeInDuration}
+            fadeOutDuration={clip.transform.fadeOutDuration}
             muted={muted}
             fps={fps}
             currentFrame={currentFrame}
@@ -54,6 +56,8 @@ interface AudioVoiceProps {
   trimStart: number;
   volume: number;
   speed: number;
+  fadeInDuration: number;
+  fadeOutDuration: number;
   muted: boolean;
   fps: number;
   currentFrame: number;
@@ -68,6 +72,8 @@ function AudioVoice({
   trimStart,
   volume,
   speed,
+  fadeInDuration,
+  fadeOutDuration,
   muted,
   fps,
   currentFrame,
@@ -85,8 +91,23 @@ function AudioVoice({
     // 变速：timeline 推进 1 帧 → 源消耗 speed 帧。
     const targetTime = Math.max(0, ((f - start) * speed + trimStart) / fps);
 
-    el.volume = Math.max(0, Math.min(1, volume));
     el.playbackRate = speed;
+
+    // 计算当前时刻的淡入淡出增益系数（基于时间轴占用时长）。
+    const clipDurationSec = durationInFrames / fps;
+    const elapsedSec = (f - start) / fps;
+    let fadeGain = 1;
+    if (fadeInDuration > 0 && elapsedSec < fadeInDuration) {
+      fadeGain = Math.max(0, elapsedSec / fadeInDuration);
+    }
+    const remainingSec = clipDurationSec - elapsedSec;
+    if (fadeOutDuration > 0 && remainingSec < fadeOutDuration) {
+      fadeGain *= Math.max(0, remainingSec / fadeOutDuration);
+    }
+    const finalVolume = Math.max(0, Math.min(1, volume * fadeGain));
+
+    el.volume = finalVolume;
+
     if (audible) {
       if (Math.abs(el.currentTime - targetTime) > 0.3) el.currentTime = targetTime;
       // 等待 unlock，否则 play() 会被 autoplay 策略拒绝（NotAllowedError）且无法发声。
@@ -100,7 +121,7 @@ function AudioVoice({
     } else if (!el.paused) {
       el.pause();
     }
-  }, [currentFrame, isPlaying, muted, volume, speed, start, durationInFrames, trimStart, fps, audioUnlocked]);
+  }, [currentFrame, isPlaying, muted, volume, speed, fadeInDuration, fadeOutDuration, start, durationInFrames, trimStart, fps, audioUnlocked]);
 
   return <audio ref={ref} src={url} preload="auto" />;
 }

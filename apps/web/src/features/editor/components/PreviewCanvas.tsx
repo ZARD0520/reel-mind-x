@@ -308,6 +308,8 @@ export function PreviewCanvas({
                   muted={track.muted || clip.transform.volume === 0}
                   volume={clip.transform.volume}
                   speed={clip.transform.speed}
+                  fadeInDuration={clip.transform.fadeInDuration}
+                  fadeOutDuration={clip.transform.fadeOutDuration}
                   fps={fps}
                   currentFrame={currentFrame}
                   isPlaying={isPlaying}

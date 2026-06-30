@@ -164,13 +164,14 @@ function ClipBlock({
     if (dFrames !== 0) drag.current.moved = true;
     const neighbors = others(trackClips, clip.id);
 
-    // 收集吸附目标（帧）：播放头 + 目标轨各片段 start/end。
-    const collectSnapTargets = (forTrackId: string): number[] => {
+    // 收集吸附目标（帧）：播放头 + 所有轨道的片段 start/end（跨轨磁吸）。
+    const collectSnapTargets = (): number[] => {
       const targets: number[] = [currentFrame, 0];
       const tl = useEditorStore.getState().timeline;
-      const tk = tl?.tracks.find((t) => t.id === forTrackId);
-      tk?.clips.forEach((c) => {
-        if (c.id !== clip.id) targets.push(c.start, c.start + c.durationInFrames);
+      tl?.tracks.forEach((track) => {
+        track.clips.forEach((c) => {
+          if (c.id !== clip.id) targets.push(c.start, c.start + c.durationInFrames);
+        });
       });
       return targets;
     };
@@ -195,7 +196,7 @@ function ClipBlock({
       let snappedStart = raw;
       let snapLine: number | null = null;
       if (snapEnabled) {
-        const targets = collectSnapTargets(targetTrackId);
+        const targets = collectSnapTargets();
         let best = snapPxToFrames + 1;
         for (const t of targets) {
           const dL = Math.abs(raw - t);
@@ -230,7 +231,7 @@ function ClipBlock({
       // trim-right 磁吸：右边缘（start+duration）靠近目标就吸。
       let snapLine: number | null = null;
       if (snapEnabled) {
-        const targets = collectSnapTargets(trackId);
+        const targets = collectSnapTargets();
         const rightEdge = clip.start + newDuration;
         for (const t of targets) {
           if (Math.abs(rightEdge - t) <= snapPxToFrames) {
@@ -255,7 +256,7 @@ function ClipBlock({
       // trim-left 磁吸：左边缘（start）靠近目标就吸。
       let snapLine: number | null = null;
       if (snapEnabled) {
-        const targets = collectSnapTargets(trackId);
+        const targets = collectSnapTargets();
         for (const t of targets) {
           if (Math.abs(next.start - t) <= snapPxToFrames) {
             const delta = t - origStart;
@@ -392,16 +393,15 @@ function TextClipBlock({
   const left = framesToPx(textClip.start, fps, pxPerSecond);
   const active = currentFrame >= textClip.start && currentFrame < textClip.start + textClip.durationInFrames;
 
-  // 收集磁吸目标：播放头 + 0 点 + 目标文本轨其它文本片段的 start/end
+  // 收集磁吸目标：播放头 + 0 点 + 所有文本片段的 start/end
   //                + 所有视频/音频轨片段的 start/end（文本可对齐到镜头/音频的始末）
-  const collectSnapTargets = (forTrackId: string): number[] => {
+  const collectSnapTargets = (): number[] => {
     const targets = [currentFrame, 0];
     const tl = useEditorStore.getState().timeline;
     if (!tl) return targets;
     for (const tk of tl.tracks) {
       if (tk.kind === 'text') {
-        // 仅目标文本轨内的其它文本片段参与对齐（排除自己）。
-        if (tk.id !== forTrackId) continue;
+        // 所有文本轨的其它文本片段都参与对齐（排除自己）。
         for (const tc of tk.textClips ?? []) {
           if (tc.id !== textClip.id) targets.push(tc.start, tc.start + tc.durationInFrames);
         }
@@ -471,7 +471,7 @@ function TextClipBlock({
       let snapLine: number | null = null;
 
       if (snapEnabled) {
-        const targets = collectSnapTargets(targetTrackId);
+        const targets = collectSnapTargets();
         let best = snapPxToFrames + 1;
         for (const t of targets) {
           const dL = Math.abs(raw - t);
@@ -504,7 +504,7 @@ function TextClipBlock({
       let snapLine: number | null = null;
 
       if (snapEnabled) {
-        const targets = collectSnapTargets(trackId);
+        const targets = collectSnapTargets();
         const rightEdge = textClip.start + newDuration;
         for (const t of targets) {
           if (Math.abs(rightEdge - t) <= snapPxToFrames) {
@@ -526,7 +526,7 @@ function TextClipBlock({
       let snapLine: number | null = null;
 
       if (snapEnabled) {
-        const targets = collectSnapTargets(trackId);
+        const targets = collectSnapTargets();
         for (const t of targets) {
           if (Math.abs(newStart - t) <= snapPxToFrames) {
             const clampedStart = t;

@@ -6,7 +6,7 @@ function uuid(): string {
 }
 
 function defaultTransform(): Clip['transform'] {
-  return { scale: 1, x: 0, y: 0, rotation: 0, opacity: 1, volume: 1, speed: 1 };
+  return { scale: 1, x: 0, y: 0, rotation: 0, opacity: 1, volume: 1, speed: 1, fadeInDuration: 0, fadeOutDuration: 0 };
 }
 
 function textStyle(fontSize: number): TextClip['style'] {

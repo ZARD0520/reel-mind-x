@@ -231,11 +231,29 @@ export function PropertiesPanel() {
   const t = clip.transform;
   const cid = clip.id;
 
+  // 音频片段只显示"音频"和"变速"tab，移除"画面"
+  const availableTabs = isAudioTrack ? TABS.filter((tab) => tab !== '画面') : TABS;
+  // 如果当前 active tab 不在可用列表中，切换到第一个可用 tab
+  const effectiveTab = availableTabs.includes(active) ? active : availableTabs[0];
+
   return (
     <div className="flex h-full w-[300px] flex-col border-l border-border-subtle bg-surface">
-      {header}
+      <div className="flex h-[46px] items-center border-b border-border-subtle px-2">
+        {availableTabs.map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => setActive(tab)}
+            className={`flex h-full items-center px-3.5 text-sm ${
+              tab === effectiveTab ? 'font-semibold text-fg' : 'text-fg-secondary'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
       <div className="flex flex-col gap-[22px] overflow-y-auto p-[18px]">
-        {active === '画面' && (
+        {effectiveTab === '画面' && (
           <>
             <section className="flex flex-col gap-3.5">
               <h3 className="text-[13px] font-semibold">变换</h3>
@@ -265,13 +283,10 @@ export function PropertiesPanel() {
                 onChange={(v) => updateTransform(cid, { rotation: v })}
               />
             </section>
-            {isAudioTrack && (
-              <p className="text-[12px] text-fg-tertiary">音频片段无画面属性。</p>
-            )}
           </>
         )}
 
-        {active === '音频' && (
+        {effectiveTab === '音频' && (
           <section className="flex flex-col gap-3.5">
             <h3 className="text-[13px] font-semibold">音频</h3>
             <SliderRow
@@ -281,6 +296,24 @@ export function PropertiesPanel() {
               min={0}
               max={1}
               onChange={(v) => updateTransform(cid, { volume: v })}
+            />
+            <SliderRow
+              label="淡入"
+              value={`${t.fadeInDuration.toFixed(1)}s`}
+              current={t.fadeInDuration}
+              min={0}
+              max={5}
+              step={0.1}
+              onChange={(v) => updateTransform(cid, { fadeInDuration: v })}
+            />
+            <SliderRow
+              label="淡出"
+              value={`${t.fadeOutDuration.toFixed(1)}s`}
+              current={t.fadeOutDuration}
+              min={0}
+              max={5}
+              step={0.1}
+              onChange={(v) => updateTransform(cid, { fadeOutDuration: v })}
             />
             <button
               type="button"
@@ -292,7 +325,7 @@ export function PropertiesPanel() {
           </section>
         )}
 
-        {active === '变速' && (
+        {effectiveTab === '变速' && (
           <section className="flex flex-col gap-3.5">
             <h3 className="text-[13px] font-semibold">变速</h3>
             <SliderRow
