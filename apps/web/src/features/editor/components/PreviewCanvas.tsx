@@ -4,6 +4,7 @@ import type { Asset, Clip, TextClip, Timeline, Track } from '@reel/contracts';
 import { useAssets } from '../hooks';
 import { useAudioUnlock } from '../useAudioUnlock';
 import { useEditorStore } from '../store';
+import { previewTransitions, transitionStyle, type TransitionStyle } from '../transitions';
 import { TransformBox } from './TransformBox';
 import { AudioMixer } from './AudioMixer';
 import { VideoLayer } from './VideoLayer';
@@ -34,11 +35,16 @@ interface ActiveLayer {
   clip: Clip;
   asset: Asset;
   track: Track;
+  /** 预览用转场样式：命中转场区时的不透明度 + transform/clip-path */
+  transition?: TransitionStyle & { role: 'from' | 'to' };
 }
 
 /**
  * 当前帧命中的所有可见视频/图片片段，按图层顺序（底→顶）返回。
  * tracks 数组开头＝底层、末尾＝顶层，正序遍历即底→顶；靠后的盖在靠前的上面。
+ * 预览不做时间位移（播放头不跳动），在**存储位置**判定转场：
+ * - 出方（from）：在转场区内按曲线淡出 / 位移 / 裁切；
+ * - 入方（to）：虽尚未到其 start，也提前加入图层并淡入（显示其首帧）。
  */
 function findActiveLayers(
   timeline: Timeline,
@@ -49,12 +55,33 @@ function findActiveLayers(
   const layers: ActiveLayer[] = [];
   for (const track of timeline.tracks) {
     if (track.kind !== 'video' || track.hidden) continue;
+    const xfades = previewTransitions(track.clips, timeline.settings.fps);
+    const trackLayers: ActiveLayer[] = [];
+
+    // 命中的正常片段（可能是某转场的出方）。
     for (const clip of track.clips) {
-      if (f >= clip.start && f < clip.start + clip.durationInFrames) {
-        const asset = assetById.get(clip.assetId);
-        if (asset?.status === 'ready' && asset.url) layers.push({ clip, asset, track });
+      if (f < clip.start || f >= clip.start + clip.durationInFrames) continue;
+      const asset = assetById.get(clip.assetId);
+      if (!(asset?.status === 'ready' && asset.url)) continue;
+      const layer: ActiveLayer = { clip, asset, track };
+      const xf = xfades.find((x) => x.from.id === clip.id && f >= x.startFrame && f < x.startFrame + x.durFrames);
+      if (xf) {
+        const style = transitionStyle(xf.type, (f - xf.startFrame) / xf.durFrames);
+        layer.transition = { ...style, role: 'from' };
       }
+      trackLayers.push(layer);
     }
+
+    // 转场区内提前加入的入方片段（淡入，压在出方之上）。
+    for (const xf of xfades) {
+      if (f < xf.startFrame || f >= xf.startFrame + xf.durFrames) continue;
+      const asset = assetById.get(xf.to.assetId);
+      if (!(asset?.status === 'ready' && asset.url)) continue;
+      const style = transitionStyle(xf.type, (f - xf.startFrame) / xf.durFrames);
+      trackLayers.push({ clip: xf.to, asset, track, transition: { ...style, role: 'to' } });
+    }
+
+    layers.push(...trackLayers);
   }
   return layers;
 }
@@ -282,25 +309,44 @@ export function PreviewCanvas({
           style={isFullscreen ? undefined : { width: stageW, height: stageH }}
         >
           {/* 多层叠加：按图层顺序（底→顶）渲染每个命中片段，各自 transform/opacity */}
-          {layers.map(({ clip, asset, track }, i) =>
-            asset.kind === 'image' ? (
+          {layers.map(({ clip, asset, track, transition }, i) => {
+            // 转场区内用转场样式，否则用片段本身属性。
+            const baseOpacity = clip.transform.opacity;
+            const transitionOpacity = transition
+              ? transition.role === 'from'
+                ? transition.fromOpacity
+                : transition.toOpacity
+              : 1;
+            const finalOpacity = baseOpacity * transitionOpacity;
+
+            const baseTransform = layerTransform(clip);
+            // 转场 transform 叠加在片段自身 transform 之后（slideleft 等）
+            const transitionTransform =
+              transition?.role === 'from' ? transition.fromTransform : transition?.role === 'to' ? transition.toTransform : undefined;
+            const finalTransform = transitionTransform ? `${baseTransform} ${transitionTransform}` : baseTransform;
+
+            const clipPath =
+              transition?.role === 'from' ? transition.fromClip : transition?.role === 'to' ? transition.toClip : undefined;
+
+            return asset.kind === 'image' ? (
               <img
-                key={clip.id}
+                key={`${clip.id}-${i}`}
                 src={asset.url!}
                 alt={asset.name}
                 className="absolute inset-0 h-full w-full object-contain"
                 style={{
-                  transform: layerTransform(clip),
+                  transform: finalTransform,
                   transformOrigin: 'center',
-                  opacity: clip.transform.opacity,
+                  opacity: finalOpacity,
+                  clipPath,
                   zIndex: i,
                 }}
               />
             ) : (
               <div
-                key={clip.id}
+                key={`${clip.id}-${i}`}
                 className="absolute inset-0"
-                style={{ zIndex: i, opacity: clip.transform.opacity }}
+                style={{ zIndex: i, opacity: finalOpacity, clipPath, transform: transitionTransform, transformOrigin: 'center' }}
               >
                 <VideoLayer
                   clip={clip}
@@ -313,11 +359,11 @@ export function PreviewCanvas({
                   fps={fps}
                   currentFrame={currentFrame}
                   isPlaying={isPlaying}
-                  transform={layerTransform(clip)}
+                  transform={baseTransform}
                 />
               </div>
-            ),
-          )}
+            );
+          })}
           {/* 文本图层：当前帧命中的文本片段，叠加在视频之上 */}
           {timeline?.tracks
             .filter((t) => t.kind === 'text')

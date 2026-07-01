@@ -88,6 +88,8 @@ interface EditorState {
   updateClipTransform: (clipId: string, patch: Partial<Clip['transform']>) => void;
   /** 设置片段播放速率，并按源时长重算时间轴占用长度（碰撞内 clamp）。不入历史。 */
   setClipSpeed: (clipId: string, speed: number) => void;
+  /** 设置片段转场效果（null=移除转场）。入历史。 */
+  setClipTransition: (clipId: string, transition: Clip['transitionOut']) => void;
   /** 把片段迁移到另一轨道（同类型），碰撞吸附到目标轨最近合法位置（或指定位置）。入历史。 */
   relocateClip: (clipId: string, toTrackId: string, atFrame?: number) => void;
   /** 把片段插入目标轨道指定帧位置，推挤该位置及之后的片段往后让位。入历史。 */
@@ -173,6 +175,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         durationInFrames: duration,
         trimStart: 0,
         transform: defaultTransform(),
+        transitionOut: null,
       };
 
       let tracks = [...state.timeline.tracks];
@@ -315,6 +318,16 @@ export const useEditorStore = create<EditorState>((set) => ({
       return { timeline: { ...state.timeline, tracks } };
     }),
 
+  setClipTransition: (clipId, transition) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      const tracks = mapClipTrack(state.timeline.tracks, clipId, (c) => ({
+        ...c,
+        transitionOut: transition,
+      }));
+      return { ...pushPast(state), timeline: { ...state.timeline, tracks } };
+    }),
+
   relocateClip: (clipId, toTrackId, atFrame) =>
     set((state) => {
       if (!state.timeline) return state;
@@ -433,7 +446,8 @@ export const useEditorStore = create<EditorState>((set) => ({
           for (const c of t.clips) {
             if (c.id === clipId && frame > c.start && frame < c.start + c.durationInFrames) {
               const leftDur = frame - c.start;
-              clips.push({ ...c, durationInFrames: leftDur });
+              // 左半段与右半段是同一素材的硬切，清除左半的转场（转场语义是「到下一个不同片段」）。
+              clips.push({ ...c, durationInFrames: leftDur, transitionOut: null });
               clips.push({
                 ...c,
                 id: newId,

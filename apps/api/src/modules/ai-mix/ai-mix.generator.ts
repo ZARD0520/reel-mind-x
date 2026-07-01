@@ -111,6 +111,7 @@ function buildVisualClips(assets: Asset[], input: CreateAiMixInput, totalFrames:
         ? Math.round(((index * 0.17) % 0.65) * Math.max(0, clipDuration(asset, duration) - duration))
         : 0,
       transform: defaultTransform(),
+      transitionOut: null,
     });
     cursor += duration;
     index += 1;
@@ -129,6 +130,7 @@ function buildAudioClips(assets: Asset[], totalFrames: number): Clip[] {
       durationInFrames: Math.min(totalFrames, clipDuration(audio, totalFrames)),
       trimStart: 0,
       transform: { ...defaultTransform(), volume: 0.65 },
+      transitionOut: null,
     },
   ];
 }

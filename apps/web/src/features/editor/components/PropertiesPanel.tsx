@@ -1,5 +1,6 @@
 import { useEditorStore } from '../store';
-import type { Clip, TextClip } from '@reel/contracts';
+import type { Clip, TextClip, TransitionType } from '@reel/contracts';
+import { TRANSITION_OPTIONS, findAdjacentNext } from '../transitions';
 
 type TabKey = '画面' | '音频' | '变速';
 const TABS: TabKey[] = ['画面', '音频', '变速'];
@@ -35,14 +36,14 @@ function SliderRow({ label, value, current, min, max, step = 0.01, onChange }: S
   );
 }
 
-/** 找到选中片段及其所在轨道类型 */
-function useSelectedClip(): { clip: Clip; isAudioTrack: boolean } | null {
+/** 找到选中片段及其所在轨道类型、同轨片段列表 */
+function useSelectedClip(): { clip: Clip; isAudioTrack: boolean; trackClips: Clip[] } | null {
   const timeline = useEditorStore((s) => s.timeline);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   if (!timeline || !selectedClipId) return null;
   for (const track of timeline.tracks) {
     const clip = track.clips.find((c) => c.id === selectedClipId);
-    if (clip) return { clip, isAudioTrack: track.kind === 'audio' };
+    if (clip) return { clip, isAudioTrack: track.kind === 'audio', trackClips: track.clips };
   }
   return null;
 }
@@ -191,6 +192,7 @@ export function PropertiesPanel() {
   const setActive = useEditorStore((s) => s.setPropTab);
   const updateTransform = useEditorStore((s) => s.updateClipTransform);
   const setClipSpeed = useEditorStore((s) => s.setClipSpeed);
+  const setClipTransition = useEditorStore((s) => s.setClipTransition);
   const selected = useSelectedClip();
   const selectedText = useSelectedTextClip();
 
@@ -227,9 +229,13 @@ export function PropertiesPanel() {
     );
   }
 
-  const { clip, isAudioTrack } = selected;
+  const { clip, isAudioTrack, trackClips } = selected;
   const t = clip.transform;
   const cid = clip.id;
+
+  // 转场条件：视频轨道 + 存在紧邻的后一片段（才能设转场）。
+  const nextClip = findAdjacentNext(trackClips, clip);
+  const canTransition = !isAudioTrack && nextClip !== null;
 
   // 音频片段只显示"音频"和"变速"tab，移除"画面"
   const availableTabs = isAudioTrack ? TABS.filter((tab) => tab !== '画面') : TABS;
@@ -283,6 +289,48 @@ export function PropertiesPanel() {
                 onChange={(v) => updateTransform(cid, { rotation: v })}
               />
             </section>
+
+            {canTransition && (
+              <section className="flex flex-col gap-3.5 border-t border-border-subtle pt-4">
+                <h3 className="text-[13px] font-semibold">转场</h3>
+                <div className="flex flex-col gap-2">
+                  <span className="text-[13px] text-fg-secondary">效果</span>
+                  <select
+                    value={clip.transitionOut?.type ?? 'none'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === 'none') {
+                        setClipTransition(cid, null);
+                      } else {
+                        setClipTransition(cid, { type: val as TransitionType, duration: clip.transitionOut?.duration ?? 0.5 });
+                      }
+                    }}
+                    className="rounded-md border border-border-subtle bg-base px-3 py-1.5 text-[13px] text-fg outline-none focus:border-accent"
+                  >
+                    <option value="none">无转场（硬切）</option>
+                    {TRANSITION_OPTIONS.map((opt) => (
+                      <option key={opt.type} value={opt.type}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {clip.transitionOut && (
+                  <SliderRow
+                    label="时长"
+                    value={`${clip.transitionOut.duration.toFixed(1)}s`}
+                    current={clip.transitionOut.duration}
+                    min={0.1}
+                    max={2}
+                    step={0.1}
+                    onChange={(v) => setClipTransition(cid, { ...clip.transitionOut!, duration: v })}
+                  />
+                )}
+                <p className="text-[12px] text-fg-tertiary">
+                  转场只在相邻片段间生效。转场期间后一片段显示其首帧渐入，转场结束后正常播放。预览与导出效果一致。
+                </p>
+              </section>
+            )}
           </>
         )}
 

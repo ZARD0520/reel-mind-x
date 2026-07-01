@@ -82,6 +82,29 @@ export const ClipTransformSchema = z.object({
 });
 export type ClipTransform = z.infer<typeof ClipTransformSchema>;
 
+// ───────────────────────── 转场效果 Transition ─────────────────────────
+
+/**
+ * 转场类型：用 FFmpeg xfade 滤镜实现（MVP 先做 6 种常用）。
+ * 转场发生在「本片段结尾 → 下一片段开头」，两者在时间轴上重叠 duration 秒。
+ */
+export const TransitionTypeSchema = z.enum([
+  'fade',        // 淡入淡出（最通用）
+  'fadeblack',   // 经过黑场
+  'dissolve',    // 溶解（像素随机）
+  'slideleft',   // 左滑
+  'wiperight',   // 右擦除
+  'circleopen',  // 圆形展开
+]);
+export type TransitionType = z.infer<typeof TransitionTypeSchema>;
+
+/** 转场配置：duration 是转场持续时长（秒），须 ≤ 两个片段中较短者的时长 */
+export const TransitionSchema = z.object({
+  type: TransitionTypeSchema,
+  duration: z.number().min(0.1).max(3).default(0.5),
+});
+export type Transition = z.infer<typeof TransitionSchema>;
+
 // ───────────────────────── 片段 Clip ─────────────────────────
 
 /**
@@ -89,6 +112,7 @@ export type ClipTransform = z.infer<typeof ClipTransformSchema>;
  * - start: 在时间轴上的起始帧
  * - durationInFrames: 在时间轴上占用的帧数
  * - trimStart: 从素材源的第几帧开始取（video/audio 有意义；image 忽略）
+ * - transitionOut: 从本片段过渡到同轨下一片段的转场效果（null=硬切）
  */
 export const ClipSchema = z.object({
   id: z.string().uuid(),
@@ -97,6 +121,7 @@ export const ClipSchema = z.object({
   durationInFrames: z.number().int().positive(),
   trimStart: z.number().int().nonnegative().default(0),
   transform: ClipTransformSchema.default({}),
+  transitionOut: TransitionSchema.nullable().default(null),
 });
 export type Clip = z.infer<typeof ClipSchema>;
 
