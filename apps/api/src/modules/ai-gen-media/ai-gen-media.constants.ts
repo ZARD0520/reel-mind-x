@@ -20,4 +20,5 @@ export interface GenerateImageJobPayload {
 export interface GenerateVideoJobPayload {
   assetId: string;
   prompt: string;
+  size: string;
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Maximize, Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 import type { Asset, Clip, TextClip, Timeline, Track } from '@reel/contracts';
+import { ASPECT_RATIOS } from '../constants';
 import { useAssets } from '../hooks';
 import { useAudioUnlock } from '../useAudioUnlock';
 import { useEditorStore } from '../store';
@@ -13,15 +14,6 @@ import { TextLayer } from './TextLayer';
 // 预览舞台最大尺寸（容器）；实际画布按项目比例 object-contain。
 const MAX_PREVIEW_W = 640;
 const MAX_PREVIEW_H = 480;
-
-// 常见项目比例（宽:高）
-const ASPECT_RATIOS = [
-  { label: '16:9 横屏', w: 16, h: 9 },
-  { label: '9:16 竖屏', w: 9, h: 16 },
-  { label: '1:1 方形', w: 1, h: 1 },
-  { label: '4:3 标清', w: 4, h: 3 },
-  { label: '21:9 超宽', w: 21, h: 9 },
-] as const;
 
 function formatTimecode(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));

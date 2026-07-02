@@ -88,7 +88,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }),
-    generateVideo: (body: { prompt: string }) =>
+    generateVideo: (body: { prompt: string; size?: string }) =>
       request('/ai-gen-media/video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

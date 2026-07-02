@@ -73,7 +73,7 @@ export class ZhipuAiGenProvider implements AiGenProvider {
   }
 
   async generateVideo(options: GenerateOptions): Promise<GenerateResult> {
-    const { prompt, signal } = options;
+    const { prompt, size, signal } = options;
     const submitUrl = `${this.baseUrl}/videos/generations`;
 
     try {
@@ -87,6 +87,8 @@ export class ZhipuAiGenProvider implements AiGenProvider {
         body: JSON.stringify({
           model: this.videoModel,
           prompt,
+          // 注意：CogVideoX API 可能用 image_size 字段而非 size，实际运行时验证。
+          ...(size && { image_size: size }),
         }),
         signal,
       });

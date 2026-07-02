@@ -75,10 +75,10 @@ export class AiGenMediaProcessor extends WorkerHost {
 
   /** 视频生成：调 CogVideoX（轮询）→ 下载 → probe → 更新 Asset */
   private async processVideo(job: Job<GenerateVideoJobPayload>): Promise<void> {
-    const { assetId, prompt } = job.data;
+    const { assetId, prompt, size } = job.data;
     this.logger.log(`视频生成 ${assetId} 开始: ${prompt.slice(0, 40)}`);
     try {
-      const result = await this.provider.generateVideo({ prompt });
+      const result = await this.provider.generateVideo({ prompt, size });
       await this.downloadAndFinalize(assetId, result.url, 'video', 'mp4');
       this.logger.log(`视频生成 ${assetId} 完成`);
     } catch (err) {

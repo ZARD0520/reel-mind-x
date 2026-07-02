@@ -619,3 +619,17 @@
   - 视频无法控制时长/尺寸（CogVideoX-Flash 固定 6s、720p），prompt 是唯一控制项。
   - 生成失败时 Asset 状态为 `failed`，前端显示错误（可点删除）。
 - **状态**：✅ 后端 typecheck + build 通过，前端 typecheck + build 通过。需后端起服务 + 真实 GLM Key 做端到端验证（图像生成 5-10s，视频生成 1-3 分钟）。
+
+### D51. AI 生成尺寸选择（复用画布比例）（2026-07-02）
+- **决策**：AI 生成图片/视频时可选比例（16:9/9:16/1:1/4:3），选项与画布比例选择器保持一致。
+- **实现**：
+  - `ASPECT_RATIOS` 从 `PreviewCanvas.tsx` 抽到 `features/editor/constants.ts`，画布比例选择器与 AI 生成共用（单一事实来源）。
+  - 新增 `IMAGE_SIZE_BY_RATIO` / `VIDEO_SIZE_BY_RATIO`：比例 → 智谱 API 的 size 参数映射。
+    - 图像（CogView）：16:9→1344x768，9:16→768x1344，1:1→1024x1024，4:3→1024x768。
+    - 视频（CogVideoX）：16:9→1280x720，9:16→720x1280，1:1→960x960。
+    - 智谱不支持的比例（21:9、视频的 4:3）回退到 16:9。
+  - `AiMediaGenDialog` 加比例选择器（4 个按钮），默认 16:9。提交时按 type 查对应 size 映射。
+  - `@reel/contracts`：`GenerateImageSchema` / `GenerateVideoSchema` 的 `size` 改为正则校验的字符串（`\d+x\d+`），不再硬编码 enum（各模型支持尺寸不同，前端负责映射）。
+  - 后端 job payload、processor、`ZhipuAiGenProvider.generateVideo` 都透传 size。
+- **注意**：CogVideoX 的 size 字段名（`image_size` vs `size`）需运行时验证，代码里已注释。
+- **状态**：✅ 前后端 typecheck + build 全通过。

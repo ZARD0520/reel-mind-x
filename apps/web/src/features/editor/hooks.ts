@@ -38,13 +38,13 @@ export function useGenerateMedia() {
   const qc = useQueryClient();
   const invalidate = () => qc.invalidateQueries({ queryKey: ['assets'] });
   const image = useMutation({
-    mutationFn: (prompt: string) =>
-      api.aiGenMedia.generateImage({ prompt }) as Promise<Asset>,
+    mutationFn: (input: { prompt: string; size: string }) =>
+      api.aiGenMedia.generateImage(input) as Promise<Asset>,
     onSuccess: invalidate,
   });
   const video = useMutation({
-    mutationFn: (prompt: string) =>
-      api.aiGenMedia.generateVideo({ prompt }) as Promise<Asset>,
+    mutationFn: (input: { prompt: string; size: string }) =>
+      api.aiGenMedia.generateVideo(input) as Promise<Asset>,
     onSuccess: invalidate,
   });
   return { image, video };

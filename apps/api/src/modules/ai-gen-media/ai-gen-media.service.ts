@@ -68,7 +68,7 @@ export class AiGenMediaService {
 
   /** 提交视频生成任务（返回 Asset placeholder，job 异步轮询智谱） */
   async generateVideo(input: GenerateVideoInput): Promise<Asset> {
-    const { prompt } = input;
+    const { prompt, size } = input;
     const assetId = randomUUID();
 
     // 创建 Asset 占位符（status=generating）
@@ -91,7 +91,7 @@ export class AiGenMediaService {
     // 入队：BullMQ job 轮询智谱异步任务 → 下载 → 更新 Asset
     await this.queue.add(
       JobNames.GENERATE_VIDEO,
-      { assetId, prompt } as GenerateVideoJobPayload,
+      { assetId, prompt, size } as GenerateVideoJobPayload,
       JOB_OPTS,
     );
 

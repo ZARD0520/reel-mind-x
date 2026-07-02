@@ -344,16 +344,22 @@ export type GeneratedText = z.infer<typeof GeneratedTextSchema>;
 
 // ───────────────────────── AI 图像/视频生成 ─────────────────────────
 
+/** 生成尺寸格式：宽x高（如 "1280x720"）。前端按比例映射到各模型支持的尺寸。 */
+const SizeSchema = z
+  .string()
+  .regex(/^\d{2,5}x\d{2,5}$/, 'size 格式应为 "宽x高"，如 1280x720');
+
 /** AI 图像生成请求 */
 export const GenerateImageSchema = z.object({
   prompt: z.string().min(1).max(2000),
-  size: z.enum(['1024x1024', '768x1024', '1024x768']).default('1024x1024'),
+  size: SizeSchema.default('1024x1024'),
 });
 export type GenerateImageInput = z.infer<typeof GenerateImageSchema>;
 
 /** AI 视频生成请求 */
 export const GenerateVideoSchema = z.object({
   prompt: z.string().min(1).max(2000),
+  size: SizeSchema.default('1280x720'),
 });
 export type GenerateVideoInput = z.infer<typeof GenerateVideoSchema>;
 
