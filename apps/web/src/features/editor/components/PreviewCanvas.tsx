@@ -166,6 +166,20 @@ export function PreviewCanvas({
   const stageRef = useRef<HTMLDivElement>(null);
   // 全屏时容器实际尺寸（用于重新计算 displayScale）
   const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
+  // 预览区可用空间（非全屏），用于让舞台自适应而不挤压控制条。
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState<{ w: number; h: number } | null>(null);
+
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect) setViewport({ w: rect.width, h: rect.height });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const fps = timeline?.settings.fps ?? 30;
   const projectW = timeline?.settings.width ?? 1920;
@@ -175,11 +189,12 @@ export function PreviewCanvas({
   const layers = timeline ? findActiveLayers(timeline, currentFrame, assetById) : [];
   const hasVisual = layers.length > 0;
 
-  // 预览舞台尺寸：按项目比例在最大容器内 object-contain。
+  // 预览舞台尺寸：按项目比例在可用空间内 object-contain。
   const projectAspect = projectW / projectH;
-  let stageW = MAX_PREVIEW_W;
-  let stageH = MAX_PREVIEW_H;
-  // 全屏时用实际容器尺寸代替固定值
+  // 非全屏用实测可用空间（回退到固定值），全屏用容器实际尺寸。
+  let stageW = viewport?.w ?? MAX_PREVIEW_W;
+  let stageH = viewport?.h ?? MAX_PREVIEW_H;
+  // 全屏时用实际容器尺寸代替
   if (containerSize) {
     stageW = containerSize.w;
     stageH = containerSize.h;
@@ -291,7 +306,7 @@ export function PreviewCanvas({
           {projectW} × {projectH}
         </span>
       </div>
-      <div className="flex flex-1 items-center justify-center p-8">
+      <div ref={viewportRef} className="flex min-h-0 flex-1 items-center justify-center p-8">
         <div
           ref={stageRef}
           onClick={() => isFullscreen && onTogglePlay()}
@@ -407,9 +422,12 @@ export function PreviewCanvas({
         </div>
       </div>
 
-      <div className="flex h-13 items-center justify-between border-t border-border-subtle bg-surface px-5 py-3">
+      <div className="grid h-13 grid-cols-[1fr_auto_1fr] items-center border-t border-border-subtle bg-surface px-5 py-3">
+        {/* 左侧：时长 */}
         <span className="text-[13px] tabular-nums text-fg-secondary">{timecode} / {totalTimecode}</span>
-        <div className="flex items-center gap-[18px]">
+
+        {/* 中间：播放控制（居中） */}
+        <div className="flex items-center justify-center gap-[18px]">
           <button
             type="button"
             onClick={() => onSeek(0)}
@@ -432,13 +450,17 @@ export function PreviewCanvas({
             <SkipForward className="h-[18px] w-[18px]" />
           </button>
         </div>
-        <button
-          type="button"
-          onClick={toggleFullscreen}
-          className="text-fg-secondary hover:text-fg"
-        >
-          <Maximize className="h-[17px] w-[17px]" />
-        </button>
+
+        {/* 右侧：全屏按钮 */}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="text-fg-secondary hover:text-fg"
+          >
+            <Maximize className="h-[17px] w-[17px]" />
+          </button>
+        </div>
       </div>
     </div>
   );
