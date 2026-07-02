@@ -15,6 +15,19 @@ const envSchema = z.object({
   EXPORT_SUBDIR: z.string().default('exports'),
   /** 静态资源对外基地址，用于拼 Asset.url */
   PUBLIC_URL: z.string().url().default('http://localhost:3888'),
+  /** 智谱 API 密钥（文本/图像/视频生成共用） */
+  GLM_API_KEY: z.string().min(1),
+  /** 智谱 API 基地址（可选，默认智谱开放平台 v4） */
+  GLM_BASE_URL: z
+    .string()
+    .url()
+    .default('https://open.bigmodel.cn/api/paas/v4'),
+  /** 默认文本模型 */
+  GLM_MODEL: z.string().default('glm-4-flash'),
+  /** 默认图像模型 */
+  GLM_IMAGE_MODEL: z.string().default('cogview-3-flash'),
+  /** 默认视频模型 */
+  GLM_VIDEO_MODEL: z.string().default('cogvideox-flash'),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -300,3 +300,76 @@ export const AiMixJobSchema = z.object({
   createdAt: z.coerce.date(),
 });
 export type AiMixJob = z.infer<typeof AiMixJobSchema>;
+
+// ───────────────────────── AI 文本生成 LLM ─────────────────────────
+
+/** 对话消息（用于带历史的多轮对话） */
+export const ChatMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1),
+});
+export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+
+/** AI 文本生成请求入参 */
+export const GenerateTextSchema = z.object({
+  /** 用户提示词（单轮快捷模式，与 messages 二选一） */
+  prompt: z.string().min(1).max(2000).optional(),
+  /** 完整对话历史（多轮模式，包含所有 user 和 assistant 消息） */
+  messages: z.array(ChatMessageSchema).optional(),
+  /** 生成文本的最大字数限制（默认 100 字） */
+  maxLength: z.number().int().positive().default(100),
+  /** 模型温度（0-1，越高越随机），可选 */
+  temperature: z.number().min(0).max(1).optional(),
+}).refine((data) => data.prompt || data.messages, {
+  message: 'prompt 或 messages 必须提供其一',
+});
+export type GenerateTextInput = z.infer<typeof GenerateTextSchema>;
+
+/** AI 文本生成响应 */
+export const GeneratedTextSchema = z.object({
+  /** 生成的文本内容 */
+  text: z.string(),
+  /** 实际使用的模型名称 */
+  model: z.string(),
+  /** token 消耗统计（可选） */
+  usage: z
+    .object({
+      promptTokens: z.number().int(),
+      completionTokens: z.number().int(),
+      totalTokens: z.number().int(),
+    })
+    .optional(),
+});
+export type GeneratedText = z.infer<typeof GeneratedTextSchema>;
+
+// ───────────────────────── AI 图像/视频生成 ─────────────────────────
+
+/** AI 图像生成请求 */
+export const GenerateImageSchema = z.object({
+  prompt: z.string().min(1).max(2000),
+  size: z.enum(['1024x1024', '768x1024', '1024x768']).default('1024x1024'),
+});
+export type GenerateImageInput = z.infer<typeof GenerateImageSchema>;
+
+/** AI 视频生成请求 */
+export const GenerateVideoSchema = z.object({
+  prompt: z.string().min(1).max(2000),
+});
+export type GenerateVideoInput = z.infer<typeof GenerateVideoSchema>;
+
+/** AI 生成任务状态（复用 Asset 生成状态） */
+export const AiGenJobStatusSchema = z.enum(['queued', 'generating', 'completed', 'failed']);
+export type AiGenJobStatus = z.infer<typeof AiGenJobStatusSchema>;
+
+/** AI 生成任务记录 */
+export const AiGenJobSchema = z.object({
+  id: z.string().uuid(),
+  /** 生成的 Asset ID（generating 时存在，前端轮询该 Asset 的 status） */
+  assetId: z.string().uuid().nullable(),
+  type: z.enum(['image', 'video']),
+  prompt: z.string(),
+  status: AiGenJobStatusSchema,
+  error: z.string().nullable(),
+  createdAt: z.coerce.date(),
+});
+export type AiGenJob = z.infer<typeof AiGenJobSchema>;

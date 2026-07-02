@@ -27,7 +27,27 @@ export function useAssets() {
   return useQuery<Asset[]>({
     queryKey: ['assets'],
     queryFn: () => api.assets.list() as Promise<Asset[]>,
+    // 有 AI 素材在生成中时，每 3s 轮询直到全部 ready/failed。
+    refetchInterval: (q) =>
+      (q.state.data ?? []).some((a) => a.status === 'generating') ? 3000 : false,
   });
+}
+
+/** AI 生成图像/视频：提交后返回 generating 占位 Asset，列表轮询到 ready。 */
+export function useGenerateMedia() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['assets'] });
+  const image = useMutation({
+    mutationFn: (prompt: string) =>
+      api.aiGenMedia.generateImage({ prompt }) as Promise<Asset>,
+    onSuccess: invalidate,
+  });
+  const video = useMutation({
+    mutationFn: (prompt: string) =>
+      api.aiGenMedia.generateVideo({ prompt }) as Promise<Asset>,
+    onSuccess: invalidate,
+  });
+  return { image, video };
 }
 
 export function useUploadAsset() {

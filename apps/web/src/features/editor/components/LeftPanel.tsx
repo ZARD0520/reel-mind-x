@@ -4,6 +4,8 @@ import type { LucideIcon } from 'lucide-react';
 import type { Asset } from '@reel/contracts';
 import { useAssets, useDeleteAsset, useUploadAsset } from '../hooks';
 import { useEditorStore } from '../store';
+import { TextGenDialog } from './TextGenDialog';
+import { AiMediaGenDialog } from './AiMediaGenDialog';
 
 const TABS: { key: string; label: string; icon: LucideIcon }[] = [
   { key: 'media', label: '媒体', icon: Film },
@@ -12,28 +14,6 @@ const TABS: { key: string; label: string; icon: LucideIcon }[] = [
   { key: 'sticker', label: '贴纸', icon: Sticker },
   { key: 'effect', label: '特效', icon: Sparkles },
 ];
-
-// AI 生成分区占位：媒体/音频/文本各复用一份，功能开发中。
-function AiGenSection({ label }: { label: string }) {
-  return (
-    <div className="flex flex-col gap-2">
-      <h2 className="flex items-center gap-1.5 text-[13px] font-semibold">
-        <Sparkles className="h-[15px] w-[15px] text-accent" />
-        AI 生成
-      </h2>
-      <button
-        type="button"
-        disabled
-        title="即将上线"
-        className="flex h-20 flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-border-subtle bg-input/50 text-fg-tertiary"
-      >
-        <Sparkles className="h-[22px] w-[22px] text-accent/70" />
-        <span className="text-[12px] font-medium">{label}</span>
-        <span className="text-[10px]">敬请期待</span>
-      </button>
-    </div>
-  );
-}
 
 // 素材时长按探测时的参考 fps=30 折算成 mm:ss（见后端 media-probe REFERENCE_FPS）。
 const ASSET_FPS = 30;
@@ -52,6 +32,8 @@ function AssetThumb({
   onDelete: () => void;
 }) {
   const Icon = asset.kind === 'audio' ? AudioLines : asset.kind === 'image' ? ImageIcon : Film;
+  const isGenerating = asset.status === 'generating';
+  const isFailed = asset.status === 'failed';
   return (
     <div
       className="group relative"
@@ -64,8 +46,11 @@ function AssetThumb({
       <button
         type="button"
         onClick={onAdd}
-        title={`添加 ${asset.name}（可拖到时间轴）`}
-        className="flex h-[76px] w-full items-center justify-center overflow-hidden rounded-lg bg-input hover:ring-2 hover:ring-accent"
+        disabled={asset.status !== 'ready'}
+        title={
+          isGenerating ? 'AI 生成中…' : isFailed ? '生成失败' : `添加 ${asset.name}（可拖到时间轴）`
+        }
+        className="flex h-[76px] w-full items-center justify-center overflow-hidden rounded-lg bg-input enabled:hover:ring-2 enabled:hover:ring-accent disabled:cursor-default"
       >
         {asset.kind === 'image' && asset.url ? (
           <img src={asset.url} alt={asset.name} className="h-full w-full object-cover" />
@@ -79,6 +64,19 @@ function AssetThumb({
                 {formatAssetDuration(asset.durationInFrames)}
               </span>
             ) : null}
+          </div>
+        )}
+        {/* AI 生成中：spinner 遮罩 */}
+        {isGenerating && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/60 text-fg">
+            <Loader2 className="h-5 w-5 animate-spin text-accent" />
+            <span className="text-[10px]">生成中…</span>
+          </div>
+        )}
+        {/* AI 生成失败：红色遮罩 */}
+        {isFailed && (
+          <div className="absolute inset-0 flex items-center justify-center bg-red-950/70 text-[11px] font-medium text-red-300">
+            生成失败
           </div>
         )}
         {/* 时长角标（视频/音频，左上） */}
@@ -111,6 +109,25 @@ export function LeftPanel() {
   const upload = useUploadAsset();
   const deleteAsset = useDeleteAsset();
   const addAsset = useEditorStore((s) => s.addAsset);
+
+  const [textGenOpen, setTextGenOpen] = useState(false);
+  const [aiMediaType, setAiMediaType] = useState<'image' | 'video' | null>(null);
+
+  // AI 生成文案落地：选中文本片段则更新其内容，否则新建一个文本片段。
+  const applyGeneratedText = (text: string) => {
+    const state = useEditorStore.getState();
+    const selectedId = state.selectedClipId;
+    const isTextClipSelected =
+      selectedId != null &&
+      state.timeline?.tracks.some(
+        (t) => t.kind === 'text' && t.textClips?.some((tc) => tc.id === selectedId),
+      );
+    if (isTextClipSelected && selectedId) {
+      state.updateTextClip(selectedId, { text });
+    } else {
+      state.addTextClip(text);
+    }
+  };
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -152,7 +169,22 @@ export function LeftPanel() {
         {active === 'text' ? (
           // 文本 tab：AI 生成 + 添加文本
           <div className="flex flex-col gap-4">
-            <AiGenSection label="AI 生成文案" />
+            {/* AI 生成文案 */}
+            <div className="flex flex-col gap-2">
+              <h2 className="flex items-center gap-1.5 text-[13px] font-semibold">
+                <Sparkles className="h-[15px] w-[15px] text-accent" />
+                AI 生成
+              </h2>
+              <button
+                type="button"
+                onClick={() => setTextGenOpen(true)}
+                className="flex h-20 flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-accent/50 bg-accent/5 hover:border-accent hover:bg-accent/10"
+              >
+                <Sparkles className="h-[22px] w-[22px] text-accent" />
+                <span className="text-[12px] font-medium text-fg-secondary">AI 生成文案</span>
+              </button>
+            </div>
+
             <h2 className="text-[13px] font-semibold">本地文本</h2>
             <button
               type="button"
@@ -182,7 +214,33 @@ export function LeftPanel() {
               className="hidden"
               onChange={onPick}
             />
-            <AiGenSection label={isAudioTab ? 'AI 生成音频' : 'AI 生成图片/视频'} />
+            {/* AI 生成图片/视频（音频暂不支持） */}
+            {!isAudioTab && (
+              <div className="flex flex-col gap-2">
+                <h2 className="flex items-center gap-1.5 text-[13px] font-semibold">
+                  <Sparkles className="h-[15px] w-[15px] text-accent" />
+                  AI 生成
+                </h2>
+                <div className="grid grid-cols-1 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAiMediaType('image')}
+                    className="flex flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-accent/50 bg-accent/5 py-3 hover:border-accent hover:bg-accent/10"
+                  >
+                    <ImageIcon className="h-5 w-5 text-accent" />
+                    <span className="text-[12px] font-medium text-fg-secondary">生成图片</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAiMediaType('video')}
+                    className="flex flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-accent/50 bg-accent/5 py-3 hover:border-accent hover:bg-accent/10"
+                  >
+                    <Film className="h-5 w-5 text-accent" />
+                    <span className="text-[12px] font-medium text-fg-secondary">生成视频</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
             <h2 className="text-[13px] font-semibold">{isAudioTab ? '本地音频' : '本地素材'}</h2>
             <button
@@ -205,7 +263,7 @@ export function LeftPanel() {
                 还没有{isAudioTab ? '音频' : '素材'}，点上方导入
               </p>
             ) : (
-              <div className="grid grid-cols-2 gap-2.5 overflow-y-auto">
+              <div className="reel-scroll grid grid-cols-2 gap-2.5 overflow-y-auto pr-2">
                 {visibleAssets.map((asset) => (
                   <AssetThumb
                     key={asset.id}
@@ -219,6 +277,20 @@ export function LeftPanel() {
           </>
         )}
       </div>
+
+      {/* AI 文案生成对话框 */}
+      <TextGenDialog
+        open={textGenOpen}
+        onClose={() => setTextGenOpen(false)}
+        onApply={applyGeneratedText}
+      />
+
+      {/* AI 图像/视频生成对话框 */}
+      <AiMediaGenDialog
+        open={aiMediaType !== null}
+        type={aiMediaType ?? 'image'}
+        onClose={() => setAiMediaType(null)}
+      />
     </div>
   );
 }

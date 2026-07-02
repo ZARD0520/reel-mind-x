@@ -529,3 +529,93 @@
 - onPointerMove 分支处理 move/trim-left/trim-right，逻辑与 ClipBlock 对齐
 
 **状态**：✅ typecheck + build 通过。文本块现在交互与视频块一致（拖动 + trim + 磁吸全功能）。
+
+---
+
+## AI 文本生成
+
+### D47. LLM 抽象层架构（2026-07-02）⭐
+- **决策**：接入智谱 GLM-4 API 做 AI 文案生成，限制 100 字；**架构设计为提供商无关抽象层**。
+- **原因**：
+  - 后续需支持其他大模型（通义、DeepSeek、OpenAI）。
+  - 提前做抽象，业务侧不直接耦合厂商 API。
+- **架构设计**：
+  1. **共享包 `packages/llm`**：
+     - `LlmProvider` 接口（抽象）：`chat(messages, options): Promise<ChatResult>`
+     - `GlmProvider` 实现（智谱 GLM）：调用 `https://open.bigmodel.cn/api/paas/v4/chat/completions`，OpenAI 兼容格式
+     - 新增模型只需实现 `LlmProvider` 接口，注册到 provider map
+  2. **Nest 模块 `apps/api/src/modules/llm`**：
+     - `LlmService`（@Global）：provider 注册表，统一入口 `chat()` 方法，屏蔽厂商差异
+     - 通过 `ConfigService` 读环境变量（`GLM_API_KEY` / `GLM_BASE_URL` / `GLM_MODEL`）
+  3. **业务模块 `apps/api/src/modules/text-gen`**：
+     - `TextGenService`：注入 `LlmService`，实现 100 字限制逻辑（system prompt + token 限制 + 兜底硬截断）
+     - `POST /text-gen/generate`：同步返回生成文案，校验复用 `@reel/contracts` 的 `GenerateTextSchema`
+- **实现要点**：
+  - `packages/llm` 编译为 CJS（`tsconfig.build.json` 的 `module: "CommonJS"`），供 NestJS 消费
+  - `@reel/contracts` 新增 `GenerateTextSchema` + `GeneratedTextSchema`，前后端共享
+  - env 校验（`apps/api/src/config/env.ts`）新增 `GLM_API_KEY`（必填）、`GLM_BASE_URL`、`GLM_MODEL`
+  - 字数限制：system prompt 明确 `maxLength` 要求 → maxTokens 粗算 `length * 2` → 兜底 `[...text].slice(0, maxLength)`（Unicode 安全）
+  - `GlmProvider` 用 native `fetch`，依赖 `@types/node` 提供全局类型
+- **状态**：✅ typecheck + build 通过。模块 DI 正确，env 校验通过。端到端需真实 API Key + Postgres 运行时验证（已验证模块加载无误，Prisma 依赖未启动是预期）。
+
+### D48. 剪辑页接入 AI 文案生成（聊天式）（2026-07-02）
+- **决策**：在剪辑页文本区接入 D47 的 AI 文本生成，交互用**聊天式弹窗**；生成结果**没有选中文本片段就新建**。
+- **交互设计**：
+  - 入口：左侧面板「文本」tab 的「AI 生成文案」按钮（无需先选中片段即可打开）。
+  - 弹窗 `TextGenDialog`：多轮对话式，用户输入需求 → AI 回一条文案 → 每条 AI 回复带「用这条」按钮一键应用。
+  - 落地逻辑 `applyGeneratedText`：当前选中的是文本片段 → `updateTextClip` 覆盖其内容；否则 → `addTextClip` 新建（复用 store 既有能力，自动建文本轨/追加到末尾）。
+- **实现要点**：
+  - 前端 API 层 `api.textGen.generate({ prompt, maxLength: 100 })` → `POST /api/text-gen/generate`（vite 代理到后端）。
+  - 服务端状态用 TanStack Query `useMutation`（遵循 react.md：禁 useEffect 拉数据）。
+  - 弹窗关闭清空对话历史（`reset`），每次打开是新会话。
+  - 字数限制固定传 `maxLength: 100`（与后端契约一致）。
+- **状态**：✅ web typecheck + build 通过。需后端起服务 + 真实 GLM Key 做端到端验证。
+
+### D49. AI 文案对话记忆 + 清空对话（2026-07-02）
+- **决策**：AI 文案生成支持**多轮对话记忆**（模型能记住之前的话），弹窗新增**清空对话**按钮。
+- **问题**：当前每次调用只发单个 prompt，后端构造固定的 system + user，模型无上下文。用户说"再短一点"时模型不知道指什么。
+- **方案**：
+  - **前端传完整对话历史**：`TextGenDialog` 已有 `messages` 状态，改成每次提交时把所有历史消息一起发给后端（`{ messages: [...history, newUserMsg], maxLength: 100 }`）。
+  - **后端在最前插入 system prompt**：`TextGenService.generate()` 判断有 `messages` 就用它，否则用 `prompt`（向后兼容）。system prompt 统一由后端加，避免前端伪造。
+  - **清空按钮**：头部新增「清空」按钮（仅当有消息时显示），调用 `setMessages([])` 重置会话。
+- **实现要点**：
+  - `@reel/contracts`: `GenerateTextSchema` 新增可选字段 `messages: Array<{role, content}>`，与 `prompt` 二选一（`.refine()` 校验）。
+  - `TextGenService`: system prompt 加了"注意结合上下文（用户可能要求在之前文案基础上调整）"提示词，引导模型关注历史。
+  - `TextGenDialog`: `handleSubmit` 改成 `generate.mutate([...messages, { role: 'user', content: input }])`，一次性传全部历史。
+  - 清空按钮用 `Trash2` 图标 + "清空"文字，hover 显示 title="清空对话"。
+- **状态**：✅ typecheck + build 全通过。测试时多轮对话应能记住上下文，点清空后重新开始。
+
+### D50. AI 图像/视频生成（智谱 CogView/CogVideoX）（2026-07-02）⭐
+- **决策**：集成智谱的 CogView-3-Flash（图像）和 CogVideoX-Flash（视频）生成模型，生成后**下载到服务端本地 storage**，走现有 Asset 流程。
+- **模型选择**：
+  - **图像**：CogView-3-Flash，同步 API，5-10 秒生成 1024x1024 图片。
+  - **视频**：CogVideoX-Flash，异步任务 API（提交 → 轮询），1-3 分钟生成 6 秒视频。
+  - **音频**：暂不支持（智谱暂无音频生成模型）。
+- **架构设计**：
+  1. **新建 `@reel/ai-gen` 包**（与 `@reel/llm` 分离）：
+     - 图像/视频生成 API 模式完全不同（异步任务、轮询、URL 结果），不适合混在 LLM 抽象层。
+     - `AiGenProvider` 接口 + `ZhipuAiGenProvider` 实现（`generateImage` / `generateVideo`）。
+     - `generateVideo` 内部处理轮询（最多 10 分钟，每 5s 查一次）。
+  2. **后端 `ai-gen-media` 模块**（BullMQ 异步任务）：
+     - `POST /ai-gen-media/image` / `POST /ai-gen-media/video` → 立即返回 `Asset`（status=generating）。
+     - BullMQ job：调用 `@reel/ai-gen` → 拿到临时 URL → fetch 下载到 `storage/uploads` → probe 元信息 → 更新 Asset（status=ready/failed）。
+     - 图像生成快（5-10s），但仍用异步 job 统一模式；视频生成慢（几分钟），processor 里轮询智谱异步结果。
+  3. **前端 `AiMediaGenDialog`**：
+     - 输入 prompt → 提交 → mutation 返回 generating Asset → 弹窗提示"已提交，素材列表查看进度"。
+     - `useAssets()` 新增 `refetchInterval`：有 Asset 在 generating 时每 3s 轮询，直到全部 ready/failed。
+     - 生成中的 Asset 在素材列表显示为占位，ready 后可正常拖入时间轴。
+  4. **LeftPanel 媒体 tab**：
+     - 把占位的 `AiGenSection` 换成真实按钮：「生成图片」「生成视频」（网格布局）。
+     - 点击打开 `AiMediaGenDialog`，提交后关闭弹窗，素材列表自动刷新显示生成中状态。
+- **实现要点**：
+  - env 新增 `GLM_IMAGE_MODEL` / `GLM_VIDEO_MODEL`（默认 `cogview-3-flash` / `cogvideox-flash`），API Key 复用 `GLM_API_KEY`（一个账号通用）。
+  - `@reel/contracts` 新增 `GenerateImageSchema` / `GenerateVideoSchema` + `AiGenJob`（暂未用，为将来任务列表预留）。
+  - `AiGenError` 全局过滤器（`AiGenExceptionFilter`），401/403 → 400（配置错误），其他 → 502（上游错误）。
+  - `probeMedia` 复用现有 assets 模块的探测逻辑，填充 Asset 的 width/height/durationInFrames。
+  - 智谱 API 文档：https://docs.bigmodel.cn/cn/guide/models/image/cogview-3、https://docs.bigmodel.cn/cn/guide/models/video/cogvideox
+- **MVP 限制**：
+  - 素材先存 server 本地 storage（与 upload 一致），后续可改 S3/CDN（见 D14 备注）。
+  - 图像只支持 1024x1024（可扩展其他尺寸，前端传 `size` 参数）。
+  - 视频无法控制时长/尺寸（CogVideoX-Flash 固定 6s、720p），prompt 是唯一控制项。
+  - 生成失败时 Asset 状态为 `failed`，前端显示错误（可点删除）。
+- **状态**：✅ 后端 typecheck + build 通过，前端 typecheck + build 通过。需后端起服务 + 真实 GLM Key 做端到端验证（图像生成 5-10s，视频生成 1-3 分钟）。

@@ -68,4 +68,31 @@ export const api = {
       }),
     get: (id: string) => request(`/ai-mix/${id}`),
   },
+  textGen: {
+    generate: (body: {
+      prompt?: string;
+      messages?: { role: 'user' | 'assistant'; content: string }[];
+      maxLength?: number;
+      temperature?: number;
+    }) =>
+      request('/text-gen/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+  },
+  aiGenMedia: {
+    generateImage: (body: { prompt: string; size?: string }) =>
+      request('/ai-gen-media/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    generateVideo: (body: { prompt: string }) =>
+      request('/ai-gen-media/video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+  },
 } as const;

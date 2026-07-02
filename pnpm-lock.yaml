@@ -47,12 +47,18 @@ importers:
       '@nestjs/serve-static':
         specifier: ^5.0.5
         version: 5.0.5(@nestjs/common@11.1.27(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.27)(express@5.2.1)
+      '@reel/ai-gen':
+        specifier: workspace:*
+        version: link:../../packages/ai-gen
       '@reel/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@reel/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@reel/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
       bullmq:
         specifier: ^5.34.6
         version: 5.78.1
@@ -140,6 +146,15 @@ importers:
         specifier: ^6.0.7
         version: 6.4.3(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.48.0)
 
+  packages/ai-gen:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.17.12
+        version: 20.19.43
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/contracts:
     dependencies:
       zod:
@@ -159,6 +174,15 @@ importers:
       prisma:
         specifier: ^6.2.1
         version: 6.19.3(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/llm:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.17.12
+        version: 20.19.43
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
