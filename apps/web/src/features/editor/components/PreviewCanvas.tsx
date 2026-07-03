@@ -238,6 +238,7 @@ export function PreviewCanvas({
 
   const timecode = formatTimecode(currentFrame / fps);
   const totalTimecode = formatTimecode(totalFrames / fps);
+  const progressPercent = totalFrames > 0 ? (currentFrame / totalFrames) * 100 : 0;
 
   // 跟踪全屏状态：全屏时单击画面切换播放/暂停。
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -424,6 +425,38 @@ export function PreviewCanvas({
             </div>
           )}
           </div>
+
+          {/* 全屏悬浮控制层：进度条 + 播放/暂停（仅全屏时显示） */}
+          {isFullscreen && (
+            <div
+              className="absolute inset-x-0 bottom-0 flex flex-col gap-2 bg-gradient-to-t from-black/80 to-transparent px-8 pb-6 pt-12"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <input
+                type="range"
+                min={0}
+                max={totalFrames}
+                value={currentFrame}
+                onChange={(e) => onSeek(Number(e.target.value))}
+                className="reel-slider h-1.5 w-full cursor-pointer appearance-none rounded-full outline-none"
+                style={{
+                  background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${progressPercent}%, rgba(255,255,255,0.3) ${progressPercent}%, rgba(255,255,255,0.3) 100%)`,
+                }}
+              />
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={onTogglePlay}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
+                >
+                  {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                </button>
+                <span className="text-[13px] tabular-nums text-white/90">
+                  {timecode} / {totalTimecode}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
