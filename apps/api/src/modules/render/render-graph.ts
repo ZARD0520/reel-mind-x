@@ -1,7 +1,11 @@
 import { existsSync } from 'fs';
 import type { Asset, Clip, Timeline, Track, TransitionType } from '@reel/contracts';
 
-export type RenderAsset = Asset & { localPath: string | null };
+export type RenderAsset = Asset & {
+  localPath: string | null;
+  /** 是否包含音频流（由 render processor 探测后填充）。图片无音频，音频必有音频，视频需探测。 */
+  hasAudioStream?: boolean;
+};
 
 export interface GraphInput {
   path: string;
@@ -188,7 +192,8 @@ export function buildGraph(timeline: Timeline, assetById: Map<string, RenderAsse
           outD,
           outType,
         });
-        if (asset.kind === 'video') {
+        if (asset.kind === 'video' && asset.hasAudioStream !== false) {
+          // 仅当视频确实含音频流时才加入音频混音（AI 生成的无声视频会被跳过）。
           audios.push({ inputIdx, clip, startSec, sourceDurationSec, trackMuted: track.muted });
         }
       } else if (track.kind === 'audio' && asset.kind === 'audio') {

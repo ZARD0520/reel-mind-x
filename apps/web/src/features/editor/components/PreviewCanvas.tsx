@@ -310,11 +310,15 @@ export function PreviewCanvas({
         <div
           ref={stageRef}
           onClick={() => isFullscreen && onTogglePlay()}
-          className={`relative overflow-hidden rounded-lg border border-border-subtle bg-black ${
-            isFullscreen ? 'flex h-full w-full cursor-pointer items-center justify-center' : ''
+          className={`relative bg-black ${
+            isFullscreen ? 'flex h-full w-full cursor-pointer items-center justify-center' : 'overflow-hidden rounded-lg border border-border-subtle'
           }`}
           style={isFullscreen ? undefined : { width: stageW, height: stageH }}
         >
+          <div
+            className="relative overflow-hidden"
+            style={{ width: stageW, height: stageH }}
+          >
           {/* 多层叠加：按图层顺序（底→顶）渲染每个命中片段，各自 transform/opacity */}
           {layers.map(({ clip, asset, track, transition }, i) => {
             // 转场区内用转场样式，否则用片段本身属性。
@@ -419,6 +423,7 @@ export function PreviewCanvas({
               <span className="text-[13px]">{timeline?.tracks.length ? '无视频片段' : '从左侧添加素材'}</span>
             </div>
           )}
+          </div>
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { Env } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
+import { probeMedia } from '../assets/media-probe';
 import { QueueNames, type RenderJobPayload } from './render.constants';
 import { renderTimeline } from './render-runner';
 import type { RenderAsset } from './render-graph';
@@ -44,6 +45,18 @@ export class RenderProcessor extends WorkerHost {
       for (const r of rows) {
         assetById.set(r.id, r as unknown as RenderAsset);
       }
+
+      // 探测视频是否含音频流：AI 生成的视频可能无声，若仍生成 [N:a] 滤镜会导致
+      // "Stream specifier ':a' matches no streams"。图片/音频无需探测。
+      await Promise.all(
+        rows
+          .filter((r) => r.kind === 'video' && r.localPath)
+          .map(async (r) => {
+            const probe = await probeMedia(r.localPath!, 'video/mp4', 30);
+            const asset = assetById.get(r.id);
+            if (asset) asset.hasAudioStream = probe.audioCodec !== null;
+          }),
+      );
 
       // 输出路径：STORAGE_DIR/EXPORT_SUBDIR/<jobId>.mp4
       const storageDir = path.resolve(this.config.get('STORAGE_DIR', { infer: true }));

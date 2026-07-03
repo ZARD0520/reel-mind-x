@@ -633,3 +633,13 @@
   - 后端 job payload、processor、`ZhipuAiGenProvider.generateVideo` 都透传 size。
 - **注意**：CogVideoX 的 size 字段名（`image_size` vs `size`）需运行时验证，代码里已注释。
 - **状态**：✅ 前后端 typecheck + build 全通过。
+
+### D52. 导出修复：无音频流的视频（AI 生成）（2026-07-02）
+- **问题**：导出报错 `Stream specifier ':a' in filtergraph description ... matches no streams` → `Error initializing complex filters`。
+- **根因**：render-graph 对所有 `kind='video'` 的片段无条件生成 `[N:a]` 音频滤镜，但 AI 生成的视频（CogVideoX）**无音频流**，FFmpeg 找不到 `:a` 流即报错。
+- **修复**：
+  - `RenderAsset` 增加 `hasAudioStream?: boolean` 字段。
+  - render processor 在收集素材后、构图前，用 `probeMedia` 探测每个视频是否含音频流（`audioCodec !== null`），并行探测填充 `hasAudioStream`。
+  - render-graph 里 `audios.push` 增加条件 `asset.hasAudioStream !== false`：无音频流的视频不生成 `[N:a]` 滤镜。
+- **为何不存库**：Asset 未持久化音频流信息，render 时探测最准确（不依赖上传时的探测、无需 schema 迁移）。probe 很快（ffprobe 读头部元信息）。
+- **状态**：✅ typecheck + build 通过。需重启后端 + 重新导出验证。
