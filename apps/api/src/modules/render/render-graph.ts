@@ -72,10 +72,24 @@ function resolveFontFile(bold: boolean): string | null {
 const XFADE_NAME: Record<TransitionType, string> = {
   fade: 'fade',
   fadeblack: 'fadeblack',
+  fadewhite: 'fadewhite',
   dissolve: 'dissolve',
-  slideleft: 'slideleft',
+  wipeleft: 'wipeleft',
   wiperight: 'wiperight',
+  wipeup: 'wipeup',
+  wipedown: 'wipedown',
+  slideleft: 'slideleft',
+  slideright: 'slideright',
+  slideup: 'slideup',
+  slidedown: 'slidedown',
   circleopen: 'circleopen',
+  circleclose: 'circleclose',
+  smoothleft: 'smoothleft',
+  smoothright: 'smoothright',
+  smoothup: 'smoothup',
+  smoothdown: 'smoothdown',
+  radial: 'radial',
+  distance: 'distance',
 };
 
 /**

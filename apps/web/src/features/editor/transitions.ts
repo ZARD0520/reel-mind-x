@@ -4,10 +4,24 @@ import type { Clip, Timeline, TransitionType } from '@reel/contracts';
 export const TRANSITION_OPTIONS: { type: TransitionType; label: string }[] = [
   { type: 'fade', label: '淡入淡出' },
   { type: 'fadeblack', label: '黑场' },
+  { type: 'fadewhite', label: '白场' },
   { type: 'dissolve', label: '溶解' },
-  { type: 'slideleft', label: '左滑' },
+  { type: 'wipeleft', label: '左擦除' },
   { type: 'wiperight', label: '右擦除' },
+  { type: 'wipeup', label: '上擦除' },
+  { type: 'wipedown', label: '下擦除' },
+  { type: 'slideleft', label: '左滑' },
+  { type: 'slideright', label: '右滑' },
+  { type: 'slideup', label: '上滑' },
+  { type: 'slidedown', label: '下滑' },
   { type: 'circleopen', label: '圆形展开' },
+  { type: 'circleclose', label: '圆形收缩' },
+  { type: 'smoothleft', label: '平滑左滑' },
+  { type: 'smoothright', label: '平滑右滑' },
+  { type: 'smoothup', label: '平滑上滑' },
+  { type: 'smoothdown', label: '平滑下滑' },
+  { type: 'radial', label: '径向擦除' },
+  { type: 'distance', label: '距离淡化' },
 ];
 
 export const TRANSITION_LABEL: Record<TransitionType, string> = Object.fromEntries(
@@ -121,6 +135,13 @@ export function transitionStyle(type: TransitionType, p: number): TransitionStyl
         toOpacity: Math.max(0, p * 2 - 1),
       };
 
+    case 'fadewhite':
+      // 经过白场：前半淡出到白，后半从白淡入
+      return {
+        fromOpacity: Math.max(0, 1 - p * 2),
+        toOpacity: Math.max(0, p * 2 - 1),
+      };
+
     case 'slideleft':
       // 左滑：前片段左移消失，后片段从右侧滑入
       return {
@@ -128,6 +149,41 @@ export function transitionStyle(type: TransitionType, p: number): TransitionStyl
         toOpacity: 1,
         fromTransform: `translateX(${-p * 100}%)`,
         toTransform: `translateX(${(1 - p) * 100}%)`,
+      };
+
+    case 'slideright':
+      // 右滑：前片段右移消失，后片段从左侧滑入
+      return {
+        fromOpacity: 1,
+        toOpacity: 1,
+        fromTransform: `translateX(${p * 100}%)`,
+        toTransform: `translateX(${-(1 - p) * 100}%)`,
+      };
+
+    case 'slideup':
+      // 上滑：前片段上移消失，后片段从下方滑入
+      return {
+        fromOpacity: 1,
+        toOpacity: 1,
+        fromTransform: `translateY(${-p * 100}%)`,
+        toTransform: `translateY(${(1 - p) * 100}%)`,
+      };
+
+    case 'slidedown':
+      // 下滑：前片段下移消失，后片段从上方滑入
+      return {
+        fromOpacity: 1,
+        toOpacity: 1,
+        fromTransform: `translateY(${p * 100}%)`,
+        toTransform: `translateY(${-(1 - p) * 100}%)`,
+      };
+
+    case 'wipeleft':
+      // 左擦除：后片段从右向左逐渐显现，覆盖前片段
+      return {
+        fromOpacity: 1,
+        toOpacity: 1,
+        toClip: `inset(0 0 0 ${(1 - p) * 100}%)`,
       };
 
     case 'wiperight':
@@ -138,6 +194,22 @@ export function transitionStyle(type: TransitionType, p: number): TransitionStyl
         toClip: `inset(0 ${(1 - p) * 100}% 0 0)`,
       };
 
+    case 'wipeup':
+      // 上擦除：后片段从下向上逐渐显现，覆盖前片段
+      return {
+        fromOpacity: 1,
+        toOpacity: 1,
+        toClip: `inset(${(1 - p) * 100}% 0 0 0)`,
+      };
+
+    case 'wipedown':
+      // 下擦除：后片段从上向下逐渐显现，覆盖前片段
+      return {
+        fromOpacity: 1,
+        toOpacity: 1,
+        toClip: `inset(0 0 ${(1 - p) * 100}% 0)`,
+      };
+
     case 'circleopen':
       // 圆形展开：后片段从中心圆形展开覆盖前片段
       return {
@@ -145,6 +217,63 @@ export function transitionStyle(type: TransitionType, p: number): TransitionStyl
         toOpacity: 1,
         toClip: `circle(${p * 150}% at center)`,
       };
+
+    case 'circleclose':
+      // 圆形收缩：前片段从外向内圆形收缩，露出后片段
+      return {
+        fromOpacity: 1,
+        toOpacity: 1,
+        fromClip: `circle(${(1 - p) * 150}% at center)`,
+      };
+
+    case 'smoothleft':
+      // 平滑左滑：结合淡化的左滑
+      return {
+        fromOpacity: 1 - p * 0.7,
+        toOpacity: p,
+        fromTransform: `translateX(${-p * 80}%)`,
+        toTransform: `translateX(${(1 - p) * 80}%)`,
+      };
+
+    case 'smoothright':
+      // 平滑右滑：结合淡化的右滑
+      return {
+        fromOpacity: 1 - p * 0.7,
+        toOpacity: p,
+        fromTransform: `translateX(${p * 80}%)`,
+        toTransform: `translateX(${-(1 - p) * 80}%)`,
+      };
+
+    case 'smoothup':
+      // 平滑上滑：结合淡化的上滑
+      return {
+        fromOpacity: 1 - p * 0.7,
+        toOpacity: p,
+        fromTransform: `translateY(${-p * 80}%)`,
+        toTransform: `translateY(${(1 - p) * 80}%)`,
+      };
+
+    case 'smoothdown':
+      // 平滑下滑：结合淡化的下滑
+      return {
+        fromOpacity: 1 - p * 0.7,
+        toOpacity: p,
+        fromTransform: `translateY(${p * 80}%)`,
+        toTransform: `translateY(${-(1 - p) * 80}%)`,
+      };
+
+    case 'radial':
+      // 径向擦除：近似用径向渐变裁剪（FFmpeg 有径向模糊，CSS 用缩放+淡化近似）
+      return {
+        fromOpacity: 1 - p,
+        toOpacity: p,
+        fromTransform: `scale(${1 + p * 0.2})`,
+        toTransform: `scale(${1 - (1 - p) * 0.2})`,
+      };
+
+    case 'distance':
+      // 距离淡化：根据像素亮度距离融合（CSS 无法准确模拟，降级为淡化）
+      return { fromOpacity: 1 - p, toOpacity: p };
 
     default:
       return { fromOpacity: 1 - p, toOpacity: p };

@@ -85,16 +85,36 @@ export type ClipTransform = z.infer<typeof ClipTransformSchema>;
 // ───────────────────────── 转场效果 Transition ─────────────────────────
 
 /**
- * 转场类型：用 FFmpeg xfade 滤镜实现（MVP 先做 6 种常用）。
+ * 转场类型：用 FFmpeg xfade 滤镜实现。
  * 转场发生在「本片段结尾 → 下一片段开头」，两者在时间轴上重叠 duration 秒。
  */
 export const TransitionTypeSchema = z.enum([
+  // 基础淡化
   'fade',        // 淡入淡出（最通用）
   'fadeblack',   // 经过黑场
+  'fadewhite',   // 经过白场
   'dissolve',    // 溶解（像素随机）
-  'slideleft',   // 左滑
+  // 擦除（wipe）
+  'wipeleft',    // 左擦除
   'wiperight',   // 右擦除
+  'wipeup',      // 上擦除
+  'wipedown',    // 下擦除
+  // 滑动（slide）
+  'slideleft',   // 左滑
+  'slideright',  // 右滑
+  'slideup',     // 上滑
+  'slidedown',   // 下滑
+  // 圆形
   'circleopen',  // 圆形展开
+  'circleclose', // 圆形收缩
+  // 平滑滑动
+  'smoothleft',  // 平滑左滑
+  'smoothright', // 平滑右滑
+  'smoothup',    // 平滑上滑
+  'smoothdown',  // 平滑下滑
+  // 径向
+  'radial',      // 径向模糊
+  'distance',    // 距离效果
 ]);
 export type TransitionType = z.infer<typeof TransitionTypeSchema>;
 

@@ -1,3 +1,5 @@
+import { useRef, useState, useEffect } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { useEditorStore } from '../store';
 import type { Clip, TextClip, TransitionType } from '@reel/contracts';
 import { TRANSITION_OPTIONS, findAdjacentNext } from '../transitions';
@@ -32,6 +34,108 @@ function SliderRow({ label, value, current, min, max, step = 0.01, onChange }: S
         onChange={(e) => onChange(Number(e.target.value))}
         className="reel-slider h-1 w-full cursor-pointer appearance-none rounded-full bg-timeline-track"
       />
+    </div>
+  );
+}
+
+interface TransitionSelectProps {
+  value: TransitionType | null;
+  onChange: (type: TransitionType | null) => void;
+}
+
+function TransitionSelect({ value, onChange }: TransitionSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const currentLabel = value ? TRANSITION_OPTIONS.find((o) => o.type === value)?.label ?? '未知' : '无转场（硬切）';
+
+  const toggle = () => {
+    if (!open && buttonRef.current) {
+      const r = buttonRef.current.getBoundingClientRect();
+      setRect({ left: r.left, top: r.bottom + 4, width: r.width });
+    }
+    setOpen(!open);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node) &&
+        menuRef.current &&
+        !menuRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    // 面板/页面滚动时跟随按钮重新定位（下拉列表自身滚动不受影响）。
+    const reposition = (e: Event) => {
+      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
+      if (buttonRef.current) {
+        const r = buttonRef.current.getBoundingClientRect();
+        setRect({ left: r.left, top: r.bottom + 4, width: r.width });
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={toggle}
+        className="flex w-full items-center justify-between rounded-md border border-border-subtle bg-base px-3 py-1.5 text-[13px] text-fg outline-none hover:border-accent"
+      >
+        <span>{currentLabel}</span>
+        <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && rect && (
+        <div
+          ref={menuRef}
+          className="fixed z-50 rounded-md border border-border-subtle bg-elevated shadow-lg"
+          style={{ left: rect.left, top: rect.top, width: rect.width }}
+        >
+          <div className="reel-scroll max-h-48 overflow-y-auto py-1">
+            <button
+              type="button"
+              onClick={() => {
+                onChange(null);
+                setOpen(false);
+              }}
+              className={`w-full px-3 py-1.5 text-left text-[13px] transition-colors ${
+                value === null ? 'bg-accent-soft text-fg' : 'text-fg-secondary hover:bg-surface hover:text-fg'
+              }`}
+            >
+              无转场（硬切）
+            </button>
+            {TRANSITION_OPTIONS.map((opt) => (
+              <button
+                key={opt.type}
+                type="button"
+                onClick={() => {
+                  onChange(opt.type);
+                  setOpen(false);
+                }}
+                className={`w-full px-3 py-1.5 text-left text-[13px] transition-colors ${
+                  value === opt.type ? 'bg-accent-soft text-fg' : 'text-fg-secondary hover:bg-surface hover:text-fg'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -295,25 +399,16 @@ export function PropertiesPanel() {
                 <h3 className="text-[13px] font-semibold">转场</h3>
                 <div className="flex flex-col gap-2">
                   <span className="text-[13px] text-fg-secondary">效果</span>
-                  <select
-                    value={clip.transitionOut?.type ?? 'none'}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === 'none') {
+                  <TransitionSelect
+                    value={clip.transitionOut?.type ?? null}
+                    onChange={(type) => {
+                      if (type === null) {
                         setClipTransition(cid, null);
                       } else {
-                        setClipTransition(cid, { type: val as TransitionType, duration: clip.transitionOut?.duration ?? 0.5 });
+                        setClipTransition(cid, { type, duration: clip.transitionOut?.duration ?? 0.5 });
                       }
                     }}
-                    className="rounded-md border border-border-subtle bg-base px-3 py-1.5 text-[13px] text-fg outline-none focus:border-accent"
-                  >
-                    <option value="none">无转场（硬切）</option>
-                    {TRANSITION_OPTIONS.map((opt) => (
-                      <option key={opt.type} value={opt.type}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 {clip.transitionOut && (
                   <SliderRow
