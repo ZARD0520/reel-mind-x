@@ -13,7 +13,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class ProjectsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Prisma 记录 → 校验后的 Project（timeline 是 jsonb，读出时用 schema 解析保证完整性）。
   private toProject(row: {
     id: string;
     name: string;
@@ -24,28 +23,30 @@ export class ProjectsService {
     return ProjectSchema.parse(row);
   }
 
-  async create(input: CreateProjectInput): Promise<Project> {
-    // 未提供 timeline 时落一份带默认 settings 的空时间轴。
+  async create(userId: string, input: CreateProjectInput): Promise<Project> {
     const timeline = input.timeline ?? TimelineSchema.parse({ settings: {} });
     const row = await this.prisma.project.create({
-      data: { name: input.name, timeline: timeline as Prisma.InputJsonValue },
+      data: { userId, name: input.name, timeline: timeline as Prisma.InputJsonValue },
     });
     return this.toProject(row);
   }
 
-  async findOne(id: string): Promise<Project> {
-    const row = await this.prisma.project.findUnique({ where: { id } });
+  async findOne(userId: string, id: string): Promise<Project> {
+    const row = await this.prisma.project.findFirst({ where: { id, userId, deletedAt: null } });
     if (!row) throw new NotFoundException(`Project ${id} not found`);
     return this.toProject(row);
   }
 
-  async list(): Promise<Project[]> {
-    const rows = await this.prisma.project.findMany({ orderBy: { updatedAt: 'desc' } });
+  async list(userId: string): Promise<Project[]> {
+    const rows = await this.prisma.project.findMany({
+      where: { userId, deletedAt: null },
+      orderBy: { updatedAt: 'desc' },
+    });
     return rows.map((row) => this.toProject(row));
   }
 
-  async update(id: string, input: UpdateProjectInput): Promise<Project> {
-    await this.findOne(id); // 不存在则 404
+  async update(userId: string, id: string, input: UpdateProjectInput): Promise<Project> {
+    await this.findOne(userId, id);
     const row = await this.prisma.project.update({
       where: { id },
       data: {
@@ -58,8 +59,8 @@ export class ProjectsService {
     return this.toProject(row);
   }
 
-  async remove(id: string): Promise<void> {
-    await this.findOne(id);
-    await this.prisma.project.delete({ where: { id } });
+  async remove(userId: string, id: string): Promise<void> {
+    await this.findOne(userId, id);
+    await this.prisma.project.update({ where: { id }, data: { deletedAt: new Date() } });
   }
 }

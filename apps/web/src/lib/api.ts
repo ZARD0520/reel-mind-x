@@ -1,25 +1,57 @@
-/** 统一 fetch 客户端。所有接口都走 /api 前缀（vite dev 代理到后端）。*/
 const BASE = '/api';
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(message);
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, init);
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    credentials: 'include',
+  });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`${init?.method ?? 'GET'} ${path} → ${res.status}: ${body}`);
+    throw new ApiError(`${init?.method ?? 'GET'} ${path} -> ${res.status}`, res.status, body);
   }
   return res.json() as Promise<T>;
 }
 
 async function requestVoid(path: string, init?: RequestInit): Promise<void> {
-  const res = await fetch(`${BASE}${path}`, init);
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    credentials: 'include',
+  });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`${init?.method ?? 'GET'} ${path} → ${res.status}: ${body}`);
+    throw new ApiError(`${init?.method ?? 'GET'} ${path} -> ${res.status}`, res.status, body);
   }
 }
 
 export const api = {
+  auth: {
+    me: () => request('/auth/me'),
+    login: (body: { email: string; password: string }) =>
+      request('/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    register: (body: { email: string; password: string; name: string }) =>
+      request('/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    logout: () => requestVoid('/auth/logout', { method: 'POST' }),
+  },
   projects: {
+    list: () => request('/projects'),
     create: (name: string) =>
       request('/projects', {
         method: 'POST',
@@ -33,6 +65,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }),
+    remove: (id: string) => requestVoid(`/projects/${id}`, { method: 'DELETE' }),
   },
   assets: {
     list: () => request('/assets'),

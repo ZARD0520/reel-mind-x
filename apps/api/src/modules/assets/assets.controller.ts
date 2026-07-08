@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Post,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -16,9 +17,13 @@ import { randomUUID } from 'crypto';
 import { diskStorage } from 'multer';
 import * as fs from 'fs';
 import * as path from 'path';
+import { AuthGuard } from '../auth/auth.guard';
+import type { AuthenticatedRequest, AuthUser } from '../auth/auth.types';
+import { CurrentUser } from '../auth/current-user.decorator';
 import { AssetsService } from './assets.service';
 
 @Controller('assets')
+@UseGuards(AuthGuard)
 export class AssetsController {
   constructor(private readonly assets: AssetsService) {}
 
@@ -26,9 +31,9 @@ export class AssetsController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
-        destination: (_req, _file, cb) => {
-          // Multer storage 在装饰阶段构造，拿不到 DI，直接读 env 解析目录。
-          const dir = path.resolve(process.env.STORAGE_DIR || 'storage', 'uploads');
+        destination: (req, _file, cb) => {
+          const userId = (req as unknown as AuthenticatedRequest).user.id;
+          const dir = path.resolve(process.env.STORAGE_DIR || 'storage', 'users', userId, 'uploads');
           fs.mkdirSync(dir, { recursive: true });
           cb(null, dir);
         },
@@ -36,27 +41,36 @@ export class AssetsController {
           cb(null, `${randomUUID()}${path.extname(file.originalname)}`);
         },
       }),
-      limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB
+      limits: { fileSize: 1024 * 1024 * 1024 },
     }),
   )
-  async upload(@UploadedFile() file?: Express.Multer.File): Promise<Asset> {
-    if (!file) throw new BadRequestException('缺少上传文件字段 file');
-    return this.assets.createFromUpload(file);
+  async upload(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile() file?: Express.Multer.File,
+  ): Promise<Asset> {
+    if (!file) throw new BadRequestException('Missing upload field: file');
+    return this.assets.createFromUpload(user.id, file);
   }
 
   @Get()
-  list(): Promise<Asset[]> {
-    return this.assets.list();
+  list(@CurrentUser() user: AuthUser): Promise<Asset[]> {
+    return this.assets.list(user.id);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseUUIDPipe) id: string): Promise<Asset> {
-    return this.assets.findOne(id);
+  findOne(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<Asset> {
+    return this.assets.findOne(user.id, id);
   }
 
   @Delete(':id')
   @HttpCode(204)
-  remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
-    return this.assets.remove(id);
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<void> {
+    return this.assets.remove(user.id, id);
   }
 }

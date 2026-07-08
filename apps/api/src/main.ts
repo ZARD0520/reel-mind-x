@@ -11,6 +11,10 @@ async function bootstrap(): Promise<void> {
   app.enableShutdownHooks();
 
   const config = app.get(ConfigService<Env, true>);
+  app.enableCors({
+    origin: config.get('CORS_ORIGIN', { infer: true }),
+    credentials: true,
+  });
   const port = config.get('PORT', { infer: true });
   await app.listen(port);
   console.log(`🚀 API 运行在 http://localhost:${port}`);

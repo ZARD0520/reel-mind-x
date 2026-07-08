@@ -11,12 +11,39 @@ export const UserSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
   name: z.string().min(1).max(120),
+  avatarUrl: z.string().url().nullable().optional(),
+  status: z.string().default('active'),
   createdAt: z.coerce.date(),
 });
 export type User = z.infer<typeof UserSchema>;
 
 export const CreateUserSchema = UserSchema.pick({ email: true, name: true });
 export type CreateUserInput = z.infer<typeof CreateUserSchema>;
+
+const PasswordSchema = z
+  .string()
+  .min(11, '密码长度必须超过 10 个字符')
+  .max(128, '密码不能超过 128 个字符')
+  .regex(/[A-Za-z]/, '密码必须包含字母')
+  .regex(/\d/, '密码必须包含数字');
+
+export const RegisterSchema = z.object({
+  email: z.string().email(),
+  password: PasswordSchema,
+  name: z.string().min(1).max(120),
+});
+export type RegisterInput = z.infer<typeof RegisterSchema>;
+
+export const LoginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1).max(128),
+});
+export type LoginInput = z.infer<typeof LoginSchema>;
+
+export const AuthSessionSchema = z.object({
+  user: UserSchema,
+});
+export type AuthSession = z.infer<typeof AuthSessionSchema>;
 
 // ───────────────────────── 素材库 Asset ─────────────────────────
 

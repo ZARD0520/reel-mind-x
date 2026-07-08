@@ -12,6 +12,7 @@ export const JobNames = {
 
 export interface RenderJobPayload {
   renderJobId: string;
+  userId: string;
   projectId: string;
   quality: RenderQuality;
 }

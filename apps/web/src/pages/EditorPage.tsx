@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAssets, useProject, useUpdateProject } from '../features/editor/hooks';
 import { useEditorStore } from '../features/editor/store';
 import { EditorTopBar } from '../features/editor/components/EditorTopBar';
@@ -9,10 +9,12 @@ import { PreviewCanvas } from '../features/editor/components/PreviewCanvas';
 import { PropertiesPanel } from '../features/editor/components/PropertiesPanel';
 import { Timeline } from '../features/editor/components/Timeline';
 import { PREVIEW_FPS } from '../features/editor/constants';
+import { ApiError } from '../lib/api';
 
 export function EditorPage() {
   const { id = '' } = useParams();
-  const { data: project, isLoading } = useProject(id);
+  const navigate = useNavigate();
+  const { data: project, isLoading, error } = useProject(id);
   const { data: assets = [] } = useAssets();
   const updateProject = useUpdateProject(id);
 
@@ -22,11 +24,21 @@ export function EditorPage() {
   const redo = useEditorStore((s) => s.redo);
   const canUndo = useEditorStore((s) => s.past.length > 0);
   const canRedo = useEditorStore((s) => s.future.length > 0);
+  const loadedProjectId = useRef<string | null>(null);
 
   // 项目加载完成后初始化 store。
   useEffect(() => {
-    if (project?.timeline && !timeline) setTimeline(project.timeline);
-  }, [project?.timeline, timeline, setTimeline]);
+    if (project?.timeline && loadedProjectId.current !== project.id) {
+      loadedProjectId.current = project.id;
+      setTimeline(project.timeline);
+    }
+  }, [project?.id, project?.timeline, setTimeline]);
+
+  useEffect(() => {
+    if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
+      navigate('/');
+    }
+  }, [error, navigate]);
 
   // 键盘：Delete 删除选中片段；Ctrl/Cmd+Z 撤销，Ctrl/Cmd+Shift+Z（或 Ctrl+Y）重做。
   useEffect(() => {

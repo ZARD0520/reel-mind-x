@@ -1,7 +1,9 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '../auth/auth.guard';
 import { AgentService } from './agent.service';
 
 @Controller('agent')
+@UseGuards(AuthGuard)
 export class AgentController {
   constructor(private readonly agentService: AgentService) {}
 
