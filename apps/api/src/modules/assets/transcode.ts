@@ -2,6 +2,8 @@ import ffmpegStatic from 'ffmpeg-static';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 
+const ffmpegPath = process.env.FFMPEG_PATH || ffmpegStatic;
+
 /**
  * 浏览器原生支持的音视频编码（<audio>/<video> 元素可直接播放）。
  * 不在此列的编码需转码成 Web 兼容格式才能预览。
@@ -56,8 +58,8 @@ export function transcodeForWeb(
   probe: { kind: string },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (!ffmpegStatic) {
-      return reject(new Error('ffmpeg-static binary not found'));
+    if (!ffmpegPath) {
+      return reject(new Error('FFmpeg binary not found'));
     }
 
     const isAudio = probe.kind === 'audio';
@@ -81,7 +83,7 @@ export function transcodeForWeb(
           outputPath,
         ];
 
-    const proc = spawn(ffmpegStatic, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     proc.stderr?.on('data', (d) => (stderr += d.toString()));
 

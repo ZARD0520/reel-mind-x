@@ -11,6 +11,10 @@ import { needsTranscode, transcodeForWeb } from './transcode';
 
 const REFERENCE_FPS = 30;
 
+function userUploadUrl(userId: string, filename: string): string {
+  return `/files/users/${userId}/uploads/${filename}`;
+}
+
 type AssetRow = {
   id: string;
   kind: string;
@@ -38,7 +42,6 @@ export class AssetsService {
 
   async createFromUpload(userId: string, file: Express.Multer.File, name?: string): Promise<Asset> {
     const probe = await probeMedia(file.path, file.mimetype, REFERENCE_FPS);
-    const publicUrl = this.config.get('PUBLIC_URL', { infer: true });
     const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
 
     let storedFilename = file.filename;
@@ -64,7 +67,7 @@ export class AssetsService {
         source: 'upload',
         status: 'ready',
         name: name?.trim() || originalName,
-        url: `${publicUrl}/files/users/${userId}/uploads/${storedFilename}`,
+        url: userUploadUrl(userId, storedFilename),
         localPath: storedPath,
         durationInFrames: probe.durationInFrames,
         width: probe.width,

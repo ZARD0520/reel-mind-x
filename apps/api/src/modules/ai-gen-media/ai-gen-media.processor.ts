@@ -22,7 +22,6 @@ const REFERENCE_FPS = 30;
 export class AiGenMediaProcessor extends WorkerHost {
   private readonly logger = new Logger(AiGenMediaProcessor.name);
   private readonly provider: ZhipuAiGenProvider;
-  private readonly publicUrl: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -35,7 +34,6 @@ export class AiGenMediaProcessor extends WorkerHost {
       imageModel: this.config.get('GLM_IMAGE_MODEL', { infer: true }),
       videoModel: this.config.get('GLM_VIDEO_MODEL', { infer: true }),
     });
-    this.publicUrl = this.config.get('PUBLIC_URL', { infer: true });
   }
 
   async process(job: Job): Promise<unknown> {
@@ -98,7 +96,7 @@ export class AiGenMediaProcessor extends WorkerHost {
       where: { id: assetId },
       data: {
         status: 'ready',
-        url: `${this.publicUrl}/files/users/${userId}/uploads/${filename}`,
+        url: `/files/users/${userId}/uploads/${filename}`,
         localPath,
         width: probe.width,
         height: probe.height,

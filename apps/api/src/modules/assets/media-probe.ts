@@ -2,7 +2,7 @@ import ffprobeInstaller from '@ffprobe-installer/ffprobe';
 import ffmpeg from 'fluent-ffmpeg';
 import type { AssetKind } from '@reel/contracts';
 
-ffmpeg.setFfprobePath(ffprobeInstaller.path);
+ffmpeg.setFfprobePath(process.env.FFPROBE_PATH || ffprobeInstaller.path);
 
 export interface ProbeResult {
   kind: AssetKind;

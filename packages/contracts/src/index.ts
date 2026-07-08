@@ -70,7 +70,7 @@ export const AssetSchema = z.object({
   status: AssetStatusSchema,
   name: z.string().min(1).max(200),
   /** 媒体访问地址（上传后或 AI 生成完成后填充；generating 时可为空） */
-  url: z.string().url().nullable(),
+  url: z.string().min(1).nullable(),
   /** 视频/音频的源时长（帧）。image 为 null */
   durationInFrames: z.number().int().nonnegative().nullable(),
   /** 视频/图片的像素尺寸。audio 为 null */

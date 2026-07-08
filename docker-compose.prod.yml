@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-reel_mind}
+    volumes:
+      - postgres-data-prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data-prod:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: 3888
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-reel_mind}?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      STORAGE_DIR: /app/storage
+      FFMPEG_PATH: /usr/bin/ffmpeg
+      FFPROBE_PATH: /usr/bin/ffprobe
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-reel_session}
+      AUTH_SESSION_DAYS: ${AUTH_SESSION_DAYS:-7}
+      GLM_API_KEY: ${GLM_API_KEY:?GLM_API_KEY is required}
+      GLM_BASE_URL: ${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      GLM_MODEL: ${GLM_MODEL:-glm-4-flash}
+      GLM_IMAGE_MODEL: ${GLM_IMAGE_MODEL:-cogview-3-flash}
+      GLM_VIDEO_MODEL: ${GLM_VIDEO_MODEL:-cogvideox-flash}
+    volumes:
+      - api-storage-prod:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - '${WEB_PORT:-8080}:80'
+    depends_on:
+      - api
+
+volumes:
+  postgres-data-prod:
+  redis-data-prod:
+  api-storage-prod:

@@ -40,6 +40,7 @@ function AssetThumb({
       draggable={asset.status === 'ready'}
       onDragStart={(e) => {
         e.dataTransfer.setData('application/x-reel-asset', asset.id);
+        e.dataTransfer.setData('text/plain', asset.id);
         e.dataTransfer.effectAllowed = 'copy';
       }}
     >
@@ -53,9 +54,9 @@ function AssetThumb({
         className="flex h-[76px] w-full items-center justify-center overflow-hidden rounded-lg bg-input enabled:hover:ring-2 enabled:hover:ring-accent disabled:cursor-default"
       >
         {asset.kind === 'image' && asset.url ? (
-          <img src={asset.url} alt={asset.name} className="h-full w-full object-cover" />
+          <img src={asset.url} alt={asset.name} draggable={false} className="h-full w-full object-cover" />
         ) : asset.kind === 'video' && asset.url ? (
-          <video src={asset.url} className="h-full w-full object-cover" muted preload="metadata" />
+          <video src={asset.url} draggable={false} className="h-full w-full object-cover" muted preload="metadata" />
         ) : (
           <div className="flex flex-col items-center gap-1 text-fg-tertiary">
             <Icon className="h-[22px] w-[22px]" />

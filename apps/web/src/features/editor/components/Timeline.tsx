@@ -777,11 +777,14 @@ export function Timeline({
   // ─── 拖放：从左侧素材拖到时间轴 ───
   const [dropNewActive, setDropNewActive] = useState(false);
   const assetFromDrag = (e: React.DragEvent): Asset | undefined => {
-    const id = e.dataTransfer.getData('application/x-reel-asset');
+    const id =
+      e.dataTransfer.getData('application/x-reel-asset') ||
+      e.dataTransfer.getData('text/plain');
     return assets.find((a) => a.id === id);
   };
   const allowDrop = (e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes('application/x-reel-asset')) {
+    const types = Array.from(e.dataTransfer.types).map((type) => type.toLowerCase());
+    if (types.includes('application/x-reel-asset') || types.includes('text/plain')) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
     }

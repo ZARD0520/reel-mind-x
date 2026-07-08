@@ -6,7 +6,13 @@ import { MIN_FRAMES, nextClipStart, others, resolveMove } from './collision';
 const IMAGE_DEFAULT_SECONDS = 3;
 
 function uuid(): string {
-  return crypto.randomUUID();
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
 }
 
 function defaultTransform(): Clip['transform'] {
@@ -414,7 +420,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       const updatedSource = { ...sourceTrack, clips: sourceTrack.clips.filter((c) => c.id !== clipId) };
       // 新轨道：同类型，片段从 0 开始（无需碰撞吸附，空轨）。
       const newTrack: Track = {
-        id: crypto.randomUUID(),
+        id: uuid(),
         kind: sourceTrack.kind,
         muted: false,
         hidden: false,
@@ -699,7 +705,7 @@ export const useEditorStore = create<EditorState>((set) => ({
       };
       // 新文本轨道：放在末尾（顶层），片段从 0 开始
       const newTrack: Track = {
-        id: crypto.randomUUID(),
+        id: uuid(),
         kind: 'text',
         muted: false,
         hidden: false,

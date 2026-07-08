@@ -5,8 +5,8 @@ import ffmpeg from 'fluent-ffmpeg';
 import type { RenderQuality, Timeline } from '@reel/contracts';
 import { buildGraph, type RenderAsset } from './render-graph';
 
-ffmpeg.setFfmpegPath(ffmpegStaticPath || ffmpegInstaller.path);
-ffmpeg.setFfprobePath(ffprobeInstaller.path);
+ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH || ffmpegStaticPath || ffmpegInstaller.path);
+ffmpeg.setFfprobePath(process.env.FFPROBE_PATH || ffprobeInstaller.path);
 
 export interface RenderResult {
   durationSec: number;
