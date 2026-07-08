@@ -23,6 +23,38 @@ export class RenderProcessor extends WorkerHost {
     super();
   }
 
+  private async removeFileIfExists(filePath: string): Promise<void> {
+    await fs.promises.rm(filePath, { force: true }).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to remove old export ${filePath}: ${message}`);
+    });
+  }
+
+  private async cleanupOldExports(userId: string, currentRenderJobId: string): Promise<void> {
+    const oldJobs = await this.prisma.renderJob.findMany({
+      where: {
+        userId,
+        id: { not: currentRenderJobId },
+        outputPath: { not: null },
+      },
+      select: { id: true, outputPath: true },
+    });
+
+    await Promise.all(
+      oldJobs
+        .map((oldJob) => oldJob.outputPath)
+        .filter((outputPath): outputPath is string => outputPath !== null)
+        .map((outputPath) => this.removeFileIfExists(outputPath)),
+    );
+
+    if (oldJobs.length === 0) return;
+
+    await this.prisma.renderJob.updateMany({
+      where: { id: { in: oldJobs.map((oldJob) => oldJob.id) } },
+      data: { outputUrl: null, outputPath: null },
+    });
+  }
+
   async process(job: Job<RenderJobPayload>): Promise<unknown> {
     const { renderJobId, userId, projectId, quality } = job.data;
     this.logger.log(`Render job ${renderJobId} (project ${projectId}) started`);
@@ -78,6 +110,7 @@ export class RenderProcessor extends WorkerHost {
 
       const publicUrl = this.config.get('PUBLIC_URL', { infer: true });
       const outputUrl = `${publicUrl}/files/users/${userId}/exports/${fileName}`;
+      await this.cleanupOldExports(userId, renderJobId);
       await this.prisma.renderJob.update({
         where: { id: renderJobId },
         data: { status: 'completed', progress: 100, outputUrl, outputPath, error: null },

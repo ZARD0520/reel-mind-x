@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, Check, Clapperboard, Loader2, LogOut, Plus, User } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Check, Clapperboard, Loader2, LogOut, Plus, Trash2, User, X } from 'lucide-react';
 import type { AuthSession, Project, User as ReelUser } from '@reel/contracts';
 import { ApiError, api } from '../lib/api';
 
@@ -22,6 +22,13 @@ function getAuthErrorMessage(error: unknown, mode: AuthMode): string {
   if (error.status === 409) return '这个邮箱已经注册，请直接登录';
   if (error.status === 400) return mode === 'register' ? '请检查邮箱、昵称和密码是否符合要求' : '请输入有效的邮箱和密码';
   return '服务暂时不可用，请稍后重试';
+}
+
+function getProjectErrorMessage(error: unknown): string {
+  if (!(error instanceof ApiError)) return '操作失败，请稍后重试';
+  if (error.status === 409) return '每个用户最多只能创建 3 个剪辑，请先删除一个旧剪辑';
+  if (error.status === 401) return '登录已过期，请重新登录';
+  return '操作失败，请稍后重试';
 }
 
 function getPasswordChecks(password: string) {
@@ -91,6 +98,67 @@ function PasswordChecklist({ password }: { password: string }) {
           {item.label}
         </div>
       ))}
+    </div>
+  );
+}
+
+function DeleteProjectDialog({
+  project,
+  isDeleting,
+  onCancel,
+  onConfirm,
+}: {
+  project: Project;
+  isDeleting: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/55 px-4 backdrop-blur-sm">
+      <section className="w-full max-w-[420px] rounded-lg border border-border-subtle bg-surface p-5 shadow-[0_24px_72px_rgba(0,0,0,0.45)]">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-red-500/12 text-red-300">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-fg">删除剪辑</h2>
+              <p className="mt-2 text-sm leading-6 text-fg-secondary">
+                确定删除「<span className="font-medium text-fg">{project.name}</span>」吗？删除后该剪辑内容将不再出现在我的剪辑中。
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isDeleting}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-secondary transition-colors hover:bg-input hover:text-fg disabled:opacity-50"
+            title="取消"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={isDeleting}
+            className="h-9 rounded-md border border-border-subtle px-4 text-sm font-medium text-fg-secondary transition-colors hover:bg-input hover:text-fg disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isDeleting}
+            className="flex h-9 items-center gap-2 rounded-md bg-red-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-red-400 disabled:opacity-60"
+          >
+            {isDeleting && <Loader2 className="h-4 w-4 animate-spin" />}
+            删除
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -185,17 +253,59 @@ function AuthPanel() {
 export function HomePage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [projectPendingDeletion, setProjectPendingDeletion] = useState<Project | null>(null);
   const me = useQuery<ReelUser>({ queryKey: ['me'], queryFn: () => api.auth.me() as Promise<ReelUser>, retry: false });
   const projects = useQuery<Project[]>({ queryKey: ['projects'], queryFn: () => api.projects.list() as Promise<Project[]>, enabled: !!me.data });
+  const projectCount = projects.data?.length ?? 0;
+  const hasReachedProjectLimit = projectCount >= 3;
+
+  useEffect(() => {
+    if (!toastMessage) return undefined;
+    const timer = window.setTimeout(() => setToastMessage(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [toastMessage]);
+
   const createProject = useMutation({
-    mutationFn: () => api.projects.create('未命名项目') as Promise<Project>,
+    mutationFn: () => {
+      if (hasReachedProjectLimit) throw new ApiError('Project limit reached', 409, '');
+      return api.projects.create('未命名项目') as Promise<Project>;
+    },
     onSuccess: (project) => {
+      setToastMessage(null);
       void qc.invalidateQueries({ queryKey: ['projects'] });
       navigate(`/editor/${project.id}`);
     },
+    onError: (error) => setToastMessage(getProjectErrorMessage(error)),
+  });
+  const removeProject = useMutation({
+    mutationFn: (id: string) => api.projects.remove(id),
+    onSuccess: () => {
+      setToastMessage(null);
+      setProjectPendingDeletion(null);
+      void qc.invalidateQueries({ queryKey: ['projects'] });
+    },
+    onError: (error) => setToastMessage(getProjectErrorMessage(error)),
   });
   const logout = useMutation({ mutationFn: () => api.auth.logout(), onSuccess: () => { qc.clear(); navigate('/'); } });
   const greeting = useMemo(() => (me.data ? me.data.name || me.data.email : ''), [me.data]);
+
+  const handleCreateProject = () => {
+    if (hasReachedProjectLimit) {
+      setToastMessage('每个用户最多只能创建 3 个剪辑，请先删除一个旧剪辑');
+      return;
+    }
+    createProject.mutate();
+  };
+
+  const handleRemoveProject = (project: Project) => {
+    setProjectPendingDeletion(project);
+  };
+
+  const confirmRemoveProject = () => {
+    if (!projectPendingDeletion) return;
+    removeProject.mutate(projectPendingDeletion.id);
+  };
 
   if (me.isLoading) {
     return <div className="flex h-full items-center justify-center bg-base text-fg-secondary"><Loader2 className="h-5 w-5 animate-spin" /></div>;
@@ -203,6 +313,15 @@ export function HomePage() {
 
   return (
     <div className="flex h-full flex-col bg-base text-fg">
+      {toastMessage && <Toast message={toastMessage} />}
+      {projectPendingDeletion && (
+        <DeleteProjectDialog
+          project={projectPendingDeletion}
+          isDeleting={removeProject.isPending}
+          onCancel={() => setProjectPendingDeletion(null)}
+          onConfirm={confirmRemoveProject}
+        />
+      )}
       <header className="flex items-center justify-between border-b border-border-subtle px-8 py-5">
         <button type="button" onClick={() => navigate('/')} className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-accent"><Clapperboard className="h-[18px] w-[18px]" /></div>
@@ -221,8 +340,8 @@ export function HomePage() {
       ) : (
         <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-8 py-8">
           <div className="flex items-center justify-between">
-            <div><h1 className="text-2xl font-bold">我的剪辑</h1><p className="mt-1 text-sm text-fg-secondary">未导出的剪辑内容会自动保存到当前账号。</p></div>
-            <button type="button" onClick={() => createProject.mutate()} disabled={createProject.isPending} className="flex h-10 items-center gap-2 rounded-md bg-accent px-4 font-semibold hover:bg-accent-hover disabled:opacity-60">
+            <div><h1 className="text-2xl font-bold">我的剪辑</h1><p className="mt-1 text-sm text-fg-secondary">未导出的剪辑内容会自动保存到当前账号，最多保留 3 个剪辑。</p></div>
+            <button type="button" onClick={handleCreateProject} disabled={createProject.isPending || hasReachedProjectLimit} className="flex h-10 items-center gap-2 rounded-md bg-accent px-4 font-semibold hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60">
               {createProject.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}新建剪辑
             </button>
           </div>
@@ -231,15 +350,28 @@ export function HomePage() {
           ) : (projects.data ?? []).length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border-subtle text-fg-secondary">
               <p>还没有剪辑项目</p>
-              <button type="button" onClick={() => createProject.mutate()} className="flex h-10 items-center gap-2 rounded-md bg-accent px-4 font-semibold text-fg hover:bg-accent-hover"><Plus className="h-4 w-4" />新建第一个项目</button>
+              <button type="button" onClick={handleCreateProject} className="flex h-10 items-center gap-2 rounded-md bg-accent px-4 font-semibold text-fg hover:bg-accent-hover"><Plus className="h-4 w-4" />新建第一个项目</button>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
               {(projects.data ?? []).map((project) => (
-                <button key={project.id} type="button" onClick={() => navigate(`/editor/${project.id}`)} className="rounded-lg border border-border-subtle bg-surface p-4 text-left hover:border-accent">
-                  <div className="truncate font-semibold">{project.name}</div>
-                  <div className="mt-2 text-xs text-fg-secondary">更新于 {new Date(project.updatedAt).toLocaleString()}</div>
-                </button>
+                <article key={project.id} className="rounded-lg border border-border-subtle bg-surface p-4 transition-colors hover:border-accent">
+                  <div className="flex items-start justify-between gap-3">
+                    <button type="button" onClick={() => navigate(`/editor/${project.id}`)} className="min-w-0 flex-1 text-left">
+                      <div className="truncate font-semibold">{project.name}</div>
+                      <div className="mt-2 text-xs text-fg-secondary">更新于 {new Date(project.updatedAt).toLocaleString()}</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveProject(project)}
+                      disabled={removeProject.isPending}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-fg-secondary transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:opacity-50"
+                      title="删除剪辑"
+                    >
+                      {removeProject.isPending && removeProject.variables === project.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </article>
               ))}
             </div>
           )}

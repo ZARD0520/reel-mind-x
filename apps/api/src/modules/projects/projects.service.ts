@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   ProjectSchema,
   TimelineSchema,
@@ -11,6 +11,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class ProjectsService {
+  private readonly maxActiveProjects = 3;
+
   constructor(private readonly prisma: PrismaService) {}
 
   private toProject(row: {
@@ -25,8 +27,14 @@ export class ProjectsService {
 
   async create(userId: string, input: CreateProjectInput): Promise<Project> {
     const timeline = input.timeline ?? TimelineSchema.parse({ settings: {} });
-    const row = await this.prisma.project.create({
-      data: { userId, name: input.name, timeline: timeline as Prisma.InputJsonValue },
+    const row = await this.prisma.$transaction(async (tx) => {
+      const activeProjectCount = await tx.project.count({ where: { userId, deletedAt: null } });
+      if (activeProjectCount >= this.maxActiveProjects) {
+        throw new ConflictException('每个用户最多只能创建 3 个剪辑');
+      }
+      return tx.project.create({
+        data: { userId, name: input.name, timeline: timeline as Prisma.InputJsonValue },
+      });
     });
     return this.toProject(row);
   }
