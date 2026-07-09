@@ -68,11 +68,14 @@ export const api = {
     remove: (id: string) => requestVoid(`/projects/${id}`, { method: 'DELETE' }),
   },
   assets: {
-    list: () => request('/assets'),
-    upload: (file: File) => {
+    list: (projectId: string) => request(`/assets?projectId=${encodeURIComponent(projectId)}`),
+    upload: (projectId: string, file: File) => {
       const form = new FormData();
       form.append('file', file);
-      return request('/assets', { method: 'POST', body: form });
+      return request(`/assets?projectId=${encodeURIComponent(projectId)}`, {
+        method: 'POST',
+        body: form,
+      });
     },
     remove: (id: string) => requestVoid(`/assets/${id}`, { method: 'DELETE' }),
   },
@@ -115,13 +118,13 @@ export const api = {
       }),
   },
   aiGenMedia: {
-    generateImage: (body: { prompt: string; size?: string }) =>
+    generateImage: (body: { projectId: string; prompt: string; size?: string }) =>
       request('/ai-gen-media/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }),
-    generateVideo: (body: { prompt: string; size?: string }) =>
+    generateVideo: (body: { projectId: string; prompt: string; size?: string }) =>
       request('/ai-gen-media/video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

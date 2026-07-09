@@ -65,6 +65,8 @@ export type AssetStatus = z.infer<typeof AssetStatusSchema>;
  */
 export const AssetSchema = z.object({
   id: z.string().uuid(),
+  /** 素材所属项目：不同项目之间素材相互隔离 */
+  projectId: z.string().uuid(),
   kind: AssetKindSchema,
   source: AssetSourceSchema,
   status: AssetStatusSchema,
@@ -398,6 +400,8 @@ const SizeSchema = z
 
 /** AI 图像生成请求 */
 export const GenerateImageSchema = z.object({
+  /** 素材归属的项目 id */
+  projectId: z.string().uuid(),
   prompt: z.string().min(1).max(2000),
   size: SizeSchema.default('1024x1024'),
 });
@@ -405,6 +409,8 @@ export type GenerateImageInput = z.infer<typeof GenerateImageSchema>;
 
 /** AI 视频生成请求 */
 export const GenerateVideoSchema = z.object({
+  /** 素材归属的项目 id */
+  projectId: z.string().uuid(),
   prompt: z.string().min(1).max(2000),
   size: SizeSchema.default('1280x720'),
 });

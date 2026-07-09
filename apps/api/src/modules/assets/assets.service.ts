@@ -17,6 +17,7 @@ function userUploadUrl(userId: string, filename: string): string {
 
 type AssetRow = {
   id: string;
+  projectId: string;
   kind: string;
   source: string;
   status: string;
@@ -40,7 +41,14 @@ export class AssetsService {
     return AssetSchema.parse(row);
   }
 
-  async createFromUpload(userId: string, file: Express.Multer.File, name?: string): Promise<Asset> {
+  async createFromUpload(
+    userId: string,
+    projectId: string,
+    file: Express.Multer.File,
+    name?: string,
+  ): Promise<Asset> {
+    await this.assertProjectOwned(userId, projectId);
+
     const probe = await probeMedia(file.path, file.mimetype, REFERENCE_FPS);
     const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
 
@@ -63,6 +71,7 @@ export class AssetsService {
     const row = await this.prisma.asset.create({
       data: {
         userId,
+        projectId,
         kind: probe.kind,
         source: 'upload',
         status: 'ready',
@@ -78,15 +87,23 @@ export class AssetsService {
     return this.toAsset(row);
   }
 
+  private async assertProjectOwned(userId: string, projectId: string): Promise<void> {
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+  }
+
   async findOne(userId: string, id: string): Promise<Asset> {
     const row = await this.prisma.asset.findFirst({ where: { id, userId } });
     if (!row) throw new NotFoundException(`Asset ${id} not found`);
     return this.toAsset(row);
   }
 
-  async list(userId: string): Promise<Asset[]> {
+  async list(userId: string, projectId: string): Promise<Asset[]> {
     const rows = await this.prisma.asset.findMany({
-      where: { userId },
+      where: { userId, projectId },
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((row) => this.toAsset(row));

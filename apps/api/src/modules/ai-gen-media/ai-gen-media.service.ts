@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { AssetSchema, type Asset, type GenerateImageInput, type GenerateVideoInput } from '@reel/contracts';
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
@@ -25,14 +25,24 @@ export class AiGenMediaService {
     @InjectQueue(QueueNames.AI_GEN_MEDIA) private readonly queue: Queue,
   ) {}
 
+  private async assertProjectOwned(userId: string, projectId: string): Promise<void> {
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+  }
+
   async generateImage(userId: string, input: GenerateImageInput): Promise<Asset> {
-    const { prompt, size } = input;
+    const { projectId, prompt, size } = input;
+    await this.assertProjectOwned(userId, projectId);
     const assetId = randomUUID();
 
     const row = await this.prisma.asset.create({
       data: {
         id: assetId,
         userId,
+        projectId,
         kind: 'image',
         source: 'ai',
         status: 'generating',
@@ -48,7 +58,7 @@ export class AiGenMediaService {
 
     await this.queue.add(
       JobNames.GENERATE_IMAGE,
-      { userId, assetId, prompt, size } as GenerateImageJobPayload,
+      { userId, projectId, assetId, prompt, size } as GenerateImageJobPayload,
       JOB_OPTS,
     );
 
@@ -56,13 +66,15 @@ export class AiGenMediaService {
   }
 
   async generateVideo(userId: string, input: GenerateVideoInput): Promise<Asset> {
-    const { prompt, size } = input;
+    const { projectId, prompt, size } = input;
+    await this.assertProjectOwned(userId, projectId);
     const assetId = randomUUID();
 
     const row = await this.prisma.asset.create({
       data: {
         id: assetId,
         userId,
+        projectId,
         kind: 'video',
         source: 'ai',
         status: 'generating',
@@ -78,7 +90,7 @@ export class AiGenMediaService {
 
     await this.queue.add(
       JobNames.GENERATE_VIDEO,
-      { userId, assetId, prompt, size } as GenerateVideoJobPayload,
+      { userId, projectId, assetId, prompt, size } as GenerateVideoJobPayload,
       JOB_OPTS,
     );
 

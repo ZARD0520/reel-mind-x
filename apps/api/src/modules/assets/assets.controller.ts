@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -46,15 +47,19 @@ export class AssetsController {
   )
   async upload(
     @CurrentUser() user: AuthUser,
+    @Query('projectId', new ParseUUIDPipe()) projectId: string,
     @UploadedFile() file?: Express.Multer.File,
   ): Promise<Asset> {
     if (!file) throw new BadRequestException('Missing upload field: file');
-    return this.assets.createFromUpload(user.id, file);
+    return this.assets.createFromUpload(user.id, projectId, file);
   }
 
   @Get()
-  list(@CurrentUser() user: AuthUser): Promise<Asset[]> {
-    return this.assets.list(user.id);
+  list(
+    @CurrentUser() user: AuthUser,
+    @Query('projectId', new ParseUUIDPipe()) projectId: string,
+  ): Promise<Asset[]> {
+    return this.assets.list(user.id, projectId);
   }
 
   @Get(':id')

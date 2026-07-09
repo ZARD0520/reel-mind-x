@@ -118,6 +118,8 @@ interface EditorState {
   relocateTextClip: (clipId: string, toTrackId: string, atFrame?: number) => void;
   /** 把文本片段迁移到一条新建的文本轨道（放在末尾＝顶层）。入历史。 */
   relocateTextClipToNewTrack: (clipId: string) => void;
+  /** 把文本片段插入目标文本轨的指定帧位置，推挤该位置及之后的文本片段往后让位。入历史。 */
+  insertTextClipAndPush: (clipId: string, toTrackId: string, atFrame: number) => void;
   /** 把一个快照压入历史（拖拽结束时提交 pre-drag 快照） */
   commitHistory: (snapshot: Timeline) => void;
   undo: () => void;
@@ -721,6 +723,65 @@ export const useEditorStore = create<EditorState>((set) => ({
           .filter((t): t is Track => t !== null),
         newTrack,
       ];
+
+      return { ...pushPast(state), timeline: { ...state.timeline, tracks } };
+    }),
+
+  insertTextClipAndPush: (clipId, toTrackId, atFrame) =>
+    set((state) => {
+      if (!state.timeline) return state;
+      let sourceTrack: Track | undefined;
+      let textClip: TextClip | undefined;
+      for (const t of state.timeline.tracks) {
+        if (t.kind === 'text' && t.textClips) {
+          const tc = t.textClips.find((tc) => tc.id === clipId);
+          if (tc) {
+            sourceTrack = t;
+            textClip = tc;
+            break;
+          }
+        }
+      }
+      const targetTrack = state.timeline.tracks.find((t) => t.id === toTrackId);
+      if (!sourceTrack || !textClip || !targetTrack) return state;
+      if (targetTrack.kind !== 'text') return state;
+
+      const sameTrack = sourceTrack.id === targetTrack.id;
+      const sorted = (targetTrack.textClips ?? [])
+        .filter((tc) => tc.id !== clipId)
+        .sort((a, b) => a.start - b.start);
+
+      let insertIdx = sorted.length;
+      for (let i = 0; i < sorted.length; i++) {
+        const mid = sorted[i]!.start + sorted[i]!.durationInFrames / 2;
+        if (atFrame < mid) {
+          insertIdx = i;
+          break;
+        }
+      }
+      const insertStart =
+        insertIdx === 0 ? 0 : sorted[insertIdx - 1]!.start + sorted[insertIdx - 1]!.durationInFrames;
+      const newTextClips: TextClip[] = [];
+      for (let i = 0; i < insertIdx; i++) newTextClips.push(sorted[i]!);
+      newTextClips.push({ ...textClip, start: insertStart });
+      let cursor = insertStart + textClip.durationInFrames;
+      for (let i = insertIdx; i < sorted.length; i++) {
+        newTextClips.push({ ...sorted[i]!, start: cursor });
+        cursor += sorted[i]!.durationInFrames;
+      }
+      const updatedTarget = { ...targetTrack, textClips: newTextClips };
+
+      const tracks = state.timeline.tracks
+        .map((t) => {
+          if (sameTrack && t.id === targetTrack.id) return updatedTarget;
+          if (!sameTrack && t.id === sourceTrack!.id) {
+            const remaining = (sourceTrack!.textClips ?? []).filter((tc) => tc.id !== clipId);
+            return remaining.length > 0 ? { ...sourceTrack!, textClips: remaining } : null;
+          }
+          if (!sameTrack && t.id === targetTrack.id) return updatedTarget;
+          return t;
+        })
+        .filter((t): t is Track => t !== null);
 
       return { ...pushPast(state), timeline: { ...state.timeline, tracks } };
     }),

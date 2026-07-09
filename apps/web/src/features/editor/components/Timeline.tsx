@@ -278,7 +278,7 @@ function ClipBlock({
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (drag.current) {
-      const { moved, type, candidateTrackId } = drag.current;
+      const { moved, type, candidateTrackId, snapshot, ghostStart, origStart } = drag.current;
 
       if (type === 'move') {
         if (moved) {
@@ -286,8 +286,21 @@ function ClipBlock({
             // 跨轨：迁移到目标轨的拖拽落点。
             onDragEnd();
           } else {
-            // 同轨：已实时移动，提交历史即可。
-            commitHistory(drag.current.snapshot);
+            // 同轨：判断是否越过任一邻居的中点，若是则改走推挤（ripple）。
+            const raw = Math.round(ghostStart);
+            const src = snapshot?.tracks.find((t) => t.id === trackId);
+            const neighbors = (src?.clips ?? []).filter((c) => c.id !== clip.id);
+            const crossed = neighbors.some((c) => {
+              const mid = c.start + c.durationInFrames / 2;
+              return (origStart < mid && raw >= mid) || (origStart > mid && raw <= mid);
+            });
+            if (crossed && snapshot) {
+              // 先还原到拖动前状态，抹去实时预览产生的中间态，再执行推挤。
+              useEditorStore.setState({ timeline: snapshot });
+              useEditorStore.getState().insertClipAndPush(clip.id, trackId, Math.max(0, raw));
+            } else {
+              commitHistory(snapshot);
+            }
             onDragEnd();
           }
         } else {
@@ -550,14 +563,25 @@ function TextClipBlock({
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (drag.current) {
-      const { moved, candidateTrackId } = drag.current;
+      const { moved, candidateTrackId, snapshot, ghostStart, origStart } = drag.current;
       if (moved) {
         if (candidateTrackId && candidateTrackId !== trackId) {
           // 跨轨：迁移到目标轨
           onDragEnd();
         } else {
-          // 同轨：已实时移动，提交历史即可
-          commitHistory(drag.current.snapshot);
+          // 同轨：判断是否越过任一邻居中点，若是则改走推挤（ripple）。
+          const raw = Math.round(ghostStart);
+          const neighbors = trackTextClips.filter((tc) => tc.id !== textClip.id);
+          const crossed = neighbors.some((tc) => {
+            const mid = tc.start + tc.durationInFrames / 2;
+            return (origStart < mid && raw >= mid) || (origStart > mid && raw <= mid);
+          });
+          if (crossed && snapshot) {
+            useEditorStore.setState({ timeline: snapshot });
+            useEditorStore.getState().insertTextClipAndPush(textClip.id, trackId, Math.max(0, raw));
+          } else {
+            commitHistory(snapshot);
+          }
           onDragEnd();
         }
       } else {

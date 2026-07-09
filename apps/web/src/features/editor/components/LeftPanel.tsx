@@ -103,31 +103,20 @@ function AssetThumb({
   );
 }
 
-export function LeftPanel() {
+export function LeftPanel({ projectId }: { projectId: string }) {
   const [active, setActive] = useState('media');
   const fileInput = useRef<HTMLInputElement>(null);
-  const { data: assets = [] } = useAssets();
-  const upload = useUploadAsset();
-  const deleteAsset = useDeleteAsset();
+  const { data: assets = [] } = useAssets(projectId);
+  const upload = useUploadAsset(projectId);
+  const deleteAsset = useDeleteAsset(projectId);
   const addAsset = useEditorStore((s) => s.addAsset);
 
   const [textGenOpen, setTextGenOpen] = useState(false);
   const [aiMediaType, setAiMediaType] = useState<'image' | 'video' | null>(null);
 
-  // AI 生成文案落地：选中文本片段则更新其内容，否则新建一个文本片段。
+  // AI 生成文案落地：始终新建一个文本片段（不覆盖当前选中的文本）。
   const applyGeneratedText = (text: string) => {
-    const state = useEditorStore.getState();
-    const selectedId = state.selectedClipId;
-    const isTextClipSelected =
-      selectedId != null &&
-      state.timeline?.tracks.some(
-        (t) => t.kind === 'text' && t.textClips?.some((tc) => tc.id === selectedId),
-      );
-    if (isTextClipSelected && selectedId) {
-      state.updateTextClip(selectedId, { text });
-    } else {
-      state.addTextClip(text);
-    }
+    useEditorStore.getState().addTextClip(text);
   };
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -289,6 +278,7 @@ export function LeftPanel() {
       {/* AI 图像/视频生成对话框 */}
       <AiMediaGenDialog
         open={aiMediaType !== null}
+        projectId={projectId}
         type={aiMediaType ?? 'image'}
         onClose={() => setAiMediaType(null)}
       />

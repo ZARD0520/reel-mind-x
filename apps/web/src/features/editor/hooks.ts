@@ -23,10 +23,11 @@ export function useUpdateProject(id: string) {
 
 // ─── Assets ─────────────────────────────────────────────────────────────────
 
-export function useAssets() {
+export function useAssets(projectId: string) {
   return useQuery<Asset[]>({
-    queryKey: ['assets'],
-    queryFn: () => api.assets.list() as Promise<Asset[]>,
+    queryKey: ['assets', projectId],
+    queryFn: () => api.assets.list(projectId) as Promise<Asset[]>,
+    enabled: !!projectId,
     // 有 AI 素材在生成中时，每 3s 轮询直到全部 ready/failed。
     refetchInterval: (q) =>
       (q.state.data ?? []).some((a) => a.status === 'generating') ? 3000 : false,
@@ -34,35 +35,35 @@ export function useAssets() {
 }
 
 /** AI 生成图像/视频：提交后返回 generating 占位 Asset，列表轮询到 ready。 */
-export function useGenerateMedia() {
+export function useGenerateMedia(projectId: string) {
   const qc = useQueryClient();
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['assets'] });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['assets', projectId] });
   const image = useMutation({
     mutationFn: (input: { prompt: string; size: string }) =>
-      api.aiGenMedia.generateImage(input) as Promise<Asset>,
+      api.aiGenMedia.generateImage({ projectId, ...input }) as Promise<Asset>,
     onSuccess: invalidate,
   });
   const video = useMutation({
     mutationFn: (input: { prompt: string; size: string }) =>
-      api.aiGenMedia.generateVideo(input) as Promise<Asset>,
+      api.aiGenMedia.generateVideo({ projectId, ...input }) as Promise<Asset>,
     onSuccess: invalidate,
   });
   return { image, video };
 }
 
-export function useUploadAsset() {
+export function useUploadAsset(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (file: File) => api.assets.upload(file) as Promise<Asset>,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['assets'] }),
+    mutationFn: (file: File) => api.assets.upload(projectId, file) as Promise<Asset>,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['assets', projectId] }),
   });
 }
 
-export function useDeleteAsset() {
+export function useDeleteAsset(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.assets.remove(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['assets'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['assets', projectId] }),
   });
 }
 

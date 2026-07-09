@@ -144,6 +144,7 @@ function TextDragBox({
 }
 
 interface PreviewCanvasProps {
+  projectId: string;
   currentFrame: number;
   totalFrames: number;
   isPlaying: boolean;
@@ -152,6 +153,7 @@ interface PreviewCanvasProps {
 }
 
 export function PreviewCanvas({
+  projectId,
   currentFrame,
   totalFrames,
   isPlaying,
@@ -161,7 +163,7 @@ export function PreviewCanvas({
   const timeline = useEditorStore((s) => s.timeline);
   const selectedClipId = useEditorStore((s) => s.selectedClipId);
   const updateSettings = useEditorStore((s) => s.updateSettings);
-  const { data: assets = [] } = useAssets();
+  const { data: assets = [] } = useAssets(projectId);
   const audioUnlocked = useAudioUnlock();
   const stageRef = useRef<HTMLDivElement>(null);
   // 全屏时容器实际尺寸（用于重新计算 displayScale）

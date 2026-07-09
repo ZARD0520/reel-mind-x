@@ -15,7 +15,7 @@ export function EditorPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const { data: project, isLoading, error } = useProject(id);
-  const { data: assets = [] } = useAssets();
+  const { data: assets = [] } = useAssets(id);
   const updateProject = useUpdateProject(id);
 
   const { timeline, selectedClipId, setTimeline, replaceTimeline, selectClip } = useEditorStore();
@@ -170,8 +170,9 @@ export function EditorPage() {
         }}
       />
       <div className="flex min-h-0 flex-1">
-        <LeftPanel />
+        <LeftPanel projectId={id} />
         <PreviewCanvas
+          projectId={id}
           currentFrame={currentFrame}
           totalFrames={totalFrames}
           isPlaying={isPlaying}

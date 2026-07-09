@@ -35,6 +35,8 @@ model Project {
   updatedAt DateTime @updatedAt
   deletedAt DateTime?
 
+  assets Asset[]
+
   @@index([userId, updatedAt])
   @@map("projects")
 }
@@ -43,6 +45,8 @@ model Asset {
   id               String   @id @default(uuid())
   userId           String
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId        String
+  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   kind             String
   source           String
   status           String
@@ -55,7 +59,7 @@ model Asset {
   prompt           String?
   createdAt        DateTime @default(now())
 
-  @@index([userId, createdAt])
+  @@index([userId, projectId, createdAt])
   @@map("assets")
 }
 

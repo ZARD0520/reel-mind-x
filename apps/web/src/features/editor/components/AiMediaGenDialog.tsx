@@ -5,14 +5,15 @@ import { RATIO_OPTIONS, IMAGE_SIZE_BY_RATIO, VIDEO_SIZE_BY_RATIO, type AspectRat
 
 interface AiMediaGenDialogProps {
   open: boolean;
+  projectId: string;
   type: 'image' | 'video';
   onClose: () => void;
 }
 
-export function AiMediaGenDialog({ open, type, onClose }: AiMediaGenDialogProps) {
+export function AiMediaGenDialog({ open, projectId, type, onClose }: AiMediaGenDialogProps) {
   const [prompt, setPrompt] = useState('');
   const [ratio, setRatio] = useState<AspectRatioKey>('16:9');
-  const { image, video } = useGenerateMedia();
+  const { image, video } = useGenerateMedia(projectId);
   const mutation = type === 'image' ? image : video;
 
   const handleSubmit = (e: React.FormEvent) => {
