@@ -25,7 +25,7 @@ const mimeTypes = {
 
 function proxy(req, res, prefix) {
   const target = new URL(req.url || '/', apiOrigin);
-  target.pathname = (req.url || '/').replace(prefix, '') || '/';
+  target.pathname = target.pathname.replace(prefix, '') || '/';
 
   const upstream = proxyRequest(
     target,
