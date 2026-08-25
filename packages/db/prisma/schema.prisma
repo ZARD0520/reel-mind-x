@@ -19,10 +19,24 @@ model User {
   updatedAt    DateTime @updatedAt
 
   projects   Project[]
+  canvases   Canvas[]
   assets     Asset[]
   renderJobs RenderJob[]
 
   @@map("users")
+}
+
+model Canvas {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  graph     Json     @default("{\"version\":1,\"nodes\":[],\"edges\":[],\"viewport\":{\"x\":0,\"y\":0,\"zoom\":1}}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, updatedAt])
+  @@map("canvases")
 }
 
 model Project {

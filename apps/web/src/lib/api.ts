@@ -67,6 +67,23 @@ export const api = {
       }),
     remove: (id: string) => requestVoid(`/projects/${id}`, { method: 'DELETE' }),
   },
+  canvases: {
+    list: () => request('/canvases'),
+    create: (name?: string) =>
+      request('/canvases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(name ? { name } : {}),
+      }),
+    get: (id: string) => request(`/canvases/${id}`),
+    update: (id: string, body: object) =>
+      request(`/canvases/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    remove: (id: string) => requestVoid(`/canvases/${id}`, { method: 'DELETE' }),
+  },
   assets: {
     list: (projectId: string) => request(`/assets?projectId=${encodeURIComponent(projectId)}`),
     upload: (projectId: string, file: File) => {

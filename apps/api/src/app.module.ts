@@ -11,6 +11,7 @@ import { AiGenMediaModule } from './modules/ai-gen-media/ai-gen-media.module';
 import { AiMixModule } from './modules/ai-mix/ai-mix.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CanvasesModule } from './modules/canvases/canvases.module';
 import { FilesModule } from './modules/files/files.module';
 import { LlmModule } from './modules/llm/llm.module';
 import { ProjectsModule } from './modules/projects/projects.module';
@@ -35,6 +36,7 @@ import { PrismaModule } from './prisma/prisma.module';
     }),
     PrismaModule,
     AuthModule,
+    CanvasesModule,
     LlmModule,
     AgentModule,
     AiMixModule,

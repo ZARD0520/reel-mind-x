@@ -119,31 +119,31 @@ export type ClipTransform = z.infer<typeof ClipTransformSchema>;
  */
 export const TransitionTypeSchema = z.enum([
   // 基础淡化
-  'fade',        // 淡入淡出（最通用）
-  'fadeblack',   // 经过黑场
-  'fadewhite',   // 经过白场
-  'dissolve',    // 溶解（像素随机）
+  'fade', // 淡入淡出（最通用）
+  'fadeblack', // 经过黑场
+  'fadewhite', // 经过白场
+  'dissolve', // 溶解（像素随机）
   // 擦除（wipe）
-  'wipeleft',    // 左擦除
-  'wiperight',   // 右擦除
-  'wipeup',      // 上擦除
-  'wipedown',    // 下擦除
+  'wipeleft', // 左擦除
+  'wiperight', // 右擦除
+  'wipeup', // 上擦除
+  'wipedown', // 下擦除
   // 滑动（slide）
-  'slideleft',   // 左滑
-  'slideright',  // 右滑
-  'slideup',     // 上滑
-  'slidedown',   // 下滑
+  'slideleft', // 左滑
+  'slideright', // 右滑
+  'slideup', // 上滑
+  'slidedown', // 下滑
   // 圆形
-  'circleopen',  // 圆形展开
+  'circleopen', // 圆形展开
   'circleclose', // 圆形收缩
   // 平滑滑动
-  'smoothleft',  // 平滑左滑
+  'smoothleft', // 平滑左滑
   'smoothright', // 平滑右滑
-  'smoothup',    // 平滑上滑
-  'smoothdown',  // 平滑下滑
+  'smoothup', // 平滑上滑
+  'smoothdown', // 平滑下滑
   // 径向
-  'radial',      // 径向模糊
-  'distance',    // 距离效果
+  'radial', // 径向模糊
+  'distance', // 距离效果
 ]);
 export type TransitionType = z.infer<typeof TransitionTypeSchema>;
 
@@ -280,6 +280,61 @@ export const UpdateProjectSchema = z
   .partial();
 export type UpdateProjectInput = z.infer<typeof UpdateProjectSchema>;
 
+// ───────────────────────── 素材工作流画布 Canvas ─────────────────────────
+
+export const CanvasNodeSchema = z.object({
+  id: z.string().min(1),
+  type: z.string().min(1),
+  position: z.object({ x: z.number(), y: z.number() }),
+  data: z.record(z.unknown()),
+});
+export type CanvasNode = z.infer<typeof CanvasNodeSchema>;
+
+export const CanvasEdgeSchema = z.object({
+  id: z.string().min(1),
+  source: z.string().min(1),
+  target: z.string().min(1),
+  sourceHandle: z.string().nullable().optional(),
+  targetHandle: z.string().nullable().optional(),
+});
+export type CanvasEdge = z.infer<typeof CanvasEdgeSchema>;
+
+export const CanvasGraphSchema = z.object({
+  version: z.literal(1),
+  nodes: z.array(CanvasNodeSchema),
+  edges: z.array(CanvasEdgeSchema),
+  viewport: z.object({
+    x: z.number(),
+    y: z.number(),
+    zoom: z.number().positive(),
+  }),
+});
+export type CanvasGraph = z.infer<typeof CanvasGraphSchema>;
+
+export const CanvasSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  graph: CanvasGraphSchema,
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+export type Canvas = z.infer<typeof CanvasSchema>;
+
+export const CreateCanvasSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+});
+export type CreateCanvasInput = z.infer<typeof CreateCanvasSchema>;
+
+export const UpdateCanvasSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200).optional(),
+    graph: CanvasGraphSchema.optional(),
+  })
+  .refine((input) => input.name !== undefined || input.graph !== undefined, {
+    message: '至少需要更新一个字段',
+  });
+export type UpdateCanvasInput = z.infer<typeof UpdateCanvasSchema>;
+
 // ───────────────────────── 导出/渲染任务 RenderJob ─────────────────────────
 
 /** 导出质量档：影响分辨率缩放与码率（CRF/preset）。 */
@@ -296,12 +351,7 @@ export const CreateRenderSchema = z.object({
 export type CreateRenderInput = z.infer<typeof CreateRenderSchema>;
 
 /** 渲染任务状态（对应 BullMQ job 生命周期） */
-export const RenderStatusSchema = z.enum([
-  'queued',
-  'rendering',
-  'completed',
-  'failed',
-]);
+export const RenderStatusSchema = z.enum(['queued', 'rendering', 'completed', 'failed']);
 export type RenderStatus = z.infer<typeof RenderStatusSchema>;
 
 /** 渲染任务：worker 用 project 的 timeline 跑 FFmpeg 合成 */
@@ -360,18 +410,20 @@ export const ChatMessageSchema = z.object({
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 
 /** AI 文本生成请求入参 */
-export const GenerateTextSchema = z.object({
-  /** 用户提示词（单轮快捷模式，与 messages 二选一） */
-  prompt: z.string().min(1).max(2000).optional(),
-  /** 完整对话历史（多轮模式，包含所有 user 和 assistant 消息） */
-  messages: z.array(ChatMessageSchema).optional(),
-  /** 生成文本的最大字数限制（默认 100 字） */
-  maxLength: z.number().int().positive().default(100),
-  /** 模型温度（0-1，越高越随机），可选 */
-  temperature: z.number().min(0).max(1).optional(),
-}).refine((data) => data.prompt || data.messages, {
-  message: 'prompt 或 messages 必须提供其一',
-});
+export const GenerateTextSchema = z
+  .object({
+    /** 用户提示词（单轮快捷模式，与 messages 二选一） */
+    prompt: z.string().min(1).max(2000).optional(),
+    /** 完整对话历史（多轮模式，包含所有 user 和 assistant 消息） */
+    messages: z.array(ChatMessageSchema).optional(),
+    /** 生成文本的最大字数限制（默认 100 字） */
+    maxLength: z.number().int().positive().default(100),
+    /** 模型温度（0-1，越高越随机），可选 */
+    temperature: z.number().min(0).max(1).optional(),
+  })
+  .refine((data) => data.prompt || data.messages, {
+    message: 'prompt 或 messages 必须提供其一',
+  });
 export type GenerateTextInput = z.infer<typeof GenerateTextSchema>;
 
 /** AI 文本生成响应 */
@@ -394,9 +446,7 @@ export type GeneratedText = z.infer<typeof GeneratedTextSchema>;
 // ───────────────────────── AI 图像/视频生成 ─────────────────────────
 
 /** 生成尺寸格式：宽x高（如 "1280x720"）。前端按比例映射到各模型支持的尺寸。 */
-const SizeSchema = z
-  .string()
-  .regex(/^\d{2,5}x\d{2,5}$/, 'size 格式应为 "宽x高"，如 1280x720');
+const SizeSchema = z.string().regex(/^\d{2,5}x\d{2,5}$/, 'size 格式应为 "宽x高"，如 1280x720');
 
 /** AI 图像生成请求 */
 export const GenerateImageSchema = z.object({
