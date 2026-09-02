@@ -58,6 +58,12 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       }),
+    createFromCanvasVideo: (body: { assetId: string; name?: string }) =>
+      request('/projects/from-canvas-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
     get: (id: string) => request(`/projects/${id}`),
     update: (id: string, body: object) =>
       request(`/projects/${id}`, {
@@ -86,6 +92,7 @@ export const api = {
   },
   assets: {
     list: (projectId: string) => request(`/assets?projectId=${encodeURIComponent(projectId)}`),
+    get: (id: string) => request(`/assets/${id}`),
     upload: (projectId: string, file: File) => {
       const form = new FormData();
       form.append('file', file);
@@ -127,6 +134,7 @@ export const api = {
       messages?: { role: 'user' | 'assistant'; content: string }[];
       maxLength?: number;
       temperature?: number;
+      model?: string;
     }) =>
       request('/text-gen/generate', {
         method: 'POST',
@@ -135,13 +143,28 @@ export const api = {
       }),
   },
   aiGenMedia: {
-    generateImage: (body: { projectId: string; prompt: string; size?: string }) =>
+    generateImage: (body: {
+      projectId?: string;
+      canvasId?: string;
+      prompt: string;
+      size?: string;
+      model?: string;
+    }) =>
       request('/ai-gen-media/image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }),
-    generateVideo: (body: { projectId: string; prompt: string; size?: string }) =>
+    generateVideo: (body: {
+      projectId?: string;
+      canvasId?: string;
+      prompt: string;
+      size?: string;
+      duration?: 5 | 10;
+      withAudio?: boolean;
+      model?: string;
+      imageAssetIds?: string[];
+    }) =>
       request('/ai-gen-media/video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

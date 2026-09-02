@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAssets, useProject, useUpdateProject } from '../features/editor/hooks';
 import { useEditorStore } from '../features/editor/store';
 import { EditorTopBar } from '../features/editor/components/EditorTopBar';
@@ -14,6 +14,8 @@ import { ApiError } from '../lib/api';
 export function EditorPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const sourceCanvasId = searchParams.get('canvasId');
   const { data: project, isLoading, error } = useProject(id);
   const { data: assets = [] } = useAssets(id);
   const updateProject = useUpdateProject(id);
@@ -123,7 +125,10 @@ export function EditorPage() {
       lastRef.current = now;
       setCurrentFrame((f) => {
         const next = f + dt * fps;
-        if (next >= totalFrames) { setIsPlaying(false); return totalFrames; }
+        if (next >= totalFrames) {
+          setIsPlaying(false);
+          return totalFrames;
+        }
         return next;
       });
       raf = requestAnimationFrame(tick);
@@ -139,6 +144,18 @@ export function EditorPage() {
   const handleSeek = (frame: number) => {
     setIsPlaying(false);
     setCurrentFrame(Math.max(0, Math.min(frame, totalFrames)));
+  };
+
+  const saveLatestTimeline = async () => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    if (timeline) await updateProject.mutateAsync({ timeline });
+  };
+
+  const handleBack = async () => {
+    await saveLatestTimeline();
+    navigate(sourceCanvasId ? `/canvas/${encodeURIComponent(sourceCanvasId)}` : '/', {
+      replace: true,
+    });
   };
 
   if (isLoading || !timeline) {
@@ -159,15 +176,13 @@ export function EditorPage() {
         canRedo={canRedo}
         onUndo={undo}
         onRedo={redo}
+        onBack={handleBack}
         onRename={(name) => updateProject.mutate({ name })}
         onOpenAiMix={() => setAiMixOpen(true)}
         durationSec={durationSec}
         width={timeline?.settings.width ?? 1920}
         height={timeline?.settings.height ?? 1080}
-        onBeforeExport={async () => {
-          if (saveTimer.current) clearTimeout(saveTimer.current);
-          if (timeline) await updateProject.mutateAsync({ timeline });
-        }}
+        onBeforeExport={saveLatestTimeline}
       />
       <div className="flex min-h-0 flex-1">
         <LeftPanel projectId={id} />

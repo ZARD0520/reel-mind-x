@@ -10,10 +10,16 @@ export type GenerationType = 'image' | 'video';
 export interface GenerateOptions {
   /** 提示词 */
   prompt: string;
+  /** 覆盖 provider 默认模型 */
+  model?: string;
+  /** 视频生成参考帧；第一个是首帧，第二个是尾帧 */
+  imageUrls?: string[];
   /** 图像尺寸（仅图像生成，格式如 "1024x1024"） */
   size?: string;
   /** 视频时长（秒，仅视频生成） */
   duration?: number;
+  /** 是否为视频生成 AI 音效 */
+  withAudio?: boolean;
   /** 中断信号 */
   signal?: AbortSignal;
 }

@@ -44,7 +44,7 @@ export function useGenerateMedia(projectId: string) {
     onSuccess: invalidate,
   });
   const video = useMutation({
-    mutationFn: (input: { prompt: string; size: string }) =>
+    mutationFn: (input: { prompt: string; size: string; duration?: 5 | 10; withAudio?: boolean }) =>
       api.aiGenMedia.generateVideo({ projectId, ...input }) as Promise<Asset>,
     onSuccess: invalidate,
   });

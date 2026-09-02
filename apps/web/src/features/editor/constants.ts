@@ -36,7 +36,7 @@ export const IMAGE_SIZE_BY_RATIO: Record<AspectRatioKey, string> = {
 export const VIDEO_SIZE_BY_RATIO: Record<AspectRatioKey, string> = {
   '16:9': '1280x720',
   '9:16': '720x1280',
-  '1:1': '960x960',
+  '1:1': '1024x1024',
   '4:3': '1280x720',
   '21:9': '1280x720',
 };
@@ -48,4 +48,3 @@ export const RATIO_OPTIONS: { key: AspectRatioKey; label: string }[] = [
   { key: '1:1', label: '1:1 方形' },
   { key: '4:3', label: '4:3 标清' },
 ];
-

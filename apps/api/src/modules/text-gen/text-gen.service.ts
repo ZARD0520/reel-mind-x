@@ -12,7 +12,7 @@ export class TextGenService {
   constructor(private readonly llm: LlmService) {}
 
   async generate(input: GenerateTextInput): Promise<GeneratedText> {
-    const { prompt, messages: history, maxLength, temperature } = input;
+    const { prompt, messages: history, maxLength, temperature, model } = input;
 
     // system prompt 由后端统一注入，前端只传对话历史（user/assistant）。
     const systemMessage: ChatMessage = {
@@ -33,6 +33,7 @@ export class TextGenService {
 
     const result = await this.llm.chat(messages, {
       temperature,
+      model,
       // 粗略换算：中文约 1.5 token/字，留冗余避免截断在句中
       maxTokens: Math.ceil(maxLength * 2),
     });
@@ -49,8 +50,6 @@ export class TextGenService {
 
   /** 按字符数截断（超出时保留前 maxLength 个字符） */
   private clamp(text: string, maxLength: number): string {
-    return [...text].length > maxLength
-      ? [...text].slice(0, maxLength).join('')
-      : text;
+    return [...text].length > maxLength ? [...text].slice(0, maxLength).join('') : text;
   }
 }

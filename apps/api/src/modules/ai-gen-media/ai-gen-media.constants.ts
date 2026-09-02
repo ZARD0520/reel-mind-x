@@ -12,17 +12,24 @@ export const JobNames = {
 /** 图像生成 job payload */
 export interface GenerateImageJobPayload {
   userId: string;
-  projectId: string;
+  projectId?: string;
+  canvasId?: string;
   assetId: string;
   prompt: string;
   size: string;
+  model?: string;
 }
 
 /** 视频生成 job payload */
 export interface GenerateVideoJobPayload {
   userId: string;
-  projectId: string;
+  projectId?: string;
+  canvasId?: string;
   assetId: string;
   prompt: string;
   size: string;
+  duration: 5 | 10;
+  withAudio: boolean;
+  model?: string;
+  imageAssetIds?: string[];
 }

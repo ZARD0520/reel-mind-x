@@ -1,9 +1,4 @@
-import type {
-  AiGenProvider,
-  AiGenProviderConfig,
-  GenerateOptions,
-  GenerateResult,
-} from '../types';
+import type { AiGenProvider, AiGenProviderConfig, GenerateOptions, GenerateResult } from '../types';
 import { AiGenError } from '../types';
 
 /**
@@ -29,6 +24,7 @@ export class ZhipuAiGenProvider implements AiGenProvider {
 
   async generateImage(options: GenerateOptions): Promise<GenerateResult> {
     const { prompt, size = '1024x1024', signal } = options;
+    const model = options.model ?? this.imageModel;
     const url = `${this.baseUrl}/images/generations`;
 
     try {
@@ -39,7 +35,7 @@ export class ZhipuAiGenProvider implements AiGenProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({
-          model: this.imageModel,
+          model,
           prompt,
           size,
         }),
@@ -48,10 +44,7 @@ export class ZhipuAiGenProvider implements AiGenProvider {
 
       if (!response.ok) {
         const text = await response.text().catch(() => '无法读取响应');
-        throw new AiGenError(
-          `智谱图像生成失败 (${response.status}): ${text}`,
-          response.status,
-        );
+        throw new AiGenError(`智谱图像生成失败 (${response.status}): ${text}`, response.status);
       }
 
       const data = (await response.json()) as ImageResponse;
@@ -63,7 +56,7 @@ export class ZhipuAiGenProvider implements AiGenProvider {
       return {
         url: imageUrl,
         type: 'image',
-        model: this.imageModel,
+        model,
         prompt,
       };
     } catch (err) {
@@ -73,7 +66,9 @@ export class ZhipuAiGenProvider implements AiGenProvider {
   }
 
   async generateVideo(options: GenerateOptions): Promise<GenerateResult> {
-    const { prompt, size, signal } = options;
+    const { prompt, size, duration, withAudio, signal } = options;
+    const model = options.model ?? this.videoModel;
+    const imageUrls = options.imageUrls ?? [];
     const submitUrl = `${this.baseUrl}/videos/generations`;
 
     try {
@@ -85,10 +80,14 @@ export class ZhipuAiGenProvider implements AiGenProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({
-          model: this.videoModel,
+          model,
           prompt,
-          // 注意：CogVideoX API 可能用 image_size 字段而非 size，实际运行时验证。
-          ...(size && { image_size: size }),
+          ...(imageUrls.length > 0 && {
+            image_url: imageUrls.length === 1 ? imageUrls[0] : imageUrls,
+          }),
+          ...(size && { size }),
+          ...(duration && { duration }),
+          ...(withAudio !== undefined && { with_audio: withAudio }),
         }),
         signal,
       });
@@ -116,10 +115,7 @@ export class ZhipuAiGenProvider implements AiGenProvider {
   }
 
   /** 轮询视频生成结果（供 BullMQ job 使用） */
-  async pollVideoResult(
-    requestId: string,
-    signal?: AbortSignal,
-  ): Promise<GenerateResult> {
+  async pollVideoResult(requestId: string, signal?: AbortSignal): Promise<GenerateResult> {
     const resultUrl = `${this.baseUrl}/async-result/${requestId}`;
     const maxAttempts = 120; // 10 分钟（每次 5s）
     const interval = 5000; // 5s
@@ -136,10 +132,7 @@ export class ZhipuAiGenProvider implements AiGenProvider {
 
       if (!response.ok) {
         const text = await response.text().catch(() => '无法读取响应');
-        throw new AiGenError(
-          `智谱视频查询失败 (${response.status}): ${text}`,
-          response.status,
-        );
+        throw new AiGenError(`智谱视频查询失败 (${response.status}): ${text}`, response.status);
       }
 
       const data = (await response.json()) as VideoResultResponse;

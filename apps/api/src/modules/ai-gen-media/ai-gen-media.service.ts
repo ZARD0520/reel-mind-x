@@ -1,6 +1,11 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { AssetSchema, type Asset, type GenerateImageInput, type GenerateVideoInput } from '@reel/contracts';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  AssetSchema,
+  type Asset,
+  type GenerateImageInput,
+  type GenerateVideoInput,
+} from '@reel/contracts';
 import type { Queue } from 'bullmq';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -25,24 +30,61 @@ export class AiGenMediaService {
     @InjectQueue(QueueNames.AI_GEN_MEDIA) private readonly queue: Queue,
   ) {}
 
-  private async assertProjectOwned(userId: string, projectId: string): Promise<void> {
-    const project = await this.prisma.project.findFirst({
-      where: { id: projectId, userId, deletedAt: null },
-      select: { id: true },
+  private async assertScopeOwned(
+    userId: string,
+    input: { projectId?: string; canvasId?: string },
+  ): Promise<void> {
+    const scope = input.projectId
+      ? await this.prisma.project.findFirst({
+          where: { id: input.projectId, userId, deletedAt: null },
+          select: { id: true },
+        })
+      : await this.prisma.canvas.findFirst({
+          where: { id: input.canvasId, userId },
+          select: { id: true },
+        });
+    if (!scope) throw new NotFoundException('Generation scope not found');
+  }
+
+  private scopeData(input: { projectId?: string; canvasId?: string }) {
+    return input.projectId ? { projectId: input.projectId } : { canvasId: input.canvasId! };
+  }
+
+  private async assertImageAssetsReady(
+    userId: string,
+    input: { projectId?: string; canvasId?: string },
+    imageAssetIds: string[],
+  ): Promise<void> {
+    if (imageAssetIds.length === 0) return;
+    const uniqueIds = [...new Set(imageAssetIds)];
+    if (uniqueIds.length !== imageAssetIds.length) {
+      throw new BadRequestException('首帧和尾帧不能使用同一个图片素材');
+    }
+    const assets = await this.prisma.asset.findMany({
+      where: {
+        id: { in: uniqueIds },
+        userId,
+        kind: 'image',
+        status: 'ready',
+        ...this.scopeData(input),
+      },
+      select: { id: true, localPath: true },
     });
-    if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+    if (assets.length !== uniqueIds.length || assets.some((asset) => !asset.localPath)) {
+      throw new BadRequestException('首尾帧必须是当前画布中已生成完成的图片');
+    }
   }
 
   async generateImage(userId: string, input: GenerateImageInput): Promise<Asset> {
-    const { projectId, prompt, size } = input;
-    await this.assertProjectOwned(userId, projectId);
+    const { prompt, size, model } = input;
+    await this.assertScopeOwned(userId, input);
     const assetId = randomUUID();
 
     const row = await this.prisma.asset.create({
       data: {
         id: assetId,
         userId,
-        projectId,
+        ...this.scopeData(input),
         kind: 'image',
         source: 'ai',
         status: 'generating',
@@ -58,7 +100,7 @@ export class AiGenMediaService {
 
     await this.queue.add(
       JobNames.GENERATE_IMAGE,
-      { userId, projectId, assetId, prompt, size } as GenerateImageJobPayload,
+      { userId, ...this.scopeData(input), assetId, prompt, size, model } as GenerateImageJobPayload,
       JOB_OPTS,
     );
 
@@ -66,15 +108,16 @@ export class AiGenMediaService {
   }
 
   async generateVideo(userId: string, input: GenerateVideoInput): Promise<Asset> {
-    const { projectId, prompt, size } = input;
-    await this.assertProjectOwned(userId, projectId);
+    const { prompt, size, duration, withAudio, model, imageAssetIds = [] } = input;
+    await this.assertScopeOwned(userId, input);
+    await this.assertImageAssetsReady(userId, input, imageAssetIds);
     const assetId = randomUUID();
 
     const row = await this.prisma.asset.create({
       data: {
         id: assetId,
         userId,
-        projectId,
+        ...this.scopeData(input),
         kind: 'video',
         source: 'ai',
         status: 'generating',
@@ -90,7 +133,17 @@ export class AiGenMediaService {
 
     await this.queue.add(
       JobNames.GENERATE_VIDEO,
-      { userId, projectId, assetId, prompt, size } as GenerateVideoJobPayload,
+      {
+        userId,
+        ...this.scopeData(input),
+        assetId,
+        prompt,
+        size,
+        duration,
+        withAudio,
+        model,
+        imageAssetIds,
+      } as GenerateVideoJobPayload,
       JOB_OPTS,
     );
 

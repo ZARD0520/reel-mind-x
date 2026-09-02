@@ -66,7 +66,9 @@ export type AssetStatus = z.infer<typeof AssetStatusSchema>;
 export const AssetSchema = z.object({
   id: z.string().uuid(),
   /** 素材所属项目：不同项目之间素材相互隔离 */
-  projectId: z.string().uuid(),
+  projectId: z.string().uuid().nullable(),
+  /** 素材所属画布；projectId/canvasId 有且仅有一个 */
+  canvasId: z.string().uuid().nullable(),
   kind: AssetKindSchema,
   source: AssetSourceSchema,
   status: AssetStatusSchema,
@@ -271,6 +273,13 @@ export const CreateProjectSchema = z.object({
 });
 export type CreateProjectInput = z.infer<typeof CreateProjectSchema>;
 
+/** 把画布中的已生成视频复制为一个可独立剪辑、导出的项目。 */
+export const CreateProjectFromCanvasVideoSchema = z.object({
+  assetId: z.string().uuid(),
+  name: z.string().trim().min(1).max(200).optional(),
+});
+export type CreateProjectFromCanvasVideoInput = z.infer<typeof CreateProjectFromCanvasVideoSchema>;
+
 /** 更新项目入参：名称或整份剪辑状态（自动保存提交 timeline） */
 export const UpdateProjectSchema = z
   .object({
@@ -420,6 +429,8 @@ export const GenerateTextSchema = z
     maxLength: z.number().int().positive().default(100),
     /** 模型温度（0-1，越高越随机），可选 */
     temperature: z.number().min(0).max(1).optional(),
+    /** 覆盖默认文本模型 */
+    model: z.string().min(1).max(100).optional(),
   })
   .refine((data) => data.prompt || data.messages, {
     message: 'prompt 或 messages 必须提供其一',
@@ -447,23 +458,41 @@ export type GeneratedText = z.infer<typeof GeneratedTextSchema>;
 
 /** 生成尺寸格式：宽x高（如 "1280x720"）。前端按比例映射到各模型支持的尺寸。 */
 const SizeSchema = z.string().regex(/^\d{2,5}x\d{2,5}$/, 'size 格式应为 "宽x高"，如 1280x720');
+const VideoSizeSchema = z.enum(['1280x720', '720x1280', '1024x1024']);
 
 /** AI 图像生成请求 */
-export const GenerateImageSchema = z.object({
-  /** 素材归属的项目 id */
-  projectId: z.string().uuid(),
-  prompt: z.string().min(1).max(2000),
-  size: SizeSchema.default('1024x1024'),
-});
+export const GenerateImageSchema = z
+  .object({
+    projectId: z.string().uuid().optional(),
+    canvasId: z.string().uuid().optional(),
+    prompt: z.string().min(1).max(2000),
+    size: SizeSchema.default('1024x1024'),
+    model: z.string().min(1).max(100).optional(),
+  })
+  .refine((input) => Number(!!input.projectId) + Number(!!input.canvasId) === 1, {
+    message: 'projectId 和 canvasId 必须且只能提供一个',
+  });
 export type GenerateImageInput = z.infer<typeof GenerateImageSchema>;
 
 /** AI 视频生成请求 */
-export const GenerateVideoSchema = z.object({
-  /** 素材归属的项目 id */
-  projectId: z.string().uuid(),
-  prompt: z.string().min(1).max(2000),
-  size: SizeSchema.default('1280x720'),
-});
+export const VideoDurationSchema = z.union([z.literal(5), z.literal(10)]);
+export type VideoDuration = z.infer<typeof VideoDurationSchema>;
+
+export const GenerateVideoSchema = z
+  .object({
+    projectId: z.string().uuid().optional(),
+    canvasId: z.string().uuid().optional(),
+    prompt: z.string().min(1).max(2000),
+    size: VideoSizeSchema.default('1280x720'),
+    duration: VideoDurationSchema.default(5),
+    withAudio: z.boolean().default(false),
+    model: z.string().min(1).max(100).optional(),
+    /** 按顺序传入图片素材：第一个是首帧，第二个是尾帧 */
+    imageAssetIds: z.array(z.string().uuid()).max(2).optional(),
+  })
+  .refine((input) => Number(!!input.projectId) + Number(!!input.canvasId) === 1, {
+    message: 'projectId 和 canvasId 必须且只能提供一个',
+  });
 export type GenerateVideoInput = z.infer<typeof GenerateVideoSchema>;
 
 /** AI 生成任务状态（复用 Asset 生成状态） */

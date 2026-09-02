@@ -37,6 +37,37 @@ body {
     sans-serif;
 }
 
+/* 工作流节点文字层级：使用专用选择器，避免被 React Flow 的主题颜色覆盖。 */
+.workflow-node-title {
+  color: #c9c9cd !important;
+  opacity: 1;
+}
+
+.workflow-node-placeholder {
+  color: #b8b8bd !important;
+  opacity: 1;
+}
+
+.workflow-node-content,
+.workflow-node-editor {
+  color: #ffffff !important;
+  opacity: 1;
+}
+
+.workflow-node-editor::placeholder {
+  color: #b8b8bd !important;
+  opacity: 1;
+}
+
+/* 选择依赖节点时弱化画布关系与背景，候选节点自身由组件保持高亮。 */
+.canvas-dependency-selecting .react-flow__edge {
+  opacity: 0.16;
+}
+
+.canvas-dependency-selecting .react-flow__background {
+  opacity: 0.42;
+}
+
 /* 时间轴横向滚动条样式（webkit） */
 .timeline-scroll::-webkit-scrollbar {
   height: 10px;

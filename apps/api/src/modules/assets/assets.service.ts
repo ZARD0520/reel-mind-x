@@ -17,7 +17,8 @@ function userUploadUrl(userId: string, filename: string): string {
 
 type AssetRow = {
   id: string;
-  projectId: string;
+  projectId: string | null;
+  canvasId: string | null;
   kind: string;
   source: string;
   status: string;

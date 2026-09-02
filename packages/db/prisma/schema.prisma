@@ -35,6 +35,8 @@ model Canvas {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  assets Asset[]
+
   @@index([userId, updatedAt])
   @@map("canvases")
 }
@@ -59,8 +61,10 @@ model Asset {
   id               String   @id @default(uuid())
   userId           String
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  projectId        String
-  project          Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId        String?
+  project          Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  canvasId         String?
+  canvas           Canvas?  @relation(fields: [canvasId], references: [id], onDelete: Cascade)
   kind             String
   source           String
   status           String
@@ -74,6 +78,7 @@ model Asset {
   createdAt        DateTime @default(now())
 
   @@index([userId, projectId, createdAt])
+  @@index([userId, canvasId, createdAt])
   @@map("assets")
 }
 

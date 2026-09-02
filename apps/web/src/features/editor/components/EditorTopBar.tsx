@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Check,
   ChevronLeft,
@@ -24,6 +23,7 @@ interface EditorTopBarProps {
   onUndo?: () => void;
   onRedo?: () => void;
   onRename?: (name: string) => void;
+  onBack?: () => void | Promise<void>;
   onOpenAiMix?: () => void;
   /** 导出前刷新保存最新 timeline（返回 Promise，待保存完成再入队渲染） */
   onBeforeExport?: () => Promise<void>;
@@ -43,13 +43,13 @@ export function EditorTopBar({
   onUndo,
   onRedo,
   onRename,
+  onBack,
   onOpenAiMix,
   onBeforeExport,
   durationSec,
   width,
   height,
 }: EditorTopBarProps) {
-  const navigate = useNavigate();
   const shortId = projectId.slice(0, 8);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -102,8 +102,9 @@ export function EditorTopBar({
       <div className="flex items-center gap-3.5">
         <button
           type="button"
-          onClick={() => navigate('/')}
+          onClick={() => void onBack?.()}
           className="flex h-8 w-8 items-center justify-center rounded-lg bg-elevated text-fg-secondary hover:text-fg"
+          aria-label="返回"
         >
           <ChevronLeft className="h-[18px] w-[18px]" />
         </button>
@@ -264,9 +265,21 @@ function ExportSettings({
   };
 
   const QUALITIES: { key: 'high' | 'medium' | 'low'; label: string; desc: string }[] = [
-    { key: 'high', label: '高清', desc: `原分辨率 · 高码率 · ~${Math.round(estimateSize('high'))} MB` },
-    { key: 'medium', label: '标准', desc: `原分辨率 · 中码率 · ~${Math.round(estimateSize('medium'))} MB` },
-    { key: 'low', label: '流畅', desc: `半分辨率 · 低码率 · ~${Math.round(estimateSize('low'))} MB` },
+    {
+      key: 'high',
+      label: '高清',
+      desc: `原分辨率 · 高码率 · ~${Math.round(estimateSize('high'))} MB`,
+    },
+    {
+      key: 'medium',
+      label: '标准',
+      desc: `原分辨率 · 中码率 · ~${Math.round(estimateSize('medium'))} MB`,
+    },
+    {
+      key: 'low',
+      label: '流畅',
+      desc: `半分辨率 · 低码率 · ~${Math.round(estimateSize('low'))} MB`,
+    },
   ];
   return (
     <div className="flex flex-col gap-3.5">

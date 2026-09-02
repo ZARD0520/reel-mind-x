@@ -14,7 +14,11 @@ import type { Project } from '@reel/contracts';
 import { AuthGuard } from '../auth/auth.guard';
 import type { AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
-import { CreateProjectDto, UpdateProjectDto } from './projects.dto';
+import {
+  CreateProjectDto,
+  CreateProjectFromCanvasVideoDto,
+  UpdateProjectDto,
+} from './projects.dto';
 import { ProjectsService } from './projects.service';
 
 @Controller('projects')
@@ -27,16 +31,21 @@ export class ProjectsController {
     return this.projects.create(user.id, dto);
   }
 
+  @Post('from-canvas-video')
+  createFromCanvasVideo(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateProjectFromCanvasVideoDto,
+  ): Promise<Project> {
+    return this.projects.createFromCanvasVideo(user.id, dto);
+  }
+
   @Get()
   list(@CurrentUser() user: AuthUser): Promise<Project[]> {
     return this.projects.list(user.id);
   }
 
   @Get(':id')
-  findOne(
-    @CurrentUser() user: AuthUser,
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<Project> {
+  findOne(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<Project> {
     return this.projects.findOne(user.id, id);
   }
 
@@ -51,10 +60,7 @@ export class ProjectsController {
 
   @Delete(':id')
   @HttpCode(204)
-  remove(
-    @CurrentUser() user: AuthUser,
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<void> {
+  remove(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.projects.remove(user.id, id);
   }
 }
