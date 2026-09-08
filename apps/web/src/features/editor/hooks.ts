@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import type { AiMixJob, Asset, Project, RenderJob } from '@reel/contracts';
+import { useEffect, useState } from 'react';
+import type { AiMixJob, Asset, Project, RenderJob, RenderQuality } from '@reel/contracts';
 import { api } from '../../lib/api';
 
 // ─── Projects ───────────────────────────────────────────────────────────────
@@ -74,12 +74,30 @@ export function useDeleteAsset(projectId: string) {
  * 返回当前任务与一个 start() 触发器。
  */
 export function useExport(projectId: string) {
+  const qc = useQueryClient();
   const [jobId, setJobId] = useState<string | null>(null);
+  const [dismissedJobId, setDismissedJobId] = useState<string | null>(null);
+
+  const latest = useQuery<RenderJob | null>({
+    queryKey: ['render-latest', projectId],
+    queryFn: () => api.render.latest(projectId) as Promise<RenderJob | null>,
+    enabled: !!projectId,
+    staleTime: 0,
+  });
+
+  useEffect(() => {
+    if (latest.data && latest.data.id !== dismissedJobId) setJobId(latest.data.id);
+  }, [dismissedJobId, latest.data]);
 
   const create = useMutation({
-    mutationFn: (opts: { fileName?: string; quality?: string }) =>
+    mutationFn: (opts: { fileName?: string; quality?: RenderQuality }) =>
       api.render.create({ projectId, ...opts }) as Promise<RenderJob>,
-    onSuccess: (job) => setJobId(job.id),
+    onSuccess: (job) => {
+      setDismissedJobId(null);
+      setJobId(job.id);
+      qc.setQueryData(['render', job.id], job);
+      qc.setQueryData(['render-latest', projectId], job);
+    },
   });
 
   const { data: job } = useQuery<RenderJob>({
@@ -88,15 +106,37 @@ export function useExport(projectId: string) {
     enabled: !!jobId,
     refetchInterval: (q) => {
       const s = q.state.data?.status;
-      return s === 'completed' || s === 'failed' ? false : 1000;
+      return s === 'completed' || s === 'failed' || s === 'cancelled' ? false : 1000;
     },
   });
 
-  const reset = () => setJobId(null);
+  const cancel = useMutation({
+    mutationFn: (id: string) => api.render.cancel(id) as Promise<RenderJob>,
+    onSuccess: (cancelledJob) => {
+      qc.setQueryData(['render', cancelledJob.id], cancelledJob);
+      qc.setQueryData(['render-latest', projectId], cancelledJob);
+    },
+  });
+
+  const reset = () => {
+    if (jobId) setDismissedJobId(jobId);
+    setJobId(null);
+    create.reset();
+  };
 
   return {
-    start: (opts: { fileName?: string; quality?: string }) => create.mutate(opts),
+    start: (opts: { fileName?: string; quality?: RenderQuality }) => {
+      create.reset();
+      create.mutate(opts);
+    },
+    cancel: () => {
+      if (jobId) cancel.mutate(jobId);
+    },
     starting: create.isPending,
+    recovering: latest.isLoading,
+    startError: create.error,
+    cancelling: cancel.isPending,
+    cancelError: cancel.error,
     job: job ?? null,
     reset,
   };

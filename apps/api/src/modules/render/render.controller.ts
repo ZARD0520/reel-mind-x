@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { createZodDto } from 'nestjs-zod';
 import { CreateRenderSchema, type RenderJob } from '@reel/contracts';
 import { AuthGuard } from '../auth/auth.guard';
@@ -16,6 +25,22 @@ export class RenderController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateRenderDto): Promise<RenderJob> {
     return this.render.enqueue(user.id, dto);
+  }
+
+  @Get()
+  findLatest(
+    @CurrentUser() user: AuthUser,
+    @Query('projectId', ParseUUIDPipe) projectId: string,
+  ): Promise<RenderJob | null> {
+    return this.render.findLatest(user.id, projectId);
+  }
+
+  @Post(':id/cancel')
+  cancel(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<RenderJob> {
+    return this.render.cancel(user.id, id);
   }
 
   @Get(':id')

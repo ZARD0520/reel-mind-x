@@ -111,6 +111,8 @@ export const api = {
         body: JSON.stringify(body),
       }),
     get: (id: string) => request(`/render/${id}`),
+    latest: (projectId: string) => request(`/render?projectId=${encodeURIComponent(projectId)}`),
+    cancel: (id: string) => request(`/render/${id}/cancel`, { method: 'POST' }),
   },
   aiMix: {
     create: (body: {

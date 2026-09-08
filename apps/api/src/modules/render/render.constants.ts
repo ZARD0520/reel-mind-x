@@ -10,6 +10,10 @@ export const JobNames = {
   RENDER_PROJECT: 'render-project',
 } as const;
 
+export const RENDER_MAX_ATTEMPTS = 3;
+export const RENDER_RETRY_DELAY_MS = 2_000;
+export const RENDER_CANCEL_POLL_MS = 400;
+
 export interface RenderJobPayload {
   renderJobId: string;
   userId: string;

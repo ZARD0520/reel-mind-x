@@ -359,24 +359,89 @@ export const CreateRenderSchema = z.object({
 });
 export type CreateRenderInput = z.infer<typeof CreateRenderSchema>;
 
-/** 渲染任务状态（对应 BullMQ job 生命周期） */
-export const RenderStatusSchema = z.enum(['queued', 'rendering', 'completed', 'failed']);
+/** 渲染任务状态（包含自动重试与协作式取消）。 */
+export const RenderStatusSchema = z.enum([
+  'queued',
+  'rendering',
+  'retrying',
+  'cancelling',
+  'cancelled',
+  'completed',
+  'failed',
+]);
 export type RenderStatus = z.infer<typeof RenderStatusSchema>;
+
+export const RenderStageSchema = z.enum([
+  'queued',
+  'validating',
+  'preparing',
+  'rendering',
+  'finalizing',
+  'completed',
+]);
+export type RenderStage = z.infer<typeof RenderStageSchema>;
+
+export const RenderCheckpointSchema = z.enum(['none', 'validated', 'prepared', 'rendered']);
+export type RenderCheckpoint = z.infer<typeof RenderCheckpointSchema>;
+
+export const RenderFailureCategorySchema = z.enum([
+  'project',
+  'timeline',
+  'asset',
+  'media',
+  'ffmpeg',
+  'storage',
+  'queue',
+  'system',
+  'cancelled',
+]);
+export type RenderFailureCategory = z.infer<typeof RenderFailureCategorySchema>;
+
+/**
+ * retryable：当前失败会自动重试；fatal：输入或环境错误，重试无意义；
+ * exhausted：可重试错误已用完次数；cancelled：由用户主动取消。
+ */
+export const RenderFailureLevelSchema = z.enum(['retryable', 'fatal', 'exhausted', 'cancelled']);
+export type RenderFailureLevel = z.infer<typeof RenderFailureLevelSchema>;
+
+export const RenderFailureSchema = z.object({
+  code: z.string(),
+  category: RenderFailureCategorySchema,
+  stage: RenderStageSchema,
+  level: RenderFailureLevelSchema,
+  retryable: z.boolean(),
+  /** 面向用户的明确处理建议。 */
+  message: z.string(),
+  /** 截断后的底层错误，供定位问题使用。 */
+  detail: z.string().nullable(),
+});
+export type RenderFailure = z.infer<typeof RenderFailureSchema>;
 
 /** 渲染任务：worker 用 project 的 timeline 跑 FFmpeg 合成 */
 export const RenderJobSchema = z.object({
   id: z.string().uuid(),
   projectId: z.string().uuid(),
   status: RenderStatusSchema,
+  stage: RenderStageSchema.default('queued'),
+  quality: RenderQualitySchema.default('high'),
   /** 进度 0..100 */
   progress: z.number().min(0).max(100).default(0),
+  attemptCount: z.number().int().nonnegative().default(0),
+  maxAttempts: z.number().int().positive().default(3),
+  cancelRequested: z.boolean().default(false),
+  checkpoint: RenderCheckpointSchema.default('none'),
   /** 成片地址（completed 时填充） */
   outputUrl: z.string().url().nullable(),
   /** 建议下载文件名（含扩展名） */
   fileName: z.string().nullable().default(null),
   /** 失败原因（failed 时填充） */
   error: z.string().nullable(),
+  failure: RenderFailureSchema.nullable().default(null),
+  startedAt: z.coerce.date().nullable().default(null),
+  nextRetryAt: z.coerce.date().nullable().default(null),
+  finishedAt: z.coerce.date().nullable().default(null),
   createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
 });
 export type RenderJob = z.infer<typeof RenderJobSchema>;
 

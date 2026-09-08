@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Check,
   ChevronLeft,
   Download,
   Loader2,
   Pencil,
   Redo2,
+  RotateCcw,
   Sparkles,
   Undo2,
   Upload,
   X,
 } from 'lucide-react';
 import { useExport } from '../hooks';
-import type { RenderJob } from '@reel/contracts';
+import type { RenderFailureCategory, RenderJob, RenderStage } from '@reel/contracts';
 
 interface EditorTopBarProps {
   projectId: string;
@@ -58,16 +60,22 @@ export function EditorTopBar({
   const [exportName, setExportName] = useState('');
   const [exportQuality, setExportQuality] = useState<'high' | 'medium' | 'low'>('high');
   const [confirmed, setConfirmed] = useState(false);
-  const { start, starting, job, reset } = useExport(projectId);
+  const { start, starting, recovering, startError, job, reset, cancel, cancelling, cancelError } =
+    useExport(projectId);
 
-  const exporting = starting || job?.status === 'queued' || job?.status === 'rendering';
+  const exporting =
+    starting ||
+    job?.status === 'queued' ||
+    job?.status === 'rendering' ||
+    job?.status === 'retrying' ||
+    job?.status === 'cancelling';
   // 弹窗两阶段：未确认 → 显示设置（名称/质量）；确认后 → 显示进度/结果。
   const showSettings = exportOpen && !confirmed;
 
   const openExport = () => {
-    setExportName(projectName ?? '未命名项目');
-    setExportQuality('high');
-    setConfirmed(false);
+    setExportName(job?.fileName?.replace(/\.mp4$/i, '') || projectName || '未命名项目');
+    setExportQuality(job?.quality ?? 'high');
+    setConfirmed(!!job);
     setExportOpen(true);
   };
   const confirmExport = () => {
@@ -79,8 +87,18 @@ export function EditorTopBar({
   };
   const closeExport = () => {
     setExportOpen(false);
+  };
+
+  const retryExport = () => {
+    void (async () => {
+      await onBeforeExport?.();
+      start({ fileName: exportName.trim() || undefined, quality: exportQuality });
+    })();
+  };
+
+  const createAnotherExport = () => {
+    reset();
     setConfirmed(false);
-    if (job?.status === 'completed' || job?.status === 'failed') reset();
   };
 
   useEffect(() => {
@@ -181,15 +199,17 @@ export function EditorTopBar({
           <button
             type="button"
             onClick={openExport}
-            disabled={exporting}
+            disabled={starting || recovering}
             className="flex items-center gap-1.5 rounded-lg bg-accent px-[18px] py-2 text-fg hover:bg-accent-hover disabled:opacity-70"
           >
-            {exporting ? (
+            {exporting || recovering ? (
               <Loader2 className="h-[15px] w-[15px] animate-spin" />
             ) : (
               <Upload className="h-[15px] w-[15px]" />
             )}
-            <span className="text-[13px] font-semibold">{exporting ? '导出中…' : '导出'}</span>
+            <span className="text-[13px] font-semibold">
+              {recovering ? '恢复中…' : exporting ? '查看导出' : '导出'}
+            </span>
           </button>
 
           {exportOpen && (
@@ -219,9 +239,12 @@ export function EditorTopBar({
                 <ExportBody
                   job={job}
                   starting={starting}
-                  onRetry={() =>
-                    start({ fileName: exportName.trim() || undefined, quality: exportQuality })
-                  }
+                  startError={startError}
+                  cancelling={cancelling}
+                  cancelError={cancelError}
+                  onCancel={cancel}
+                  onRetry={retryExport}
+                  onNewExport={createAnotherExport}
                 />
               )}
             </div>
@@ -329,31 +352,145 @@ function ExportSettings({
 function ExportBody({
   job,
   starting,
+  startError,
+  cancelling,
+  cancelError,
+  onCancel,
   onRetry,
+  onNewExport,
 }: {
   job: RenderJob | null;
   starting: boolean;
+  startError: Error | null;
+  cancelling: boolean;
+  cancelError: Error | null;
+  onCancel: () => void;
   onRetry: () => void;
+  onNewExport: () => void;
 }) {
-  if (starting || !job || job.status === 'queued') {
-    return <ProgressView label="排队中…" percent={0} />;
+  if (starting) {
+    return <ProgressView label="正在提交导出任务…" percent={0} />;
   }
-  if (job.status === 'rendering') {
-    return <ProgressView label="合成中…" percent={job.progress} />;
-  }
-  if (job.status === 'failed') {
+  if (!job) {
     return (
       <div className="flex flex-col gap-3">
-        <p className="text-[13px] text-red-400">导出失败</p>
-        <p className="max-h-24 overflow-y-auto break-words text-[11px] text-fg-tertiary">
-          {job.error ?? '未知错误'}
+        <div className="flex items-center gap-2 text-[13px] text-red-400">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          导出任务提交失败
+        </div>
+        <p className="break-words text-[11px] text-fg-tertiary">
+          {startError?.message ?? '未获取到导出任务，请检查网络后重试'}
         </p>
         <button
           type="button"
           onClick={onRetry}
           className="self-start rounded-lg bg-elevated px-3 py-1.5 text-[13px] text-fg-secondary hover:text-fg"
         >
-          重试
+          重新提交
+        </button>
+      </div>
+    );
+  }
+  if (job.status === 'queued') {
+    return (
+      <ActiveExport
+        job={job}
+        label="排队中…"
+        cancelling={cancelling}
+        cancelError={cancelError}
+        onCancel={onCancel}
+      />
+    );
+  }
+  if (job.status === 'rendering') {
+    return (
+      <ActiveExport
+        job={job}
+        label={`${RENDER_STAGE_LABELS[job.stage]} · 第 ${job.attemptCount}/${job.maxAttempts} 次`}
+        cancelling={cancelling}
+        cancelError={cancelError}
+        onCancel={onCancel}
+      />
+    );
+  }
+  if (job.status === 'retrying') {
+    return (
+      <div className="flex flex-col gap-3">
+        <ProgressView
+          label={`自动重试等待中 · 已尝试 ${job.attemptCount}/${job.maxAttempts} 次`}
+          percent={job.progress}
+        />
+        {job.failure && (
+          <div className="rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-[11px] text-amber-200">
+            上次失败于{RENDER_STAGE_LABELS[job.failure.stage]}：{job.failure.message}
+          </div>
+        )}
+        <CancelExportButton disabled={cancelling} onCancel={onCancel} />
+        {cancelError && <p className="text-[11px] text-red-400">取消失败，请稍后重试</p>}
+      </div>
+    );
+  }
+  if (job.status === 'cancelling') {
+    return <ProgressView label="正在停止 FFmpeg 并清理临时文件…" percent={job.progress} />;
+  }
+  if (job.status === 'cancelled') {
+    return (
+      <div className="flex flex-col gap-3">
+        <p className="text-[13px] text-fg-secondary">导出已取消</p>
+        <p className="text-[11px] text-fg-tertiary">
+          停止位置：{RENDER_STAGE_LABELS[job.failure?.stage ?? job.stage]}，临时文件已清理。
+        </p>
+        <button
+          type="button"
+          onClick={onNewExport}
+          className="self-start rounded-lg bg-elevated px-3 py-1.5 text-[13px] text-fg-secondary hover:text-fg"
+        >
+          新建导出
+        </button>
+      </div>
+    );
+  }
+  if (job.status === 'failed') {
+    const failure = job.failure;
+    return (
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2 text-[13px] text-red-400">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          导出失败
+        </div>
+        <div className="space-y-1 rounded-lg border border-red-400/15 bg-red-400/5 px-3 py-2 text-[11px]">
+          <p className="text-fg-secondary">
+            失败位置：{RENDER_STAGE_LABELS[failure?.stage ?? job.stage]}
+          </p>
+          <p className="text-fg-secondary">
+            错误分类：{RENDER_CATEGORY_LABELS[failure?.category ?? 'system']}
+          </p>
+          <p className="text-fg-secondary">
+            重试结果：
+            {failure?.level === 'exhausted'
+              ? `自动重试 ${job.attemptCount} 次后仍然失败`
+              : '该错误无法通过自动重试恢复'}
+          </p>
+          <p className="pt-1 leading-5 text-red-300">
+            {failure?.message ?? job.error ?? '未知错误'}
+          </p>
+          {failure?.code && <p className="font-mono text-fg-tertiary">错误码：{failure.code}</p>}
+        </div>
+        {failure?.detail && (
+          <details className="text-[11px] text-fg-tertiary">
+            <summary className="cursor-pointer hover:text-fg-secondary">查看技术详情</summary>
+            <pre className="reel-scroll mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-md bg-base p-2 font-mono text-[10px]">
+              {failure.detail}
+            </pre>
+          </details>
+        )}
+        <button
+          type="button"
+          onClick={onRetry}
+          className="flex items-center gap-1.5 self-start rounded-lg bg-elevated px-3 py-1.5 text-[13px] text-fg-secondary hover:text-fg"
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+          重新导出
         </button>
       </div>
     );
@@ -378,7 +515,80 @@ function ExportBody({
       >
         或点此下载
       </a>
+      <button
+        type="button"
+        onClick={onNewExport}
+        className="text-center text-[12px] text-fg-tertiary hover:text-fg-secondary"
+      >
+        新建导出
+      </button>
     </div>
+  );
+}
+
+const RENDER_STAGE_LABELS: Record<RenderStage, string> = {
+  queued: '任务队列',
+  validating: '项目与时间轴校验',
+  preparing: '素材读取与媒体探测',
+  rendering: 'FFmpeg 视频合成',
+  finalizing: '成品文件整理',
+  completed: '导出完成',
+};
+
+const RENDER_CATEGORY_LABELS: Record<RenderFailureCategory, string> = {
+  project: '项目错误',
+  timeline: '时间轴错误',
+  asset: '素材错误',
+  media: '媒体解码或输出错误',
+  ffmpeg: 'FFmpeg 渲染错误',
+  storage: '文件存储错误',
+  queue: '任务队列错误',
+  system: '系统内部错误',
+  cancelled: '用户取消',
+};
+
+function ActiveExport({
+  job,
+  label,
+  cancelling,
+  cancelError,
+  onCancel,
+}: {
+  job: RenderJob;
+  label: string;
+  cancelling: boolean;
+  cancelError: Error | null;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <ProgressView label={label} percent={job.progress} />
+      <p className="text-[11px] text-fg-tertiary">
+        已保存恢复点：
+        {job.checkpoint === 'rendered'
+          ? '视频已渲染'
+          : job.checkpoint === 'prepared'
+            ? '素材已准备'
+            : job.checkpoint === 'validated'
+              ? '时间轴已校验'
+              : '等待开始'}
+      </p>
+      <CancelExportButton disabled={cancelling} onCancel={onCancel} />
+      {cancelError && <p className="text-[11px] text-red-400">取消失败，请稍后重试</p>}
+    </div>
+  );
+}
+
+function CancelExportButton({ disabled, onCancel }: { disabled: boolean; onCancel: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onCancel}
+      className="self-start rounded-lg border border-red-400/20 px-3 py-1.5 text-[12px] text-red-300 hover:bg-red-400/10 disabled:opacity-50"
+    >
+      {disabled ? '正在取消…' : '取消导出'}
+    </button>
   );
 }
 

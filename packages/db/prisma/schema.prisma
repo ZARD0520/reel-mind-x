@@ -42,13 +42,13 @@ model Canvas {
 }
 
 model Project {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   timeline  Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
   assets Asset[]
@@ -83,18 +83,38 @@ model Asset {
 }
 
 model RenderJob {
-  id         String   @id @default(uuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  projectId  String
-  status     String
-  progress   Int      @default(0)
-  outputUrl  String?
-  outputPath String?
-  fileName   String?
-  error      String?
-  createdAt  DateTime @default(now())
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId        String
+  status           String
+  stage            String    @default("queued")
+  quality          String    @default("high")
+  progress         Int       @default(0)
+  attemptCount     Int       @default(0)
+  maxAttempts      Int       @default(3)
+  cancelRequested  Boolean   @default(false)
+  checkpoint       String    @default("none")
+  timelineSnapshot Json?
+  checkpointData   Json?
+  outputUrl        String?
+  outputPath       String?
+  fileName         String?
+  error            String?
+  errorDetail      String?
+  failureCode      String?
+  failureCategory  String?
+  failureLevel     String?
+  failureStage     String?
+  retryable        Boolean   @default(false)
+  startedAt        DateTime?
+  nextRetryAt      DateTime?
+  finishedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
 
   @@index([userId, createdAt])
+  @@index([userId, projectId, createdAt])
+  @@index([status, updatedAt])
   @@map("render_jobs")
 }
