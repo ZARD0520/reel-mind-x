@@ -1,19 +1,10 @@
 import { create } from 'zustand';
 import type { Asset, Clip, TextClip, TextStyle, Timeline, Track, TrackKind } from '@reel/contracts';
+import { uuid } from '../../lib/uuid';
 import { MIN_FRAMES, nextClipStart, others, resolveMove } from './collision';
 
 // 图片默认时长（秒）；落帧时乘 project fps。
 const IMAGE_DEFAULT_SECONDS = 3;
-
-function uuid(): string {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
-  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
-}
 
 function defaultTransform(): Clip['transform'] {
   return { scale: 1, x: 0, y: 0, rotation: 0, opacity: 1, volume: 1, speed: 1, fadeInDuration: 0, fadeOutDuration: 0 };

@@ -77,6 +77,7 @@ import {
   type AspectRatioKey,
 } from '../features/editor/constants';
 import { ApiError, api } from '../lib/api';
+import { uuid } from '../lib/uuid';
 
 type WorkflowNodeKind = CanvasNodeKind;
 type GenerationCount = 1 | 2 | 4;
@@ -577,7 +578,7 @@ function NodeGenerationPrompt({
             : 400;
         const nextNodes = additionalResults.map(
           (additionalResult, index): WorkflowNode => ({
-            id: crypto.randomUUID(),
+            id: uuid(),
             type: 'workflow',
             position: {
               x: sourceNode.position.x + horizontalGap * (index + 1),
@@ -609,7 +610,7 @@ function NodeGenerationPrompt({
           nextNodes.flatMap((nextNode) =>
             incomingEdges.map((edge) => ({
               ...edge,
-              id: crypto.randomUUID(),
+              id: uuid(),
               target: nextNode.id,
             })),
           ),
@@ -1396,7 +1397,7 @@ function InfiniteCanvas({
       setEdges((currentEdges) =>
         addEdge(
           {
-            id: crypto.randomUUID(),
+            id: uuid(),
             source: sourceId,
             target: dependencyTargetId,
             ...edgeDefaults,
@@ -1425,7 +1426,7 @@ function InfiniteCanvas({
         y: bounds.top + bounds.height / 2,
       });
       const nextNode: WorkflowNode = {
-        id: crypto.randomUUID(),
+        id: uuid(),
         type: 'workflow',
         position: { x: center.x - (kind === 'video' ? 320 : 180), y: center.y - 195 },
         data: {
@@ -1449,7 +1450,7 @@ function InfiniteCanvas({
         if (!sourceNode) return currentNodes;
         const duplicatedNode: WorkflowNode = {
           ...sourceNode,
-          id: crypto.randomUUID(),
+          id: uuid(),
           position: { x: sourceNode.position.x + 36, y: sourceNode.position.y + 36 },
           selected: true,
           data: {
