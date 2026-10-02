@@ -18,10 +18,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  projects   Project[]
-  canvases   Canvas[]
-  assets     Asset[]
-  renderJobs RenderJob[]
+  projects     Project[]
+  canvases     Canvas[]
+  assets       Asset[]
+  renderJobs   RenderJob[]
+  assetFolders AssetFolder[]
 
   @@map("users")
 }
@@ -58,13 +59,16 @@ model Project {
 }
 
 model Asset {
-  id               String   @id @default(uuid())
+  id               String       @id @default(uuid())
   userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   projectId        String?
-  project          Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project          Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
   canvasId         String?
-  canvas           Canvas?  @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  canvas           Canvas?      @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  // 素材库归属：folderId 非空表示素材库素材（projectId/canvasId 为空）
+  folderId         String?
+  folder           AssetFolder? @relation(fields: [folderId], references: [id], onDelete: Cascade)
   kind             String
   source           String
   status           String
@@ -75,11 +79,32 @@ model Asset {
   width            Int?
   height           Int?
   prompt           String?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime     @default(now())
 
   @@index([userId, projectId, createdAt])
   @@index([userId, canvasId, createdAt])
+  @@index([userId, folderId, createdAt])
   @@map("assets")
+}
+
+// 素材库文件夹；parentId 自关联支持嵌套，teamId 为团队归属预留列（团队表建立后再补外键）
+model AssetFolder {
+  id        String        @id @default(uuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentId  String?
+  parent    AssetFolder?  @relation("AssetFolderTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  AssetFolder[] @relation("AssetFolderTree")
+  teamId    String?
+  name      String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  assets Asset[]
+
+  @@index([userId, createdAt])
+  @@index([teamId, createdAt])
+  @@map("asset_folders")
 }
 
 model RenderJob {

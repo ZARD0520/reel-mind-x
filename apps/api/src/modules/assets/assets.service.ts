@@ -1,6 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AssetSchema, type Asset } from '@reel/contracts';
+import {
+  AssetSchema,
+  type Asset,
+  type SaveAssetToLibraryInput,
+  type UpdateAssetInput,
+} from '@reel/contracts';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -19,6 +24,7 @@ type AssetRow = {
   id: string;
   projectId: string | null;
   canvasId: string | null;
+  folderId: string | null;
   kind: string;
   source: string;
   status: string;
@@ -117,5 +123,55 @@ export class AssetsService {
       await fs.promises.unlink(row.localPath).catch(() => undefined);
     }
     await this.prisma.asset.delete({ where: { id } });
+  }
+
+  /**
+   * 保存素材到素材库：复制一条独立的素材库记录指向同一文件，
+   * 不复制 localPath（文件清理仍由原素材记录负责）。
+   */
+  async saveToLibrary(
+    userId: string,
+    id: string,
+    input: SaveAssetToLibraryInput,
+  ): Promise<Asset> {
+    const asset = await this.prisma.asset.findFirst({ where: { id, userId } });
+    if (!asset) throw new NotFoundException(`Asset ${id} not found`);
+    if (asset.folderId) throw new BadRequestException('该素材已在素材库中');
+
+    const folder = await this.prisma.assetFolder.findFirst({
+      where: { id: input.folderId, userId, teamId: null },
+    });
+    if (!folder) throw new NotFoundException(`AssetFolder ${input.folderId} not found`);
+
+    const row = await this.prisma.asset.create({
+      data: {
+        userId,
+        projectId: null,
+        canvasId: null,
+        folderId: folder.id,
+        kind: asset.kind,
+        source: asset.source,
+        status: 'ready',
+        // 素材库名称默认取保存时的展示名（如画布节点名），未传则沿用原素材名
+        name: input.name?.trim() || asset.name,
+        url: asset.url,
+        localPath: null,
+        durationInFrames: asset.durationInFrames,
+        width: asset.width,
+        height: asset.height,
+        prompt: asset.prompt,
+      },
+    });
+    return this.toAsset(row);
+  }
+
+  async update(userId: string, id: string, input: UpdateAssetInput): Promise<Asset> {
+    const row = await this.prisma.asset.findFirst({ where: { id, userId } });
+    if (!row) throw new NotFoundException(`Asset ${id} not found`);
+    const updated = await this.prisma.asset.update({
+      where: { id },
+      data: { name: input.name },
+    });
+    return this.toAsset(updated);
   }
 }

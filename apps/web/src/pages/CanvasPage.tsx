@@ -47,6 +47,7 @@ import {
   Film,
   Focus,
   Folder,
+  FolderPlus,
   Grid3X3,
   History,
   Image as ImageIcon,
@@ -69,6 +70,8 @@ import {
   type CanvasModelId,
   type CanvasNodeKind,
 } from '../features/canvas/components/NodeModelSelect';
+import { AssetLibraryDialog } from '../features/canvas/components/AssetLibraryDialog';
+import { AssetFolderPickerDialog } from '../features/canvas/components/AssetFolderPickerDialog';
 import { Select, type SelectOption } from '../components/ui/Select';
 import {
   IMAGE_SIZE_BY_RATIO,
@@ -201,6 +204,29 @@ function mediaNodeWidth(
 ): number {
   const [width = 1, height = 1] = (aspectRatio ?? fallback).split(':').map(Number);
   return Math.round((IMAGE_NODE_HEIGHT * width) / height);
+}
+
+const MEDIA_RATIO_KEYS: AspectRatioKey[] = ['16:9', '9:16', '1:1', '4:3', '21:9'];
+
+// 从素材像素宽高反推最接近的画布比例，保证素材节点与保存时的源节点同尺寸
+function closestAspectRatio(
+  width?: number | null,
+  height?: number | null,
+  fallback: AspectRatioKey = DEFAULT_IMAGE_ASPECT_RATIO,
+): AspectRatioKey {
+  if (!width || !height) return fallback;
+  const target = width / height;
+  let best: AspectRatioKey = fallback;
+  let bestDiff = Number.POSITIVE_INFINITY;
+  for (const key of MEDIA_RATIO_KEYS) {
+    const [ratioWidth = 1, ratioHeight = 1] = key.split(':').map(Number);
+    const diff = Math.abs(Math.log(target / (ratioWidth / ratioHeight)));
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = key;
+    }
+  }
+  return best;
 }
 
 function followConnectionHandle(event: React.PointerEvent<HTMLDivElement>) {
@@ -547,11 +573,9 @@ function NodeGenerationPrompt({
     onSuccess: ({ values, failedCount }, request) => {
       const [result, ...additionalResults] = values;
       if (!result) return;
-      setPrompt('');
       if (result.type === 'text') {
         updateNodeData(nodeId, {
           content: result.value.text,
-          prompt: '',
           model: result.value.model,
           status: 'ready',
           error: '',
@@ -560,7 +584,6 @@ function NodeGenerationPrompt({
         updateNodeData(nodeId, {
           assetId: result.value.id,
           editorProjectId: undefined,
-          prompt: '',
           url: result.value.url,
           status: result.value.status,
           error: '',
@@ -587,7 +610,7 @@ function NodeGenerationPrompt({
             data: {
               ...data,
               title: `${data.title} ${index + 2}`,
-              prompt: '',
+              prompt: request.prompt,
               model: additionalResult.type === 'text' ? additionalResult.value.model : model,
               generationCount: request.count,
               aspectRatio: kind === 'image' || kind === 'video' ? aspectRatio : undefined,
@@ -1218,6 +1241,12 @@ function InfiniteCanvas({
   const [zoom, setZoom] = useState(Math.round(canvas.graph.viewport.zoom * 100));
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showNodeSearch, setShowNodeSearch] = useState(false);
+  const [showAssetLibrary, setShowAssetLibrary] = useState(false);
+  const [saveToLibraryTarget, setSaveToLibraryTarget] = useState<{
+    assetId: string;
+    title: string;
+  } | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [nodeSearchQuery, setNodeSearchQuery] = useState('');
   const [nodeSearchKind, setNodeSearchKind] = useState<NodeSearchKind>('all');
   const nodeSearchInputRef = useRef<HTMLInputElement>(null);
@@ -1265,6 +1294,13 @@ function InfiniteCanvas({
   });
   const saveGraphRef = useRef(saveGraph.mutate);
   saveGraphRef.current = saveGraph.mutate;
+
+  const toastTimerRef = useRef<number | null>(null);
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 2400);
+  }, []);
 
   const editVideo = useMutation<Project, Error, string>({
     mutationFn: async (nodeId) => {
@@ -1443,6 +1479,47 @@ function InfiniteCanvas({
     [instance, setNodes],
   );
 
+  // 把素材库中的素材作为就绪节点加到画布视口中心
+  const addAssetNode = useCallback(
+    (asset: Asset) => {
+      if (!instance || !wrapperRef.current) return;
+      if (asset.kind !== 'image' && asset.kind !== 'video') return;
+      const bounds = wrapperRef.current.getBoundingClientRect();
+      const center = instance.screenToFlowPosition({
+        x: bounds.left + bounds.width / 2,
+        y: bounds.top + bounds.height / 2,
+      });
+      const nextNode: WorkflowNode = {
+        id: uuid(),
+        type: 'workflow',
+        position: {
+          x: center.x - (asset.kind === 'video' ? 320 : 180),
+          y: center.y - 195,
+        },
+        data: {
+          ...nodeTemplates[asset.kind],
+          title: asset.name,
+          assetId: asset.id,
+          url: asset.url,
+          status: 'ready',
+          aspectRatio: closestAspectRatio(
+            asset.width,
+            asset.height,
+            asset.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO,
+          ),
+          ...(asset.kind === 'video' && asset.durationInFrames
+            ? { videoDuration: (asset.durationInFrames / 30 < 7.5 ? 5 : 10) as VideoDuration }
+            : {}),
+        },
+      };
+      setNodes((currentNodes) => [
+        ...currentNodes.map((node) => ({ ...node, selected: false })),
+        nextNode,
+      ]);
+    },
+    [instance, setNodes],
+  );
+
   const duplicateNode = useCallback(
     (nodeId: string) => {
       setNodes((currentNodes) => {
@@ -1490,8 +1567,8 @@ function InfiniteCanvas({
       setNodeActionError(null);
       setNodeActionMenu({
         nodeId: node.id,
-        x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - 144)),
-        y: Math.max(8, Math.min(event.clientY - bounds.top + 8, bounds.height - 132)),
+        x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - 168)),
+        y: Math.max(8, Math.min(event.clientY - bounds.top + 8, bounds.height - 180)),
       });
     },
     [dependencyTargetId],
@@ -1646,7 +1723,7 @@ function InfiniteCanvas({
       {nodeActionMenu && (
         <div
           data-node-action-menu
-          className="nodrag nopan nowheel absolute z-30 w-32 overflow-hidden rounded-xl border border-white/[0.13] bg-[#292929] p-1.5 shadow-[0_16px_42px_rgba(0,0,0,0.52)]"
+          className="nodrag nopan nowheel absolute z-30 w-40 overflow-hidden rounded-xl border border-white/[0.13] bg-[#292929] p-1.5 shadow-[0_16px_42px_rgba(0,0,0,0.52)]"
           style={{ left: nodeActionMenu.x, top: nodeActionMenu.y }}
           onPointerDown={(event) => event.stopPropagation()}
           onDoubleClick={(event) => {
@@ -1654,6 +1731,25 @@ function InfiniteCanvas({
             event.stopPropagation();
           }}
         >
+          {actionMenuNode && actionMenuNode.data.kind !== 'text' && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!actionMenuNode.data.assetId) return;
+                setNodeActionMenu(null);
+                setSaveToLibraryTarget({
+                  assetId: actionMenuNode.data.assetId,
+                  title: actionMenuNode.data.title,
+                });
+              }}
+              disabled={!actionMenuNode.data.assetId || actionMenuNode.data.status !== 'ready'}
+              title={actionMenuNode.data.status === 'ready' ? '保存到素材库' : '素材生成完成后才能保存'}
+              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-[#dddddf] transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <FolderPlus className="h-4 w-4" />
+              保存到素材库
+            </button>
+          )}
           {actionMenuNode?.data.kind === 'video' && (
             <button
               type="button"
@@ -1800,6 +1896,35 @@ function InfiniteCanvas({
         </div>
       )}
 
+      {showAssetLibrary && !dependencyTargetId && (
+        <AssetLibraryDialog
+          onClose={() => setShowAssetLibrary(false)}
+          onToast={showToast}
+          onAddToCanvas={addAssetNode}
+        />
+      )}
+
+      {saveToLibraryTarget && !dependencyTargetId && (
+        <AssetFolderPickerDialog
+          assetId={saveToLibraryTarget.assetId}
+          assetName={saveToLibraryTarget.title}
+          onClose={() => setSaveToLibraryTarget(null)}
+          onSaved={(folderName) => {
+            setSaveToLibraryTarget(null);
+            showToast(folderName ? `已保存到素材库「${folderName}」` : '已保存到素材库');
+          }}
+        />
+      )}
+
+      {toast && !dependencyTargetId && (
+        <div
+          role="status"
+          className="pointer-events-none absolute bottom-20 left-1/2 z-[60] -translate-x-1/2 rounded-xl border border-white/[0.14] bg-[#2c2c2c] px-4 py-2.5 text-sm text-[#eeeeef] shadow-[0_16px_42px_rgba(0,0,0,0.52)]"
+        >
+          {toast}
+        </div>
+      )}
+
       {dependencyTargetId && (
         <div className="pointer-events-none absolute left-1/2 top-5 z-20 -translate-x-1/2 rounded-xl border border-white/[0.14] bg-[#292929] px-4 py-2 text-sm text-[#e1e1e3] shadow-xl">
           选择一个未连接节点作为参考
@@ -1825,7 +1950,11 @@ function InfiniteCanvas({
         <IconButton
           label="添加节点"
           active={showAddMenu}
-          onClick={() => setShowAddMenu((value) => !value)}
+          onClick={() => {
+            setShowNodeSearch(false);
+            setShowAssetLibrary(false);
+            setShowAddMenu((value) => !value);
+          }}
         >
           <Plus className="h-6 w-6" />
         </IconButton>
@@ -1834,6 +1963,7 @@ function InfiniteCanvas({
           active={showNodeSearch}
           onClick={() => {
             setShowAddMenu(false);
+            setShowAssetLibrary(false);
             setNodeActionMenu(null);
             setNodeActionError(null);
             setShowNodeSearch((value) => !value);
@@ -1841,7 +1971,17 @@ function InfiniteCanvas({
         >
           <Search className="h-5 w-5" />
         </IconButton>
-        <IconButton label="素材库">
+        <IconButton
+          label="素材库"
+          active={showAssetLibrary}
+          onClick={() => {
+            setShowAddMenu(false);
+            setShowNodeSearch(false);
+            setNodeActionMenu(null);
+            setNodeActionError(null);
+            setShowAssetLibrary((value) => !value);
+          }}
+        >
           <Folder className="h-5 w-5" />
         </IconButton>
         <IconButton label="节点列表">

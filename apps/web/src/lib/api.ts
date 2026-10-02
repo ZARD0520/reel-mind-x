@@ -102,6 +102,36 @@ export const api = {
       });
     },
     remove: (id: string) => requestVoid(`/assets/${id}`, { method: 'DELETE' }),
+    rename: (id: string, name: string) =>
+      request(`/assets/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }),
+    saveToLibrary: (id: string, folderId: string, name?: string) =>
+      request(`/assets/${id}/save-to-library`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(name ? { folderId, name } : { folderId }),
+      }),
+  },
+  assetFolders: {
+    list: (scope: 'personal' | 'team') =>
+      request(`/asset-folders?scope=${encodeURIComponent(scope)}`),
+    create: (body: { name: string; scope?: 'personal' | 'team'; parentId?: string }) =>
+      request('/asset-folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    listAssets: (id: string) => request(`/asset-folders/${id}/assets`),
+    rename: (id: string, name: string) =>
+      request(`/asset-folders/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      }),
+    remove: (id: string) => requestVoid(`/asset-folders/${id}`, { method: 'DELETE' }),
   },
   render: {
     create: (body: { projectId: string; fileName?: string; quality?: string }) =>

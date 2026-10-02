@@ -9,6 +9,7 @@ import { LlmExceptionFilter } from './filters/llm-exception.filter';
 import { AgentModule } from './modules/agent/agent.module';
 import { AiGenMediaModule } from './modules/ai-gen-media/ai-gen-media.module';
 import { AiMixModule } from './modules/ai-mix/ai-mix.module';
+import { AssetFoldersModule } from './modules/asset-folders/asset-folders.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CanvasesModule } from './modules/canvases/canvases.module';
@@ -40,6 +41,7 @@ import { PrismaModule } from './prisma/prisma.module';
     LlmModule,
     AgentModule,
     AiMixModule,
+    AssetFoldersModule,
     AssetsModule,
     FilesModule,
     ProjectsModule,

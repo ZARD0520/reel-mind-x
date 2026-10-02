@@ -60,15 +60,18 @@ export const AssetStatusSchema = z.enum(['ready', 'generating', 'failed']);
 export type AssetStatus = z.infer<typeof AssetStatusSchema>;
 
 /**
- * 素材库条目：可复用的媒体，独立于时间轴。
+ * 素材条目：可复用的媒体。
+ * 归属三选一：project / canvas / folder（素材库素材独立于项目与画布）。
  * 一个 Asset 可被多个 Clip 引用。
  */
 export const AssetSchema = z.object({
   id: z.string().uuid(),
   /** 素材所属项目：不同项目之间素材相互隔离 */
   projectId: z.string().uuid().nullable(),
-  /** 素材所属画布；projectId/canvasId 有且仅有一个 */
+  /** 素材所属画布 */
   canvasId: z.string().uuid().nullable(),
+  /** 素材库文件夹；非空表示素材库素材（projectId/canvasId 为空） */
+  folderId: z.string().uuid().nullable(),
   kind: AssetKindSchema,
   source: AssetSourceSchema,
   status: AssetStatusSchema,
@@ -85,6 +88,67 @@ export const AssetSchema = z.object({
   createdAt: z.coerce.date(),
 });
 export type Asset = z.infer<typeof AssetSchema>;
+
+// ───────────────────────── 素材库文件夹 AssetFolder ─────────────────────────
+
+/** 素材库归属范围：personal 个人 / team 团队（团队功能后续上线，先做结构适配） */
+export const AssetFolderScopeSchema = z.enum(['personal', 'team']);
+export type AssetFolderScope = z.infer<typeof AssetFolderScopeSchema>;
+
+/**
+ * 素材库文件夹：组织素材的容器，支持嵌套。
+ * userId 为创建者；parentId 为空表示根层级；
+ * teamId 为 null 时属于个人素材库，否则属于团队素材库。
+ */
+export const AssetFolderSchema = z.object({
+  id: z.string().uuid(),
+  /** 创建者；个人文件夹即归属人 */
+  userId: z.string().uuid(),
+  /** 父文件夹；为空表示根层级 */
+  parentId: z.string().uuid().nullable(),
+  /** 归属团队；个人文件夹为 null（团队表尚未建立，先预留） */
+  teamId: z.string().uuid().nullable(),
+  name: z.string().min(1).max(100),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+export type AssetFolder = z.infer<typeof AssetFolderSchema>;
+
+export const CreateAssetFolderSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    scope: AssetFolderScopeSchema.default('personal'),
+    /** 父文件夹；不传则创建在根层级 */
+    parentId: z.string().uuid().optional(),
+    /** scope=team 时必填，指定要创建到的团队 */
+    teamId: z.string().uuid().optional(),
+  })
+  .refine((input) => input.scope !== 'team' || !!input.teamId, {
+    message: '团队素材库必须提供 teamId',
+  });
+export type CreateAssetFolderInput = z.infer<typeof CreateAssetFolderSchema>;
+
+export const UpdateAssetFolderSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+});
+export type UpdateAssetFolderInput = z.infer<typeof UpdateAssetFolderSchema>;
+
+export const ListAssetFoldersQuerySchema = z.object({
+  scope: AssetFolderScopeSchema.default('personal'),
+});
+export type ListAssetFoldersQuery = z.infer<typeof ListAssetFoldersQuerySchema>;
+
+/** 保存素材到素材库：指定目标文件夹；可携带展示名（如画布节点名） */
+export const SaveAssetToLibrarySchema = z.object({
+  folderId: z.string().uuid(),
+  name: z.string().trim().min(1).max(200).optional(),
+});
+export type SaveAssetToLibraryInput = z.infer<typeof SaveAssetToLibrarySchema>;
+
+export const UpdateAssetSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+});
+export type UpdateAssetInput = z.infer<typeof UpdateAssetSchema>;
 
 // ───────────────────────── 片段属性 Transform ─────────────────────────
 

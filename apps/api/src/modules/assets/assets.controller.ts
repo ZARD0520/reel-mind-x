@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Delete,
   Get,
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UploadedFile,
@@ -21,6 +23,7 @@ import * as path from 'path';
 import { AuthGuard } from '../auth/auth.guard';
 import type { AuthenticatedRequest, AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { SaveAssetToLibraryDto, UpdateAssetDto } from './assets.dto';
 import { AssetsService } from './assets.service';
 
 @Controller('assets')
@@ -68,6 +71,24 @@ export class AssetsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<Asset> {
     return this.assets.findOne(user.id, id);
+  }
+
+  @Post(':id/save-to-library')
+  saveToLibrary(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SaveAssetToLibraryDto,
+  ): Promise<Asset> {
+    return this.assets.saveToLibrary(user.id, id, dto);
+  }
+
+  @Patch(':id')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateAssetDto,
+  ): Promise<Asset> {
+    return this.assets.update(user.id, id, dto);
   }
 
   @Delete(':id')
