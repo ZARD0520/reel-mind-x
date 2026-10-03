@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Asset, AssetFolder, AssetFolderScope } from '@reel/contracts';
+import type {
+  Asset,
+  AssetFolder,
+  AssetFolderScope,
+  AssetLibrarySearchResult,
+} from '@reel/contracts';
 import {
   AudioLines,
   Check,
@@ -15,6 +20,7 @@ import {
   MoreVertical,
   Pencil,
   Plus,
+  Search,
   Trash2,
   Users,
   X,
@@ -73,19 +79,19 @@ async function downloadAssetFile(asset: Asset): Promise<void> {
 
 interface LibraryAssetThumbProps {
   asset: Asset;
-  renaming: boolean;
-  renameValue: string;
-  onRenameValueChange: (value: string) => void;
-  onCommitRename: () => void;
-  onCancelRename: () => void;
+  renaming?: boolean;
+  renameValue?: string;
+  onRenameValueChange?: (value: string) => void;
+  onCommitRename?: () => void;
+  onCancelRename?: () => void;
   onAdd: () => void;
-  onOpenMenu: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  onOpenMenu?: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
 function LibraryAssetThumb({
   asset,
-  renaming,
-  renameValue,
+  renaming = false,
+  renameValue = '',
   onRenameValueChange,
   onCommitRename,
   onCancelRename,
@@ -133,15 +139,15 @@ function LibraryAssetThumb({
         <input
           autoFocus
           value={renameValue}
-          onChange={(event) => onRenameValueChange(event.target.value)}
+          onChange={(event) => onRenameValueChange?.(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault();
-              onCommitRename();
+              onCommitRename?.();
             }
             if (event.key === 'Escape') {
               event.stopPropagation();
-              onCancelRename();
+              onCancelRename?.();
             }
           }}
           onBlur={onCommitRename}
@@ -150,17 +156,19 @@ function LibraryAssetThumb({
           className="absolute inset-x-0 bottom-0 rounded-b-lg bg-black/80 px-1.5 py-0.5 text-[10px] text-white outline-none ring-1 ring-[#f3f3f0]/60"
         />
       ) : null}
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpenMenu(event);
-        }}
-        aria-label={`${asset.name} 的更多操作`}
-        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded bg-black/70 text-white opacity-0 transition-opacity hover:bg-black/90 focus:opacity-100 group-hover:opacity-100"
-      >
-        <MoreVertical className="h-3 w-3" />
-      </button>
+      {onOpenMenu && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenMenu(event);
+          }}
+          aria-label={`${asset.name} 的更多操作`}
+          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded bg-black/70 text-white opacity-0 transition-opacity hover:bg-black/90 focus:opacity-100 group-hover:opacity-100"
+        >
+          <MoreVertical className="h-3 w-3" />
+        </button>
+      )}
     </div>
   );
 }
@@ -263,6 +271,9 @@ export function AssetLibraryDialog({
   const [renamingAssetId, setRenamingAssetId] = useState<string | null>(null);
   const [assetRenameValue, setAssetRenameValue] = useState('');
   const [downloading, setDownloading] = useState(false);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const menuFolderRef = useRef(menuFolder);
@@ -302,6 +313,31 @@ export function AssetLibraryDialog({
     [folders, currentFolderId],
   );
   const folderAssets = currentFolderId === null ? [] : (folderAssetsQuery.data ?? []);
+
+  const searching = scope === 'personal' && debouncedSearch.length > 0;
+  const searchQuery = useQuery<AssetLibrarySearchResult[]>({
+    queryKey: ['assetFolders', scope, 'search', debouncedSearch],
+    queryFn: () =>
+      api.assetFolders.searchAssets(debouncedSearch) as Promise<AssetLibrarySearchResult[]>,
+    enabled: searching,
+  });
+  const searchResults = searching ? (searchQuery.data ?? []) : [];
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  // 进入搜索模式时收起进行中的编辑状态
+  useEffect(() => {
+    if (debouncedSearch.length > 0) {
+      setCreating(false);
+      setRenamingId(null);
+      setRenamingAssetId(null);
+      setMenuFolder(null);
+      setMenuAsset(null);
+    }
+  }, [debouncedSearch]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -357,15 +393,14 @@ export function AssetLibraryDialog({
     onSuccess: () => {
       setMenuFolder(null);
       setActionError(null);
-      invalidateFolders();
+      invalidateFolderAssets();
     },
     onError: (error) => setActionError(apiErrorMessage(error, '删除文件夹失败，请稍后重试')),
   });
 
+  // 素材/搜索/文件夹列表同属一个前缀，统一失效保证搜索结果与文件夹视图同步
   const invalidateFolderAssets = () => {
-    void queryClient.invalidateQueries({
-      queryKey: ['assetFolders', scope, 'assets', currentFolderId],
-    });
+    void queryClient.invalidateQueries({ queryKey: ['assetFolders', scope] });
   };
 
   const renameAsset = useMutation({
@@ -399,6 +434,8 @@ export function AssetLibraryDialog({
     setRenamingAssetId(null);
     setMenuAsset(null);
     setPreviewAsset(null);
+    setSearch('');
+    setDebouncedSearch('');
     setActionError(null);
   };
 
@@ -474,7 +511,9 @@ export function AssetLibraryDialog({
 
   const commitAssetRename = () => {
     if (!renamingAssetId) return;
-    const asset = folderAssets.find((item) => item.id === renamingAssetId);
+    const asset =
+      folderAssets.find((item) => item.id === renamingAssetId) ??
+      searchResults.find((item) => item.id === renamingAssetId);
     const name = assetRenameValue.trim();
     if (!asset || !name || name === asset.name) {
       setRenamingAssetId(null);
@@ -585,7 +624,12 @@ export function AssetLibraryDialog({
   return (
     <div
       className="absolute inset-0 z-40 flex items-center justify-center bg-black/35 px-5 backdrop-blur-[2px]"
-      onPointerDown={onClose}
+      onPointerDown={() => {
+        // 关闭前先提交进行中的重命名，避免卸载输入框导致 blur 保存丢失
+        commitRename();
+        commitAssetRename();
+        onClose();
+      }}
     >
       <section
         role="dialog"
@@ -618,6 +662,30 @@ export function AssetLibraryDialog({
               <Plus className="h-3.5 w-3.5" />
               新建文件夹
             </button>
+          </div>
+          <div className="mt-3 flex h-9 items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.055] px-3 transition-colors focus-within:border-white/[0.24]">
+            <Search className="h-4 w-4 shrink-0 text-[#85858a]" />
+            <input
+              ref={searchInputRef}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="搜索素材名称"
+              aria-label="搜索素材名称"
+              className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-[#77777c]"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch('');
+                  searchInputRef.current?.focus();
+                }}
+                className="flex h-6 w-6 items-center justify-center rounded-lg text-[#85858a] hover:bg-white/[0.07] hover:text-white"
+                aria-label="清空素材搜索"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
           </div>
           {currentFolderId !== null && (
             <nav
@@ -652,6 +720,41 @@ export function AssetLibraryDialog({
             <div className="flex min-h-40 items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-[#77777c]" />
             </div>
+          ) : searching ? (
+            searchQuery.isLoading ? (
+              <div className="flex min-h-40 items-center justify-center">
+                <Loader2 className="h-5 w-5 animate-spin text-[#77777c]" />
+              </div>
+            ) : searchResults.length > 0 ? (
+              <div className="grid grid-cols-3 gap-2">
+                {searchResults.map((result) => (
+                  <div key={result.id} className="flex min-w-0 flex-col">
+                    <LibraryAssetThumb
+                      asset={result}
+                      renaming={renamingAssetId === result.id}
+                      renameValue={assetRenameValue}
+                      onRenameValueChange={setAssetRenameValue}
+                      onCommitRename={commitAssetRename}
+                      onCancelRename={() => setRenamingAssetId(null)}
+                      onAdd={() => addAssetToCanvas(result)}
+                      onOpenMenu={(event) => openAssetMenu(result, event)}
+                    />
+                    <span
+                      className="mt-1 truncate px-0.5 text-[10px] text-[#77777c]"
+                      title={result.folderPath.map((folder) => folder.name).join(' / ')}
+                    >
+                      {result.folderPath.map((folder) => folder.name).join(' / ') || '素材库根目录'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex min-h-40 flex-col items-center justify-center text-center">
+                <Search className="h-6 w-6 text-[#55555a]" />
+                <p className="mt-3 text-sm text-[#9a9a9f]">没有找到匹配的素材</p>
+                <p className="mt-1 text-xs text-[#66666b]">试试其他关键词</p>
+              </div>
+            )
           ) : currentFolderId === null && folders.length === 0 && !creating ? (
             <div className="flex min-h-40 flex-col items-center justify-center text-center">
               {scope === 'personal' ? (
@@ -710,6 +813,8 @@ export function AssetLibraryDialog({
         <div className="flex items-center justify-between border-t border-white/[0.08] px-4 py-2.5 text-xs">
           {actionError ? (
             <span className="text-red-400">{actionError}</span>
+          ) : searching ? (
+            <span className="text-[#66666b]">共 {searchResults.length} 个素材</span>
           ) : currentFolderId === null ? (
             <span className="text-[#66666b]">共 {folders.length} 个文件夹</span>
           ) : (

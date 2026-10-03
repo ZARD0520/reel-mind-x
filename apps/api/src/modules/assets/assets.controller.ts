@@ -23,7 +23,7 @@ import * as path from 'path';
 import { AuthGuard } from '../auth/auth.guard';
 import type { AuthenticatedRequest, AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
-import { SaveAssetToLibraryDto, UpdateAssetDto } from './assets.dto';
+import { AssetHistoryQueryDto, SaveAssetToLibraryDto, UpdateAssetDto } from './assets.dto';
 import { AssetsService } from './assets.service';
 
 @Controller('assets')
@@ -63,6 +63,15 @@ export class AssetsController {
     @Query('projectId', new ParseUUIDPipe()) projectId: string,
   ): Promise<Asset[]> {
     return this.assets.list(user.id, projectId);
+  }
+
+  // 声明在 :id 路由之前，避免被参数路由捕获
+  @Get('history')
+  history(
+    @CurrentUser() user: AuthUser,
+    @Query() query: AssetHistoryQueryDto,
+  ): Promise<Asset[]> {
+    return this.assets.history(user.id, query);
   }
 
   @Get(':id')

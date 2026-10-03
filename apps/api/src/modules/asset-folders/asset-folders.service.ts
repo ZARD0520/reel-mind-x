@@ -1,10 +1,12 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   AssetFolderSchema,
+  AssetLibrarySearchResultSchema,
   AssetSchema,
   type Asset,
   type AssetFolder,
   type AssetFolderScope,
+  type AssetLibrarySearchResult,
   type CreateAssetFolderInput,
   type UpdateAssetFolderInput,
 } from '@reel/contracts';
@@ -99,6 +101,41 @@ export class AssetFoldersService {
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((row) => this.toAsset(row));
+  }
+
+  /** 素材库搜索：按素材名称模糊匹配个人素材库中的素材，并附带所在文件夹路径 */
+  async searchAssets(userId: string, q: string): Promise<AssetLibrarySearchResult[]> {
+    const rows = await this.prisma.asset.findMany({
+      where: {
+        userId,
+        folderId: { not: null },
+        name: { contains: q, mode: 'insensitive' as const },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    const folders = await this.prisma.assetFolder.findMany({
+      where: { userId, teamId: null },
+      select: { id: true, parentId: true, name: true },
+    });
+    const folderMap = new Map(folders.map((folder) => [folder.id, folder]));
+    const pathFor = (folderId: string) => {
+      const chain: { id: string; name: string }[] = [];
+      const visited = new Set<string>();
+      let cursor = folderMap.get(folderId);
+      while (cursor && !visited.has(cursor.id)) {
+        visited.add(cursor.id);
+        chain.unshift({ id: cursor.id, name: cursor.name });
+        cursor = cursor.parentId ? folderMap.get(cursor.parentId) : undefined;
+      }
+      return chain;
+    };
+    return rows.map((row) =>
+      AssetLibrarySearchResultSchema.parse({
+        ...this.toAsset(row),
+        folderPath: pathFor(row.folderId!),
+      }),
+    );
   }
 
   // 团队文件夹的成员归属校验待团队功能上线后补充，现阶段只放行个人文件夹

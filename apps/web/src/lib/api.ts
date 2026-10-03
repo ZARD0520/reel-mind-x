@@ -108,6 +108,12 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       }),
+    history: (params: { scope: 'all' | 'canvas'; canvasId?: string; q?: string }) => {
+      const search = new URLSearchParams({ scope: params.scope });
+      if (params.canvasId) search.set('canvasId', params.canvasId);
+      if (params.q) search.set('q', params.q);
+      return request(`/assets/history?${search.toString()}`);
+    },
     saveToLibrary: (id: string, folderId: string, name?: string) =>
       request(`/assets/${id}/save-to-library`, {
         method: 'POST',
@@ -125,6 +131,8 @@ export const api = {
         body: JSON.stringify(body),
       }),
     listAssets: (id: string) => request(`/asset-folders/${id}/assets`),
+    searchAssets: (q: string) =>
+      request(`/asset-folders/search?q=${encodeURIComponent(q)}`),
     rename: (id: string, name: string) =>
       request(`/asset-folders/${id}`, {
         method: 'PATCH',

@@ -138,6 +138,17 @@ export const ListAssetFoldersQuerySchema = z.object({
 });
 export type ListAssetFoldersQuery = z.infer<typeof ListAssetFoldersQuerySchema>;
 
+/** 素材库搜索结果：素材 + 所在文件夹路径（从根到所在文件夹） */
+export const AssetLibrarySearchResultSchema = AssetSchema.extend({
+  folderPath: z.array(z.object({ id: z.string().uuid(), name: z.string() })),
+});
+export type AssetLibrarySearchResult = z.infer<typeof AssetLibrarySearchResultSchema>;
+
+export const SearchLibraryAssetsQuerySchema = z.object({
+  q: z.string().trim().min(1).max(200),
+});
+export type SearchLibraryAssetsQueryInput = z.infer<typeof SearchLibraryAssetsQuerySchema>;
+
 /** 保存素材到素材库：指定目标文件夹；可携带展示名（如画布节点名） */
 export const SaveAssetToLibrarySchema = z.object({
   folderId: z.string().uuid(),
@@ -149,6 +160,22 @@ export const UpdateAssetSchema = z.object({
   name: z.string().trim().min(1).max(200),
 });
 export type UpdateAssetInput = z.infer<typeof UpdateAssetSchema>;
+
+/** 素材生成历史范围：all 全部 / canvas 当前画布 */
+export const AssetHistoryScopeSchema = z.enum(['all', 'canvas']);
+export type AssetHistoryScope = z.infer<typeof AssetHistoryScopeSchema>;
+
+/** 素材生成历史查询：q 按生成指令（prompt）模糊搜索 */
+export const AssetHistoryQuerySchema = z
+  .object({
+    scope: AssetHistoryScopeSchema.default('all'),
+    canvasId: z.string().uuid().optional(),
+    q: z.string().trim().max(200).optional(),
+  })
+  .refine((input) => input.scope !== 'canvas' || !!input.canvasId, {
+    message: 'scope=canvas 时必须提供 canvasId',
+  });
+export type AssetHistoryQueryInput = z.infer<typeof AssetHistoryQuerySchema>;
 
 // ───────────────────────── 片段属性 Transform ─────────────────────────
 

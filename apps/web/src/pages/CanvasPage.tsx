@@ -72,6 +72,7 @@ import {
 } from '../features/canvas/components/NodeModelSelect';
 import { AssetLibraryDialog } from '../features/canvas/components/AssetLibraryDialog';
 import { AssetFolderPickerDialog } from '../features/canvas/components/AssetFolderPickerDialog';
+import { AssetHistoryDialog } from '../features/canvas/components/AssetHistoryDialog';
 import { Select, type SelectOption } from '../components/ui/Select';
 import {
   IMAGE_SIZE_BY_RATIO,
@@ -1207,15 +1208,22 @@ function IconButton({
   onClick?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex h-10 w-10 items-center justify-center rounded-xl transition-colors ${active ? 'bg-[#f7f7f2] text-[#111]' : 'text-[#b9b9ba] hover:bg-white/[0.08] hover:text-[#f7f7f2]'}`}
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </button>
+    <div className="group/ib relative flex">
+      <button
+        type="button"
+        onClick={onClick}
+        className={`flex h-10 w-10 items-center justify-center rounded-xl transition-colors ${active ? 'bg-[#f7f7f2] text-[#111]' : 'text-[#b9b9ba] hover:bg-white/[0.08] hover:text-[#f7f7f2]'}`}
+        aria-label={label}
+      >
+        {children}
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2 whitespace-nowrap rounded-lg border border-white/[0.13] bg-[#2c2c2c] px-2 py-1 text-xs text-[#e1e1e3] opacity-0 shadow-[0_10px_28px_rgba(0,0,0,0.45)] transition-opacity group-hover/ib:opacity-100"
+      >
+        {label}
+      </span>
+    </div>
   );
 }
 
@@ -1242,6 +1250,7 @@ function InfiniteCanvas({
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showNodeSearch, setShowNodeSearch] = useState(false);
   const [showAssetLibrary, setShowAssetLibrary] = useState(false);
+  const [showAssetHistory, setShowAssetHistory] = useState(false);
   const [saveToLibraryTarget, setSaveToLibraryTarget] = useState<{
     assetId: string;
     title: string;
@@ -1351,6 +1360,7 @@ function InfiniteCanvas({
         setNodeActionMenu(null);
         setNodeActionError(null);
         setShowNodeSearch(false);
+        setShowAssetHistory(false);
       }
     };
     window.addEventListener('keydown', cancelOnEscape);
@@ -1916,6 +1926,14 @@ function InfiniteCanvas({
         />
       )}
 
+      {showAssetHistory && !dependencyTargetId && (
+        <AssetHistoryDialog
+          canvasId={canvas.id}
+          onClose={() => setShowAssetHistory(false)}
+          onAddToCanvas={addAssetNode}
+        />
+      )}
+
       {toast && !dependencyTargetId && (
         <div
           role="status"
@@ -1953,17 +1971,19 @@ function InfiniteCanvas({
           onClick={() => {
             setShowNodeSearch(false);
             setShowAssetLibrary(false);
+            setShowAssetHistory(false);
             setShowAddMenu((value) => !value);
           }}
         >
           <Plus className="h-6 w-6" />
         </IconButton>
         <IconButton
-          label="搜索"
+          label="节点搜索"
           active={showNodeSearch}
           onClick={() => {
             setShowAddMenu(false);
             setShowAssetLibrary(false);
+            setShowAssetHistory(false);
             setNodeActionMenu(null);
             setNodeActionError(null);
             setShowNodeSearch((value) => !value);
@@ -1977,6 +1997,7 @@ function InfiniteCanvas({
           onClick={() => {
             setShowAddMenu(false);
             setShowNodeSearch(false);
+            setShowAssetHistory(false);
             setNodeActionMenu(null);
             setNodeActionError(null);
             setShowAssetLibrary((value) => !value);
@@ -1984,13 +2005,24 @@ function InfiniteCanvas({
         >
           <Folder className="h-5 w-5" />
         </IconButton>
-        <IconButton label="节点列表">
+        <IconButton label="模板">
           <LayoutPanelTop className="h-5 w-5" />
         </IconButton>
-        <IconButton label="对话">
+        <IconButton label="评论模式">
           <MessageCircle className="h-5 w-5" />
         </IconButton>
-        <IconButton label="历史记录">
+        <IconButton
+          label="历史"
+          active={showAssetHistory}
+          onClick={() => {
+            setShowAddMenu(false);
+            setShowNodeSearch(false);
+            setShowAssetLibrary(false);
+            setNodeActionMenu(null);
+            setNodeActionError(null);
+            setShowAssetHistory((value) => !value);
+          }}
+        >
           <History className="h-5 w-5" />
         </IconButton>
       </aside>

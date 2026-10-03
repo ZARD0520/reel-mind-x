@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import {
   AssetSchema,
   type Asset,
+  type AssetHistoryQueryInput,
   type SaveAssetToLibraryInput,
   type UpdateAssetInput,
 } from '@reel/contracts';
@@ -112,6 +113,22 @@ export class AssetsService {
     const rows = await this.prisma.asset.findMany({
       where: { userId, projectId },
       orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((row) => this.toAsset(row));
+  }
+
+  /** 素材生成历史：AI 生成的就绪素材，q 按生成指令（prompt）模糊搜索 */
+  async history(userId: string, query: AssetHistoryQueryInput): Promise<Asset[]> {
+    const rows = await this.prisma.asset.findMany({
+      where: {
+        userId,
+        source: 'ai',
+        status: 'ready',
+        ...(query.scope === 'canvas' && query.canvasId ? { canvasId: query.canvasId } : {}),
+        ...(query.q ? { prompt: { contains: query.q, mode: 'insensitive' as const } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
     });
     return rows.map((row) => this.toAsset(row));
   }

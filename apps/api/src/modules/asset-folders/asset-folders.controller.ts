@@ -11,13 +11,14 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import type { Asset, AssetFolder } from '@reel/contracts';
+import type { Asset, AssetFolder, AssetLibrarySearchResult } from '@reel/contracts';
 import { AuthGuard } from '../auth/auth.guard';
 import type { AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import {
   CreateAssetFolderDto,
   ListAssetFoldersQueryDto,
+  SearchLibraryAssetsQueryDto,
   UpdateAssetFolderDto,
 } from './asset-folders.dto';
 import { AssetFoldersService } from './asset-folders.service';
@@ -38,6 +39,14 @@ export class AssetFoldersController {
     @Query() query: ListAssetFoldersQueryDto,
   ): Promise<AssetFolder[]> {
     return this.assetFolders.list(user.id, query.scope);
+  }
+
+  @Get('search')
+  searchAssets(
+    @CurrentUser() user: AuthUser,
+    @Query() query: SearchLibraryAssetsQueryDto,
+  ): Promise<AssetLibrarySearchResult[]> {
+    return this.assetFolders.searchAssets(user.id, query.q);
   }
 
   @Get(':id/assets')
