@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Asset, AssetHistoryScope } from '@reel/contracts';
-import { AudioLines, Film, Image as ImageIcon, Loader2, Search, X } from 'lucide-react';
+import { AudioLines, Film, Image as ImageIcon, Loader2, Search, Type, X } from 'lucide-react';
 import { api } from '../../../lib/api';
 
 const SCOPE_TABS: { value: AssetHistoryScope; label: string }[] = [
@@ -12,6 +12,7 @@ const SCOPE_TABS: { value: AssetHistoryScope; label: string }[] = [
 function kindIcon(asset: Asset) {
   if (asset.kind === 'audio') return AudioLines;
   if (asset.kind === 'video') return Film;
+  if (asset.kind === 'text') return Type;
   return ImageIcon;
 }
 

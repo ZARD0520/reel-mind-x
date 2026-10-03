@@ -1251,10 +1251,11 @@ function InfiniteCanvas({
   const [showNodeSearch, setShowNodeSearch] = useState(false);
   const [showAssetLibrary, setShowAssetLibrary] = useState(false);
   const [showAssetHistory, setShowAssetHistory] = useState(false);
-  const [saveToLibraryTarget, setSaveToLibraryTarget] = useState<{
-    assetId: string;
-    title: string;
-  } | null>(null);
+  const [saveToLibraryTarget, setSaveToLibraryTarget] = useState<
+    | { type: 'media'; assetId: string; title: string }
+    | { type: 'text'; title: string; content: string; prompt?: string }
+    | null
+  >(null);
   const [toast, setToast] = useState<string | null>(null);
   const [nodeSearchQuery, setNodeSearchQuery] = useState('');
   const [nodeSearchKind, setNodeSearchKind] = useState<NodeSearchKind>('all');
@@ -1493,7 +1494,7 @@ function InfiniteCanvas({
   const addAssetNode = useCallback(
     (asset: Asset) => {
       if (!instance || !wrapperRef.current) return;
-      if (asset.kind !== 'image' && asset.kind !== 'video') return;
+      if (asset.kind !== 'image' && asset.kind !== 'video' && asset.kind !== 'text') return;
       const bounds = wrapperRef.current.getBoundingClientRect();
       const center = instance.screenToFlowPosition({
         x: bounds.left + bounds.width / 2,
@@ -1506,21 +1507,30 @@ function InfiniteCanvas({
           x: center.x - (asset.kind === 'video' ? 320 : 180),
           y: center.y - 195,
         },
-        data: {
-          ...nodeTemplates[asset.kind],
-          title: asset.name,
-          assetId: asset.id,
-          url: asset.url,
-          status: 'ready',
-          aspectRatio: closestAspectRatio(
-            asset.width,
-            asset.height,
-            asset.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO,
-          ),
-          ...(asset.kind === 'video' && asset.durationInFrames
-            ? { videoDuration: (asset.durationInFrames / 30 < 7.5 ? 5 : 10) as VideoDuration }
-            : {}),
-        },
+        data:
+          asset.kind === 'text'
+            ? {
+                ...nodeTemplates.text,
+                title: asset.name,
+                content: asset.content ?? '',
+                prompt: asset.prompt ?? '',
+                status: 'ready',
+              }
+            : {
+                ...nodeTemplates[asset.kind],
+                title: asset.name,
+                assetId: asset.id,
+                url: asset.url,
+                status: 'ready',
+                aspectRatio: closestAspectRatio(
+                  asset.width,
+                  asset.height,
+                  asset.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO,
+                ),
+                ...(asset.kind === 'video' && asset.durationInFrames
+                  ? { videoDuration: (asset.durationInFrames / 30 < 7.5 ? 5 : 10) as VideoDuration }
+                  : {}),
+              },
       };
       setNodes((currentNodes) => [
         ...currentNodes.map((node) => ({ ...node, selected: false })),
@@ -1741,19 +1751,41 @@ function InfiniteCanvas({
             event.stopPropagation();
           }}
         >
-          {actionMenuNode && actionMenuNode.data.kind !== 'text' && (
+          {actionMenuNode && (
             <button
               type="button"
               onClick={() => {
-                if (!actionMenuNode.data.assetId) return;
                 setNodeActionMenu(null);
+                if (actionMenuNode.data.kind === 'text') {
+                  setSaveToLibraryTarget({
+                    type: 'text',
+                    title: actionMenuNode.data.title,
+                    content: actionMenuNode.data.content,
+                    prompt: actionMenuNode.data.prompt,
+                  });
+                  return;
+                }
+                if (!actionMenuNode.data.assetId) return;
                 setSaveToLibraryTarget({
+                  type: 'media',
                   assetId: actionMenuNode.data.assetId,
                   title: actionMenuNode.data.title,
                 });
               }}
-              disabled={!actionMenuNode.data.assetId || actionMenuNode.data.status !== 'ready'}
-              title={actionMenuNode.data.status === 'ready' ? '保存到素材库' : '素材生成完成后才能保存'}
+              disabled={
+                actionMenuNode.data.kind === 'text'
+                  ? !actionMenuNode.data.content.trim()
+                  : !actionMenuNode.data.assetId || actionMenuNode.data.status !== 'ready'
+              }
+              title={
+                actionMenuNode.data.kind === 'text'
+                  ? actionMenuNode.data.content.trim()
+                    ? '保存到素材库'
+                    : '文本内容为空，无法保存'
+                  : actionMenuNode.data.status === 'ready'
+                    ? '保存到素材库'
+                    : '素材生成完成后才能保存'
+              }
               className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-[#dddddf] transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
               <FolderPlus className="h-4 w-4" />
@@ -1916,8 +1948,20 @@ function InfiniteCanvas({
 
       {saveToLibraryTarget && !dependencyTargetId && (
         <AssetFolderPickerDialog
-          assetId={saveToLibraryTarget.assetId}
           assetName={saveToLibraryTarget.title}
+          save={(folderId) =>
+            saveToLibraryTarget.type === 'media'
+              ? (api.assets.saveToLibrary(
+                  saveToLibraryTarget.assetId,
+                  folderId,
+                  saveToLibraryTarget.title,
+                ) as Promise<Asset>)
+              : (api.assetFolders.createTextAsset(folderId, {
+                  name: saveToLibraryTarget.title,
+                  content: saveToLibraryTarget.content,
+                  prompt: saveToLibraryTarget.prompt,
+                }) as Promise<Asset>)
+          }
           onClose={() => setSaveToLibraryTarget(null)}
           onSaved={(folderName) => {
             setSaveToLibraryTarget(null);

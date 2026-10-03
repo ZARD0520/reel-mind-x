@@ -131,6 +131,12 @@ export const api = {
         body: JSON.stringify(body),
       }),
     listAssets: (id: string) => request(`/asset-folders/${id}/assets`),
+    createTextAsset: (folderId: string, body: { name: string; content: string; prompt?: string }) =>
+      request(`/asset-folders/${folderId}/assets`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
     searchAssets: (q: string) =>
       request(`/asset-folders/search?q=${encodeURIComponent(q)}`),
     rename: (id: string, name: string) =>

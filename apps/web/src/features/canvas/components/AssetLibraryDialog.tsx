@@ -62,6 +62,20 @@ function urlExtension(url: string): string {
 
 // fetch → blob 下载，保证跨域绝对地址也能落盘为文件
 async function downloadAssetFile(asset: Asset): Promise<void> {
+  // 文本素材没有 url，直接把内容打包成 .txt
+  if (asset.kind === 'text') {
+    if (!asset.content) return;
+    const blob = new Blob([asset.content], { type: 'text/plain;charset=utf-8' });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = `${asset.name}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    return;
+  }
   if (!asset.url) return;
   const res = await fetch(asset.url, { credentials: 'include' });
   if (!res.ok) throw new Error(`下载失败：${res.status}`);
@@ -124,6 +138,10 @@ function LibraryAssetThumb({
             muted
             preload="metadata"
           />
+        ) : asset.kind === 'text' ? (
+          <span className="block h-full w-full overflow-hidden px-2 py-1.5 text-left text-[10px] leading-4 text-[#b8b8bd] line-clamp-4">
+            {asset.content || '（空文本）'}
+          </span>
         ) : (
           <div className="flex flex-col items-center gap-1 text-[#9a9a9f]">
             <Icon className="h-[22px] w-[22px]" />
@@ -537,6 +555,7 @@ export function AssetLibraryDialog({
 
   const addAssetToCanvas = (asset: Asset) => {
     if (asset.status !== 'ready') return;
+    if (asset.kind !== 'image' && asset.kind !== 'video' && asset.kind !== 'text') return;
     onAddToCanvas(asset);
     onClose();
   };
@@ -996,6 +1015,13 @@ export function AssetLibraryDialog({
               className="max-h-[78vh] max-w-[86vw]"
               onPointerDown={(event) => event.stopPropagation()}
             />
+          ) : previewAsset.kind === 'text' ? (
+            <div
+              className="reel-scroll max-h-[70vh] max-w-[80vw] overflow-y-auto whitespace-pre-wrap rounded-xl bg-white/[0.04] p-5 text-sm leading-6 text-[#e1e1e3]"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              {previewAsset.content}
+            </div>
           ) : previewAsset.kind === 'audio' && previewAsset.url ? (
             <audio
               src={previewAsset.url}

@@ -48,7 +48,7 @@ export type AuthSession = z.infer<typeof AuthSessionSchema>;
 // ───────────────────────── 素材库 Asset ─────────────────────────
 
 /** 素材类型 */
-export const AssetKindSchema = z.enum(['video', 'image', 'audio']);
+export const AssetKindSchema = z.enum(['video', 'image', 'audio', 'text']);
 export type AssetKind = z.infer<typeof AssetKindSchema>;
 
 /** 素材来源：上传 / AI 生成 */
@@ -78,6 +78,8 @@ export const AssetSchema = z.object({
   name: z.string().min(1).max(200),
   /** 媒体访问地址（上传后或 AI 生成完成后填充；generating 时可为空） */
   url: z.string().min(1).nullable(),
+  /** kind=text 时的文本内容；媒体素材为空 */
+  content: z.string().max(50000).nullable(),
   /** 视频/音频的源时长（帧）。image 为 null */
   durationInFrames: z.number().int().nonnegative().nullable(),
   /** 视频/图片的像素尺寸。audio 为 null */
@@ -160,6 +162,14 @@ export const UpdateAssetSchema = z.object({
   name: z.string().trim().min(1).max(200),
 });
 export type UpdateAssetInput = z.infer<typeof UpdateAssetSchema>;
+
+/** 在素材库文件夹中创建文本素材（保存文本节点） */
+export const CreateTextAssetSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  content: z.string().trim().min(1).max(50000),
+  prompt: z.string().max(2000).optional(),
+});
+export type CreateTextAssetInput = z.infer<typeof CreateTextAssetSchema>;
 
 /** 素材生成历史范围：all 全部 / canvas 当前画布 */
 export const AssetHistoryScopeSchema = z.enum(['all', 'canvas']);

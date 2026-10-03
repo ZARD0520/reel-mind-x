@@ -8,6 +8,7 @@ import {
   type AssetFolderScope,
   type AssetLibrarySearchResult,
   type CreateAssetFolderInput,
+  type CreateTextAssetInput,
   type UpdateAssetFolderInput,
 } from '@reel/contracts';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -38,6 +39,7 @@ export class AssetFoldersService {
     status: string;
     name: string;
     url: string | null;
+    content: string | null;
     durationInFrames: number | null;
     width: number | null;
     height: number | null;
@@ -101,6 +103,32 @@ export class AssetFoldersService {
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((row) => this.toAsset(row));
+  }
+
+  /** 在文件夹中创建文本素材（保存文本节点） */
+  async createTextAsset(
+    userId: string,
+    folderId: string,
+    input: CreateTextAssetInput,
+  ): Promise<Asset> {
+    await this.findOwnedRow(userId, folderId);
+    const row = await this.prisma.asset.create({
+      data: {
+        userId,
+        projectId: null,
+        canvasId: null,
+        folderId,
+        kind: 'text',
+        source: 'ai',
+        status: 'ready',
+        name: input.name,
+        url: null,
+        localPath: null,
+        content: input.content,
+        prompt: input.prompt ?? null,
+      },
+    });
+    return this.toAsset(row);
   }
 
   /** 素材库搜索：按素材名称模糊匹配个人素材库中的素材，并附带所在文件夹路径 */

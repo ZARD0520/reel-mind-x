@@ -31,6 +31,7 @@ type AssetRow = {
   status: string;
   name: string;
   url: string | null;
+  content: string | null;
   durationInFrames: number | null;
   width: number | null;
   height: number | null;

@@ -19,14 +19,15 @@ interface PickerRow {
 }
 
 export function AssetFolderPickerDialog({
-  assetId,
   assetName,
+  save,
   onClose,
   onSaved,
 }: {
-  assetId: string;
   /** 保存时作为素材库名称的展示名（如画布节点名） */
   assetName?: string;
+  /** 选择文件夹后执行的保存动作（媒体素材 / 文本素材由调用方决定） */
+  save: (folderId: string) => Promise<Asset>;
   onClose: () => void;
   onSaved: (folderName: string) => void;
 }) {
@@ -81,9 +82,8 @@ export function AssetFolderPickerDialog({
     });
   };
 
-  const save = useMutation({
-    mutationFn: (folderId: string) =>
-      api.assets.saveToLibrary(assetId, folderId, assetName) as Promise<Asset>,
+  const saveMutation = useMutation({
+    mutationFn: (folderId: string) => save(folderId),
     onSuccess: (_asset, folderId) => {
       const folder = folders.find((item) => item.id === folderId);
       void queryClient.invalidateQueries({ queryKey: ['assetFolders'] });
@@ -186,11 +186,11 @@ export function AssetFolderPickerDialog({
             </button>
             <button
               type="button"
-              onClick={() => selectedId && save.mutate(selectedId)}
-              disabled={!selectedId || save.isPending}
+              onClick={() => selectedId && saveMutation.mutate(selectedId)}
+              disabled={!selectedId || saveMutation.isPending}
               className="flex h-8 items-center gap-1.5 rounded-lg bg-[#f3f3f0] px-3 text-xs font-medium text-[#151515] transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {save.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {saveMutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               保存
             </button>
           </div>

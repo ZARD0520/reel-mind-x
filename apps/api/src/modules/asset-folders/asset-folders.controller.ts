@@ -17,6 +17,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import {
   CreateAssetFolderDto,
+  CreateTextAssetDto,
   ListAssetFoldersQueryDto,
   SearchLibraryAssetsQueryDto,
   UpdateAssetFolderDto,
@@ -47,6 +48,15 @@ export class AssetFoldersController {
     @Query() query: SearchLibraryAssetsQueryDto,
   ): Promise<AssetLibrarySearchResult[]> {
     return this.assetFolders.searchAssets(user.id, query.q);
+  }
+
+  @Post(':id/assets')
+  createTextAsset(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateTextAssetDto,
+  ): Promise<Asset> {
+    return this.assetFolders.createTextAsset(user.id, id, dto);
   }
 
   @Get(':id/assets')

@@ -79,7 +79,7 @@ interface GlobalDragState {
   // clip rendering data for ghost
   color: string;
   assetName: string;
-  assetKind: 'video' | 'audio' | 'image';
+  assetKind: 'video' | 'audio' | 'image' | 'text';
 }
 
 interface ClipBlockProps {
