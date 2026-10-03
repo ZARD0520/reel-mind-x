@@ -63,7 +63,7 @@ function validateAuthForm(mode: AuthMode, values: { name: string; email: string;
 function Field({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
   return (
     <label className="flex flex-col gap-1.5 text-sm">
-      <span className="text-fg">{label}</span>
+      <span className="text-xs font-medium text-[#8e8e92]">{label}</span>
       {children}
       <div className="min-h-[18px]">
         {error && (
@@ -79,10 +79,10 @@ function Field({ label, error, children }: { label: string; error?: string; chil
 
 function inputClass(hasError: boolean): string {
   return [
-    'h-10 rounded-md border bg-input px-3 text-sm outline-none transition-colors placeholder:text-fg-tertiary',
+    'h-11 w-full rounded-xl border bg-white/[0.055] px-3.5 text-sm text-[#f7f7f2] outline-none transition-colors placeholder:text-[#6b6b76]',
     hasError
-      ? 'border-red-400/70 focus:border-red-300 focus:ring-2 focus:ring-red-400/15'
-      : 'border-border-subtle focus:border-accent focus:ring-2 focus:ring-accent/15',
+      ? 'border-red-400/60 focus:border-red-300 focus:ring-2 focus:ring-red-400/15'
+      : 'border-white/[0.12] focus:border-white/[0.28] focus:bg-white/[0.075]',
   ].join(' ');
 }
 
@@ -227,36 +227,43 @@ function AuthPanel({ onClose, onAuthenticated }: { onClose: () => void; onAuthen
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-6 backdrop-blur-md" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       {toastMessage && <Toast message={toastMessage} />}
-      <form noValidate onSubmit={onSubmit} className="relative flex w-full max-w-[380px] flex-col gap-2 rounded-xl border border-white/[0.12] bg-[#171717] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.6)]">
-        <button type="button" onClick={onClose} className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg text-fg-secondary transition-colors hover:bg-white/[0.08] hover:text-fg" aria-label="关闭登录窗口">
+      <form noValidate onSubmit={onSubmit} className="relative flex w-full max-w-[400px] flex-col gap-4 rounded-2xl border border-white/[0.14] bg-[#171717] p-7 shadow-[0_28px_90px_rgba(0,0,0,0.62)]">
+        <button type="button" onClick={onClose} className="absolute right-3.5 top-3.5 flex h-8 w-8 items-center justify-center rounded-lg text-[#8e8e92] transition-colors hover:bg-white/[0.08] hover:text-[#f7f7f2]" aria-label="关闭登录窗口">
           <X className="h-4 w-4" />
         </button>
-        <div className="mb-2 space-y-1 text-center">
-          <h1 className="text-2xl font-bold">{mode === 'login' ? '登录' : '注册'}</h1>
+
+        <div className="mb-1 flex flex-col items-center gap-3 text-center">
+          <div>
+            <h1 className="text-xl font-bold tracking-[-0.02em] text-[#f7f7f2]">
+              {mode === 'login' ? '欢迎回来' : '创建账号'}
+            </h1>
+          </div>
         </div>
 
-        {mode === 'register' && (
-          <Field label="昵称" error={fieldErrors.name}>
-            <input value={name} onBlur={() => validateField('name')} onChange={(event) => { setName(event.target.value); setFieldErrors((current) => ({ ...current, name: undefined })); }} className={inputClass(!!fieldErrors.name)} aria-invalid={!!fieldErrors.name} placeholder="例如：ReelMaker" />
+        <div className="flex flex-col gap-3">
+          {mode === 'register' && (
+            <Field label="昵称" error={fieldErrors.name}>
+              <input value={name} onBlur={() => validateField('name')} onChange={(event) => { setName(event.target.value); setFieldErrors((current) => ({ ...current, name: undefined })); }} className={inputClass(!!fieldErrors.name)} aria-invalid={!!fieldErrors.name} placeholder="例如：ReelMaker" />
+            </Field>
+          )}
+
+          <Field label="邮箱" error={fieldErrors.email}>
+            <input type="email" value={email} onBlur={() => validateField('email')} onChange={(event) => { setEmail(event.target.value); setFieldErrors((current) => ({ ...current, email: undefined })); }} className={inputClass(!!fieldErrors.email)} aria-invalid={!!fieldErrors.email} placeholder="name@example.com" />
           </Field>
-        )}
 
-        <Field label="邮箱" error={fieldErrors.email}>
-          <input type="email" value={email} onBlur={() => validateField('email')} onChange={(event) => { setEmail(event.target.value); setFieldErrors((current) => ({ ...current, email: undefined })); }} className={inputClass(!!fieldErrors.email)} aria-invalid={!!fieldErrors.email} placeholder="name@example.com" />
-        </Field>
-
-        <Field label="密码" error={fieldErrors.password}>
-          <input type="password" value={password} onBlur={() => validateField('password')} onChange={(event) => { setPassword(event.target.value); setFieldErrors((current) => ({ ...current, password: undefined })); }} className={inputClass(!!fieldErrors.password)} aria-invalid={!!fieldErrors.password} placeholder={mode === 'register' ? '超过 10 位，包含字母和数字' : '请输入密码'} />
-        </Field>
+          <Field label="密码" error={fieldErrors.password}>
+            <input type="password" value={password} onBlur={() => validateField('password')} onChange={(event) => { setPassword(event.target.value); setFieldErrors((current) => ({ ...current, password: undefined })); }} className={inputClass(!!fieldErrors.password)} aria-invalid={!!fieldErrors.password} placeholder={mode === 'register' ? '超过 10 位，包含字母和数字' : '请输入密码'} />
+          </Field>
+        </div>
 
         {mode === 'register' && <PasswordChecklist password={password} />}
 
-        <button type="submit" disabled={auth.isPending} className="mt-2 flex h-10 items-center justify-center gap-2 rounded-md bg-accent font-semibold text-fg transition-colors hover:bg-accent-hover disabled:opacity-60">
+        <button type="submit" disabled={auth.isPending} className="mt-1 flex h-11 items-center justify-center gap-2 rounded-xl bg-[#f7f7f2] text-[15px] font-semibold text-[#090909] transition-colors hover:bg-[#d6d6d1] active:scale-[0.99] disabled:opacity-60">
           {auth.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
           {mode === 'login' ? '登录' : '注册'}
         </button>
 
-        <button type="button" onClick={switchMode} className="pt-2 text-sm text-fg-secondary transition-colors hover:text-fg">
+        <button type="button" onClick={switchMode} className="mx-auto rounded-lg px-3 py-1.5 text-sm text-[#8e8e92] transition-colors hover:bg-white/[0.06] hover:text-[#f7f7f2]">
           {mode === 'login' ? '没有账号？去注册' : '已有账号？去登录'}
         </button>
       </form>
