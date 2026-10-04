@@ -119,6 +119,17 @@ body {
   scrollbar-color: var(--color-fg-tertiary) var(--color-elevated);
 }
 
+/* 选中节点后连线上流动的"电流"脉冲：dashoffset 负向推进 = 沿路径从 source 流向 target。
+   --edge-current-period 由组件按线长动态写入（一根线 3-5 个脉冲），保证无缝循环 */
+@keyframes edge-current-flow {
+  to {
+    stroke-dashoffset: var(--edge-current-period, -36px);
+  }
+}
+.edge-current-flow {
+  animation: edge-current-flow 1.2s linear infinite;
+}
+
 /* 属性面板滑块：accent 圆形拇指 */
 .reel-slider::-webkit-slider-thumb {
   -webkit-appearance: none;

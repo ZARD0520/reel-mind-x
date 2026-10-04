@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -21,7 +22,9 @@ import {
   addEdge,
   Background,
   BackgroundVariant,
+  BaseEdge,
   ConnectionLineType,
+  getBezierPath,
   Handle,
   MiniMap,
   NodeToolbar,
@@ -29,6 +32,7 @@ import {
   ReactFlow,
   type Connection,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
   type ReactFlowInstance,
@@ -187,6 +191,88 @@ const edgeDefaults = {
   style: { stroke: '#6e7075', strokeWidth: 1.5 },
 };
 
+/**
+ * 自定义连线：与选中节点相连时叠加"电流"渐变动画层，
+ * 渐变沿 source→target 方向，脉冲经 dashoffset 动画从被依赖节点流向依赖节点。
+ * 脉冲点数量/长度按线长自适应（3-5 个）：线越长点越长、流速越快。
+ */
+function CurrentFlowEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerEnd,
+  style,
+  data,
+}: EdgeProps) {
+  const [path] = getBezierPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+    curvature: 0.38,
+  });
+  const flow = !!(data as { flow?: boolean } | undefined)?.flow;
+  const gradientId = `edge-current-${id}`;
+  const overlayPathRef = useRef<SVGPathElement | null>(null);
+  const [pathLength, setPathLength] = useState(0);
+
+  useLayoutEffect(() => {
+    // flow 由 false 变 true 时 overlay 才挂载，因此依赖里必须带 flow
+    if (overlayPathRef.current) {
+      setPathLength(overlayPathRef.current.getTotalLength());
+    }
+  }, [path, flow]);
+
+  // 一根线保持 3-5 个脉冲：距离远 → 点更多更长、周期 px 更大 → 固定时长下流速更快
+  const dots = Math.min(5, Math.max(3, Math.round(pathLength / 150)));
+  const period = pathLength / dots;
+  const dash = pathLength > 10 ? Math.max(1.5, Math.min(period * 0.3, 60)) : 0;
+  const dasharray = pathLength > 10 ? `${dash} ${period - dash}` : `1 ${Math.max(pathLength, 30)}`;
+
+  return (
+    <>
+      {flow && (
+        <defs>
+          <linearGradient
+            id={gradientId}
+            gradientUnits="userSpaceOnUse"
+            x1={sourceX}
+            y1={sourceY}
+            x2={targetX}
+            y2={targetY}
+          >
+            <stop offset="0" stopColor="#f7f7f2" stopOpacity="0" />
+            <stop offset="0.5" stopColor="#f7f7f2" stopOpacity="1" />
+            <stop offset="1" stopColor="#f7f7f2" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+      )}
+      <BaseEdge path={path} markerEnd={markerEnd} style={style} />
+      {flow && (
+        <path
+          ref={overlayPathRef}
+          d={path}
+          fill="none"
+          stroke={`url(#${gradientId})`}
+          strokeWidth={4.5}
+          strokeLinecap="round"
+          strokeDasharray={dasharray}
+          style={{ '--edge-current-period': `${-period}px` } as React.CSSProperties}
+          className="edge-current-flow"
+        />
+      )}
+    </>
+  );
+}
+
+const edgeTypes = { current: CurrentFlowEdge };
+
 function normalizeImageAspectRatio(value: unknown): AspectRatioKey {
   return RATIO_OPTIONS.some(({ key }) => key === value)
     ? (value as AspectRatioKey)
@@ -279,12 +365,14 @@ function MagneticConnectionHandle({
         aria-label={label}
         title={label}
         style={{
-          left: '50%',
+          // 手柄中心压在节点边缘上：源侧贴容器左缘，目标侧贴容器右缘，连线才不会与节点边缘有间隔
+          left: isTarget ? '100%' : '0%',
           right: 'auto',
           top: '50%',
           transform: 'translate(-50%, -50%)',
         }}
-        className="!z-10 !h-10 !w-10 !cursor-crosshair !border-0 !bg-transparent !opacity-0"
+        // 命中区铺满磁吸容器：容器内任意位置按下都可拖拽连线，"+"仅作视觉指示
+        className="!z-10 !h-28 !w-28 !cursor-crosshair !border-0 !bg-transparent !opacity-0"
       />
     </div>
   );
@@ -1030,6 +1118,26 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const [titleDraft, setTitleDraft] = useState(data.title);
   const titleInputRef = useRef<HTMLInputElement>(null);
 
+  // 文本内容用本地草稿直驱 textarea：若受控值每次按键都经 ReactFlow store 往返，
+  // 与输入法组合中的缓冲不一致会打断中文输入；组合期间只写本地、结束后再入库
+  const [contentDraft, setContentDraft] = useState(data.content);
+  const contentSyncRef = useRef(data.content);
+  const composingRef = useRef(false);
+
+  useEffect(() => {
+    // 外部更新（生成结果、素材库导入）时同步本地草稿
+    if (data.content !== contentSyncRef.current) {
+      contentSyncRef.current = data.content;
+      setContentDraft(data.content);
+    }
+  }, [data.content]);
+
+  const commitContent = (value: string) => {
+    contentSyncRef.current = value;
+    setContentDraft(value);
+    if (!composingRef.current) updateNodeData(id, { content: value });
+  };
+
   useEffect(() => {
     if (isRenaming) titleInputRef.current?.select();
   }, [isRenaming]);
@@ -1150,8 +1258,15 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           className={`h-[360px] overflow-hidden rounded-[24px] border bg-[#202020] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
         >
           <textarea
-            value={data.content}
-            onChange={(event) => updateNodeData(id, { content: event.target.value })}
+            value={contentDraft}
+            onChange={(event) => commitContent(event.target.value)}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={(event) => {
+              composingRef.current = false;
+              commitContent((event.target as HTMLTextAreaElement).value);
+            }}
             onWheel={(event) => event.stopPropagation()}
             placeholder="尚无文本内容"
             aria-label={`${data.title}内容`}
@@ -1280,12 +1395,15 @@ function InfiniteCanvas({
         selectedNodeIds.has(edge.source) || selectedNodeIds.has(edge.target);
       return {
         ...edge,
+        type: 'current',
         markerEnd: undefined,
         zIndex: isConnectedToSelection ? 1 : 0,
+        data: { ...(edge.data ?? {}), flow: isConnectedToSelection },
         style: {
           ...edge.style,
-          stroke: isConnectedToSelection ? '#f7f7f2' : '#6e7075',
-          strokeWidth: isConnectedToSelection ? 2.6 : 1.5,
+          // 选中态：基础线调暗，让上层的电流脉冲更明显
+          stroke: isConnectedToSelection ? 'rgba(247,247,242,0.3)' : '#6e7075',
+          strokeWidth: isConnectedToSelection ? 3 : 2,
         },
       };
     });
@@ -1658,11 +1776,12 @@ function InfiniteCanvas({
             nodes={nodes}
             edges={renderedEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             connectOnClick
-            connectionRadius={12}
+            connectionRadius={64}
             connectionLineType={ConnectionLineType.Bezier}
             isValidConnection={isValidConnection}
             onNodeClick={(_, node) => {
