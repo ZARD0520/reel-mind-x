@@ -145,7 +145,7 @@ export function LeftPanel({ projectId }: { projectId: string }) {
               type="button"
               onClick={() => setActive(key)}
               className={`flex w-14 flex-col items-center justify-center gap-1 rounded-lg py-2 ${
-                isActive ? 'bg-accent-soft text-accent' : 'text-fg-secondary hover:bg-elevated'
+                isActive ? 'bg-accent-soft text-accent' : 'text-fg-secondary hover:bg-white/[0.07]'
               }`}
             >
               <Icon className="h-5 w-5" />
@@ -179,7 +179,7 @@ export function LeftPanel({ projectId }: { projectId: string }) {
             <button
               type="button"
               onClick={() => useEditorStore.getState().addTextClip('双击编辑文本')}
-              className="flex h-24 flex-col items-center justify-center gap-2 rounded-[10px] border border-border-subtle bg-input hover:border-accent"
+              className="flex h-24 flex-col items-center justify-center gap-2 rounded-[10px] border border-border-subtle bg-input hover:border-white/[0.24]"
             >
               <Plus className="h-[26px] w-[26px] text-accent" />
               <span className="text-[13px] font-medium text-fg-secondary">添加文本</span>
@@ -215,7 +215,7 @@ export function LeftPanel({ projectId }: { projectId: string }) {
                   <button
                     type="button"
                     onClick={() => setAiMediaType('image')}
-                    className="flex flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-accent/50 bg-accent/5 py-3 hover:border-accent hover:bg-accent/10"
+                    className="flex flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-accent/50 bg-accent/5 py-3 hover:border-white/[0.24] hover:bg-accent/10"
                   >
                     <ImageIcon className="h-5 w-5 text-accent" />
                     <span className="text-[12px] font-medium text-fg-secondary">生成图片</span>
@@ -223,7 +223,7 @@ export function LeftPanel({ projectId }: { projectId: string }) {
                   <button
                     type="button"
                     onClick={() => setAiMediaType('video')}
-                    className="flex flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-accent/50 bg-accent/5 py-3 hover:border-accent hover:bg-accent/10"
+                    className="flex flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-accent/50 bg-accent/5 py-3 hover:border-white/[0.24] hover:bg-accent/10"
                   >
                     <Film className="h-5 w-5 text-accent" />
                     <span className="text-[12px] font-medium text-fg-secondary">生成视频</span>
@@ -237,7 +237,7 @@ export function LeftPanel({ projectId }: { projectId: string }) {
               type="button"
               onClick={() => fileInput.current?.click()}
               disabled={upload.isPending}
-              className="flex h-24 flex-col items-center justify-center gap-2 rounded-[10px] border border-border-subtle bg-input hover:border-accent disabled:opacity-60"
+              className="flex h-24 flex-col items-center justify-center gap-2 rounded-[10px] border border-border-subtle bg-input hover:border-white/[0.24] disabled:opacity-60"
             >
               {upload.isPending ? (
                 <Loader2 className="h-[26px] w-[26px] animate-spin text-accent" />

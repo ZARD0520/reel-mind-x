@@ -66,7 +66,7 @@ export function AiMixDialog({ open, projectId, assets, onClose, onApply }: AiMix
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 px-4">
-      <div className="flex max-h-[86vh] w-[760px] max-w-full flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-2xl">
+      <div className="flex max-h-[86vh] w-[760px] max-w-full flex-col overflow-hidden rounded-xl border border-white/[0.14] bg-[#242424] shadow-2xl">
         <div className="flex h-13 items-center justify-between border-b border-border-subtle px-4">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-accent" />
@@ -92,7 +92,7 @@ export function AiMixDialog({ open, projectId, assets, onClose, onApply }: AiMix
                     type="button"
                     onClick={() => toggleAsset(asset.id)}
                     className={`min-h-[66px] rounded-lg border px-2.5 py-2 text-left transition-colors ${
-                      active ? 'border-accent bg-accent-soft' : 'border-border-subtle bg-elevated/40 hover:bg-elevated'
+                      active ? 'border-accent bg-accent-soft' : 'border-border-subtle bg-elevated/40 hover:bg-white/[0.07]'
                     }`}
                   >
                     <span className="block truncate text-[13px] font-medium text-fg">{asset.name}</span>
@@ -116,7 +116,7 @@ export function AiMixDialog({ open, projectId, assets, onClose, onApply }: AiMix
                       type="button"
                       onClick={() => setDurationSec(sec)}
                       className={`rounded-lg border py-2 text-[13px] ${
-                        durationSec === sec ? 'border-accent bg-accent-soft text-fg' : 'border-border-subtle text-fg-secondary hover:bg-elevated'
+                        durationSec === sec ? 'border-accent bg-accent-soft text-fg' : 'border-border-subtle text-fg-secondary hover:bg-white/[0.07]'
                       }`}
                     >
                       {sec}s
@@ -134,7 +134,7 @@ export function AiMixDialog({ open, projectId, assets, onClose, onApply }: AiMix
                       type="button"
                       onClick={() => setStyle(item.key)}
                       className={`rounded-lg border py-2 text-[13px] ${
-                        style === item.key ? 'border-accent bg-accent-soft text-fg' : 'border-border-subtle text-fg-secondary hover:bg-elevated'
+                        style === item.key ? 'border-accent bg-accent-soft text-fg' : 'border-border-subtle text-fg-secondary hover:bg-white/[0.07]'
                       }`}
                     >
                       {item.label}

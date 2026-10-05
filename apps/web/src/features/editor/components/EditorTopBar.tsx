@@ -145,7 +145,7 @@ export function EditorTopBar({
             type="button"
             onClick={startEdit}
             title="点击重命名"
-            className="group flex items-center gap-2 rounded-md px-1 py-1 hover:bg-elevated"
+            className="group flex items-center gap-2 rounded-md px-1 py-1 hover:bg-white/[0.07]"
           >
             <span className="text-sm font-medium">{projectName ?? '未命名项目'}</span>
             <Pencil className="h-[13px] w-[13px] text-fg-tertiary group-hover:text-fg-secondary" />
@@ -159,7 +159,7 @@ export function EditorTopBar({
           title="撤销 (Ctrl+Z)"
           disabled={!canUndo}
           onClick={onUndo}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-secondary hover:bg-elevated disabled:opacity-40"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-secondary hover:bg-white/[0.07] disabled:opacity-40"
         >
           <Undo2 className="h-[17px] w-[17px]" />
         </button>
@@ -167,7 +167,7 @@ export function EditorTopBar({
           title="重做 (Ctrl+Shift+Z)"
           disabled={!canRedo}
           onClick={onRedo}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-secondary hover:bg-elevated disabled:opacity-40"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-secondary hover:bg-white/[0.07] disabled:opacity-40"
         >
           <Redo2 className="h-[17px] w-[17px]" />
         </button>
@@ -200,7 +200,7 @@ export function EditorTopBar({
             type="button"
             onClick={openExport}
             disabled={starting || recovering}
-            className="flex items-center gap-1.5 rounded-lg bg-accent px-[18px] py-2 text-fg hover:bg-accent-hover disabled:opacity-70"
+            className="flex items-center gap-1.5 rounded-lg bg-[#f7f7f2] px-[18px] py-2 text-[#151515] hover:bg-white disabled:opacity-70"
           >
             {exporting || recovering ? (
               <Loader2 className="h-[15px] w-[15px] animate-spin" />
@@ -213,7 +213,7 @@ export function EditorTopBar({
           </button>
 
           {exportOpen && (
-            <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] rounded-xl border border-border-subtle bg-surface p-4 shadow-xl">
+            <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] rounded-xl border border-white/[0.14] bg-[#242424] p-4 shadow-xl">
               <div className="mb-3 flex items-center justify-between">
                 <span className="text-sm font-semibold">导出视频</span>
                 <button
@@ -329,7 +329,7 @@ function ExportSettings({
               className={`flex items-center justify-between rounded-md border px-2.5 py-2 text-left transition-colors ${
                 quality === q.key
                   ? 'border-accent bg-accent-soft'
-                  : 'border-border-subtle hover:bg-elevated'
+                  : 'border-border-subtle hover:bg-white/[0.07]'
               }`}
             >
               <span className="text-[13px] font-medium text-fg">{q.label}</span>
@@ -341,7 +341,7 @@ function ExportSettings({
       <button
         type="button"
         onClick={onConfirm}
-        className="mt-1 rounded-lg bg-accent py-2 text-[13px] font-semibold text-fg hover:bg-accent-hover"
+        className="mt-1 rounded-lg bg-[#f7f7f2] py-2 text-[13px] font-semibold text-[#151515] hover:bg-white"
       >
         开始导出
       </button>
@@ -503,7 +503,7 @@ function ExportBody({
         href={job.outputUrl ?? '#'}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[13px] font-semibold text-fg hover:bg-accent-hover"
+        className="flex items-center justify-center gap-1.5 rounded-lg bg-[#f7f7f2] px-3 py-2 text-[13px] font-semibold text-[#151515] hover:bg-white"
       >
         <Download className="h-4 w-4" />
         预览视频

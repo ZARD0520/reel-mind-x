@@ -43,7 +43,7 @@ export function AiMediaGenDialog({ open, projectId, type, onClose }: AiMediaGenD
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 px-4">
-      <div className="flex w-[520px] max-w-full flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-2xl">
+      <div className="flex w-[520px] max-w-full flex-col overflow-hidden rounded-xl border border-white/[0.14] bg-[#242424] shadow-2xl">
         {/* 头部 */}
         <div className="flex h-13 items-center justify-between border-b border-border-subtle px-4">
           <div className="flex items-center gap-2">
@@ -105,7 +105,7 @@ export function AiMediaGenDialog({ open, projectId, type, onClose }: AiMediaGenD
           <button
             type="submit"
             disabled={!prompt.trim() || mutation.isPending}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-[13px] font-semibold text-white hover:bg-accent-hover disabled:opacity-50"
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-[#f7f7f2] px-4 py-2 text-[13px] font-semibold text-[#151515] hover:bg-white disabled:opacity-50"
           >
             {mutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             {mutation.isPending ? '提交中' : '生成'}

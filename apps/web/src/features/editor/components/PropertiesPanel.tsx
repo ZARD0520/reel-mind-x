@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { Check, ChevronDown } from 'lucide-react';
 import { useEditorStore } from '../store';
 import type { Clip, TextClip, TransitionType } from '@reel/contracts';
 import { TRANSITION_OPTIONS, findAdjacentNext } from '../transitions';
@@ -90,33 +90,36 @@ function TransitionSelect({ value, onChange }: TransitionSelectProps) {
 
   return (
     <div ref={containerRef} className="relative">
+      {/* 视觉对齐创作平台公共组件 components/ui/Select（ghost 触发器 + #242424 浮层菜单）。
+          不直接复用：面板内容区是滚动容器，共享 Select 的 absolute 菜单会被裁剪，这里保留 fixed 定位 */}
       <button
         ref={buttonRef}
         type="button"
         onClick={toggle}
-        className="flex w-full items-center justify-between rounded-md border border-border-subtle bg-base px-3 py-1.5 text-[13px] text-fg outline-none hover:border-accent"
+        className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-[13px] font-medium text-fg-secondary transition-colors outline-none hover:bg-white/[0.07] hover:text-fg"
       >
         <span>{currentLabel}</span>
-        <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && rect && (
         <div
           ref={menuRef}
-          className="fixed z-50 rounded-md border border-border-subtle bg-elevated shadow-lg"
+          className="fixed z-50 rounded-xl border border-white/[0.12] bg-[#242424] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.55)]"
           style={{ left: rect.left, top: rect.top, width: rect.width }}
         >
-          <div className="reel-scroll max-h-48 overflow-y-auto py-1">
+          <div className="reel-scroll max-h-48 overflow-y-auto">
             <button
               type="button"
               onClick={() => {
                 onChange(null);
                 setOpen(false);
               }}
-              className={`w-full px-3 py-1.5 text-left text-[13px] transition-colors ${
-                value === null ? 'bg-accent-soft text-fg' : 'text-fg-secondary hover:bg-surface hover:text-fg'
+              className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-white/[0.07] ${
+                value === null ? 'text-fg' : 'text-fg-secondary'
               }`}
             >
-              无转场（硬切）
+              <span>无转场（硬切）</span>
+              {value === null && <Check className="h-4 w-4 shrink-0 text-fg" />}
             </button>
             {TRANSITION_OPTIONS.map((opt) => (
               <button
@@ -126,11 +129,12 @@ function TransitionSelect({ value, onChange }: TransitionSelectProps) {
                   onChange(opt.type);
                   setOpen(false);
                 }}
-                className={`w-full px-3 py-1.5 text-left text-[13px] transition-colors ${
-                  value === opt.type ? 'bg-accent-soft text-fg' : 'text-fg-secondary hover:bg-surface hover:text-fg'
+                className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-white/[0.07] ${
+                  value === opt.type ? 'text-fg' : 'text-fg-secondary'
                 }`}
               >
-                {opt.label}
+                <span>{opt.label}</span>
+                {value === opt.type && <Check className="h-4 w-4 shrink-0 text-fg" />}
               </button>
             ))}
           </div>
@@ -221,13 +225,13 @@ function TextPanel({ textClip }: { textClip: TextClip }) {
             </label>
             <button
               onClick={() => updateTextClip(id, { style: { bold: !s.bold } })}
-              className={`h-7 w-7 rounded font-bold ${s.bold ? 'bg-accent text-white' : 'bg-elevated text-fg-secondary'}`}
+              className={`h-7 w-7 rounded font-bold ${s.bold ? 'bg-white/[0.12] text-fg' : 'bg-elevated text-fg-secondary'}`}
             >
               B
             </button>
             <button
               onClick={() => updateTextClip(id, { style: { italic: !s.italic } })}
-              className={`h-7 w-7 rounded italic ${s.italic ? 'bg-accent text-white' : 'bg-elevated text-fg-secondary'}`}
+              className={`h-7 w-7 rounded italic ${s.italic ? 'bg-white/[0.12] text-fg' : 'bg-elevated text-fg-secondary'}`}
             >
               I
             </button>
@@ -239,7 +243,7 @@ function TextPanel({ textClip }: { textClip: TextClip }) {
                 key={a}
                 onClick={() => updateTextClip(id, { style: { align: a } })}
                 className={`flex-1 rounded px-2 py-1 text-[12px] ${
-                  s.align === a ? 'bg-accent text-white' : 'bg-elevated text-fg-secondary'
+                  s.align === a ? 'bg-white/[0.12] text-fg' : 'bg-elevated text-fg-secondary'
                 }`}
               >
                 {a === 'left' ? '左' : a === 'center' ? '中' : '右'}
@@ -488,7 +492,7 @@ export function PropertiesPanel() {
                   onClick={() => setClipSpeed(cid, s)}
                   className={`rounded-md px-2.5 py-1 text-[12px] ${
                     Math.abs(t.speed - s) < 0.001
-                      ? 'bg-accent text-fg'
+                      ? 'bg-white/[0.12] text-fg'
                       : 'bg-elevated text-fg-secondary hover:text-fg'
                   }`}
                 >

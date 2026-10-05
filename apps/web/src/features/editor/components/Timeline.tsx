@@ -448,7 +448,7 @@ function TextClipBlock({
       ghostStart: textClip.start,
       pointerOffsetPx: e.clientX - rect.left,
       snapLineFrame: null,
-      color: '#6366F1',
+      color: '#292929',
       assetName: textClip.text.substring(0, 20),
       assetKind: 'image',
     };
@@ -594,12 +594,12 @@ function TextClipBlock({
 
   return (
     <div
-      className={`absolute flex cursor-grab items-center overflow-hidden rounded border px-2 ${
+      className={`absolute flex cursor-grab items-center overflow-hidden rounded border bg-elevated px-2 ${
         selected
-          ? 'border-accent bg-indigo-500/90 shadow-md'
+          ? 'border-accent shadow-md'
           : active
-            ? 'border-indigo-400 bg-indigo-500/80'
-            : 'border-indigo-600 bg-indigo-500/70'
+            ? 'border-accent/60'
+            : 'border-accent/40'
       }`}
       style={{ left, width: w, height: VIDEO_TRACK_H - 4 }}
       onPointerDown={(e) => onPointerDown(e, 'move')}
@@ -843,7 +843,7 @@ export function Timeline({
             disabled={!canSplit}
             onClick={() => selectedClipId && splitClip(selectedClipId, currentFrame)}
             className={`flex h-[30px] w-[30px] items-center justify-center rounded-md transition-colors ${
-              canSplit ? 'text-fg-secondary hover:bg-elevated' : 'text-fg-tertiary opacity-40'
+              canSplit ? 'text-fg-secondary hover:bg-white/[0.07]' : 'text-fg-tertiary opacity-40'
             }`}
           >
             <Scissors className="h-4 w-4" />
@@ -853,7 +853,7 @@ export function Timeline({
             disabled={!selectedClipId}
             onClick={() => selectedClipId && duplicateClip(selectedClipId)}
             className={`flex h-[30px] w-[30px] items-center justify-center rounded-md transition-colors ${
-              selectedClipId ? 'text-fg-secondary hover:bg-elevated' : 'text-fg-tertiary opacity-40'
+              selectedClipId ? 'text-fg-secondary hover:bg-white/[0.07]' : 'text-fg-tertiary opacity-40'
             }`}
           >
             <Copy className="h-4 w-4" />
@@ -873,7 +873,7 @@ export function Timeline({
             disabled={!selectedClipId}
             onClick={() => selectedClipId && toggleClipMuted(selectedClipId)}
             className={`flex h-[30px] w-[30px] items-center justify-center rounded-md transition-colors ${
-              selectedClipId ? 'text-fg-secondary hover:bg-elevated' : 'text-fg-tertiary opacity-40'
+              selectedClipId ? 'text-fg-secondary hover:bg-white/[0.07]' : 'text-fg-tertiary opacity-40'
             }`}
           >
             {selectedClip?.transform.volume === 0 ? (
@@ -885,7 +885,7 @@ export function Timeline({
           <button
             title={snapEnabled ? '禁用磁吸' : '启用磁吸'}
             onClick={() => setSnapEnabled((s) => !s)}
-            className={`flex h-7 w-7 items-center justify-center rounded-md hover:bg-elevated ${
+            className={`flex h-7 w-7 items-center justify-center rounded-md hover:bg-white/[0.07] ${
               snapEnabled ? 'text-accent' : 'text-fg-secondary'
             }`}
           >
@@ -897,7 +897,7 @@ export function Timeline({
             title="缩小"
             onClick={() => zoomBy(-1)}
             disabled={zoom <= ZOOM_LEVELS[0]!}
-            className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-elevated disabled:opacity-40"
+            className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-white/[0.07] disabled:opacity-40"
           >
             <ZoomOut className="h-4 w-4" />
           </button>
@@ -912,7 +912,7 @@ export function Timeline({
             title="放大"
             onClick={() => zoomBy(1)}
             disabled={zoom >= ZOOM_LEVELS[ZOOM_LEVELS.length - 1]!}
-            className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-elevated disabled:opacity-40"
+            className="flex h-7 w-7 items-center justify-center rounded-md hover:bg-white/[0.07] disabled:opacity-40"
           >
             <ZoomIn className="h-4 w-4" />
           </button>
@@ -1016,12 +1016,12 @@ export function Timeline({
                       </div>
                       {/* 图标：文本/音频/视频 */}
                       {isText ? (
-                        <Type className="h-4 w-4 text-indigo-400" />
+                        <Type className="h-4 w-4 text-accent" />
                       ) : isAudio ? (
                         <button
                           title={track.muted ? '取消静音' : '静音'}
                           onClick={() => toggleTrackMuted(track.id)}
-                          className="flex h-7 w-7 items-center justify-center rounded text-fg-secondary hover:bg-surface"
+                          className="flex h-7 w-7 items-center justify-center rounded text-fg-secondary hover:bg-white/[0.06]"
                         >
                           {track.muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                         </button>
@@ -1029,7 +1029,7 @@ export function Timeline({
                         <button
                           title={track.hidden ? '显示轨道' : '隐藏轨道'}
                           onClick={() => toggleTrackHidden(track.id)}
-                          className="flex h-7 w-7 items-center justify-center rounded text-fg-secondary hover:bg-surface"
+                          className="flex h-7 w-7 items-center justify-center rounded text-fg-secondary hover:bg-white/[0.06]"
                         >
                           {track.hidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                         </button>
@@ -1103,10 +1103,10 @@ export function Timeline({
             </>
           )}
 
-          {/* 吸附辅助线（吸附到播放头/片段边缘时显示黄色竖线） */}
+          {/* 吸附辅助线（吸附到播放头/片段边缘时显示白色竖线，对齐平台“流光”白） */}
           {globalDrag && globalDrag.snapLineFrame !== null && (
             <div
-              className="pointer-events-none absolute top-0 z-[55] w-0.5 bg-yellow-400"
+              className="pointer-events-none absolute top-0 z-[55] w-0.5 bg-fg"
               style={{
                 left: LEFT_W + framesToPx(globalDrag.snapLineFrame, fps, pxPerSecond),
                 height: playheadHeight,

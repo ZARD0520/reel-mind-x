@@ -63,7 +63,7 @@ export function TextGenDialog({ open, onClose, onApply }: TextGenDialogProps) {
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 px-4">
-      <div className="flex h-[600px] w-[520px] max-w-full flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-2xl">
+      <div className="flex h-[600px] w-[520px] max-w-full flex-col overflow-hidden rounded-xl border border-white/[0.14] bg-[#242424] shadow-2xl">
         {/* 头部 */}
         <div className="flex h-13 items-center justify-between border-b border-border-subtle px-4">
           <div className="flex items-center gap-2">
@@ -76,7 +76,7 @@ export function TextGenDialog({ open, onClose, onApply }: TextGenDialogProps) {
                 type="button"
                 onClick={handleClear}
                 title="清空对话"
-                className="flex items-center gap-1 rounded px-2 py-1 text-[12px] text-fg-tertiary hover:bg-elevated hover:text-fg"
+                className="flex items-center gap-1 rounded px-2 py-1 text-[12px] text-fg-tertiary hover:bg-white/[0.07] hover:text-fg"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 清空
@@ -103,7 +103,7 @@ export function TextGenDialog({ open, onClose, onApply }: TextGenDialogProps) {
                   <div
                     className={`max-w-[85%] rounded-lg px-3 py-2 text-[13px] ${
                       msg.role === 'user'
-                        ? 'bg-accent text-white'
+                        ? 'bg-[#f7f7f2] text-[#151515]'
                         : 'border border-border-subtle bg-elevated text-fg'
                     }`}
                   >
@@ -151,7 +151,7 @@ export function TextGenDialog({ open, onClose, onApply }: TextGenDialogProps) {
             <button
               type="submit"
               disabled={!input.trim() || generate.isPending}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-[13px] font-semibold text-white hover:bg-accent-hover disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-lg bg-[#f7f7f2] px-4 py-2 text-[13px] font-semibold text-[#151515] hover:bg-white disabled:opacity-50"
             >
               {generate.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               生成

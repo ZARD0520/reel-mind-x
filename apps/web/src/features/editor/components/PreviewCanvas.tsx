@@ -134,7 +134,7 @@ function TextDragBox({
 
   return (
     <div
-      className="absolute cursor-move border-2 border-dashed border-indigo-400 bg-indigo-500/10"
+      className="absolute cursor-move border-2 border-dashed border-accent bg-accent/10"
       style={{ left, top, width: boxW, height: boxH }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -297,8 +297,8 @@ export function PreviewCanvas({
               onClick={() => setAspectRatio(ar.w, ar.h)}
               className={`rounded px-2 py-1 text-xs ${
                 active
-                  ? 'bg-accent text-white'
-                  : 'bg-surface text-fg-secondary hover:bg-elevated'
+                  ? 'bg-white/[0.12] text-fg'
+                  : 'bg-surface text-fg-secondary hover:bg-white/[0.07]'
               }`}
             >
               {ar.label}
@@ -422,7 +422,7 @@ export function PreviewCanvas({
           {/* 无可见片段 / 纯音频 → 占位 */}
           {!hasVisual && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-fg-tertiary">
-              <span className="font-mono text-5xl font-bold text-input">{timecode}</span>
+              <span className="font-mono text-5xl font-bold text-fg-tertiary">{timecode}</span>
               <span className="text-[13px]">{timeline?.tracks.length ? '无视频片段' : '从左侧添加素材'}</span>
             </div>
           )}
@@ -471,21 +471,21 @@ export function PreviewCanvas({
           <button
             type="button"
             onClick={() => onSeek(0)}
-            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-fg-secondary hover:bg-elevated"
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-fg-secondary hover:bg-white/[0.07]"
           >
             <SkipBack className="h-[18px] w-[18px]" />
           </button>
           <button
             type="button"
             onClick={onTogglePlay}
-            className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-elevated text-fg hover:bg-input"
+            className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-elevated text-fg hover:bg-white/[0.08]"
           >
             {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
           </button>
           <button
             type="button"
             onClick={() => onSeek(totalFrames)}
-            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-fg-secondary hover:bg-elevated"
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-lg text-fg-secondary hover:bg-white/[0.07]"
           >
             <SkipForward className="h-[18px] w-[18px]" />
           </button>
