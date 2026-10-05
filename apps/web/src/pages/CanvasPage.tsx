@@ -322,9 +322,10 @@ function followConnectionHandle(event: React.PointerEvent<HTMLDivElement>) {
     -32,
     Math.min(32, (event.clientX - (bounds.left + bounds.width / 2)) * 0.65),
   );
+  // 容器沿节点边缘方向加高了一倍，纵向允许"+"跟随更大的范围
   const offsetY = Math.max(
-    -32,
-    Math.min(32, (event.clientY - (bounds.top + bounds.height / 2)) * 0.65),
+    -64,
+    Math.min(64, (event.clientY - (bounds.top + bounds.height / 2)) * 0.65),
   );
   event.currentTarget.style.setProperty('--connection-handle-x', `${offsetX}px`);
   event.currentTarget.style.setProperty('--connection-handle-y', `${offsetY}px`);
@@ -349,30 +350,51 @@ function MagneticConnectionHandle({
     <div
       onPointerMove={followConnectionHandle}
       onPointerLeave={resetConnectionHandle}
-      className={`nodrag nopan absolute top-[calc(50%+18px)] z-[9] flex h-28 w-28 -translate-y-1/2 cursor-crosshair items-center justify-center ${isTarget ? 'left-0 -translate-x-1/2' : 'right-0 translate-x-1/2'}`}
+      // 磁吸容器以节点边缘为中心、横跨内外各 56px，沿边缘方向 224px（原 112px 的 2 倍面积）。
+      // hover 显隐挂在容器自身，保证"+"出现的任何位置都能按下拖拽出线。
+      className={`group/handle nodrag nopan absolute top-[calc(50%+18px)] z-[9] flex h-56 w-28 -translate-y-1/2 cursor-crosshair items-center justify-center ${isTarget ? 'left-0 -translate-x-1/2' : 'right-0 translate-x-1/2'}`}
     >
       <span
-        className={`pointer-events-none flex h-10 w-10 items-center justify-center rounded-full border-2 border-white bg-[#242424] text-white shadow-[0_6px_18px_rgba(0,0,0,0.48)] transition-[opacity,background-color,box-shadow] group-hover:bg-[#303030] ${selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+        className={`pointer-events-none flex h-10 w-10 items-center justify-center rounded-full border-2 border-white bg-[#242424] text-white shadow-[0_6px_18px_rgba(0,0,0,0.48)] transition-[opacity,background-color,box-shadow] group-hover/handle:bg-[#303030] ${selected ? 'opacity-100' : 'opacity-0 group-hover/handle:opacity-100'}`}
         style={{
           transform: 'translate(var(--connection-handle-x, 0px), var(--connection-handle-y, 0px))',
         }}
       >
         <Plus className="h-6 w-6 stroke-[2.4]" />
       </span>
+      {/*
+        两个无 id 手柄拼满容器，连线系统视为同一手柄（bounds[0] = DOM 里的第一个）：
+        - 贴内手柄必须排在前面：RF 渲染连线端点取它贴边一侧的盒边界（Left→x，Right→x+width），
+          其盒外缘与节点边缘重合，端点才正好落在边缘上；
+        - 外侧手柄覆盖节点外的半边容器，"+"在节点外时也能按下拖拽。
+        必须去掉 xyflow 默认的 border-radius:100%，否则命中区会退化为内切椭圆。
+      */}
       <Handle
         type={type}
         position={isTarget ? Position.Left : Position.Right}
         aria-label={label}
         title={label}
         style={{
-          // 手柄中心压在节点边缘上：源侧贴容器左缘，目标侧贴容器右缘，连线才不会与节点边缘有间隔
-          left: isTarget ? '100%' : '0%',
-          right: 'auto',
-          top: '50%',
-          transform: 'translate(-50%, -50%)',
+          top: 0,
+          left: isTarget ? '50%' : '0%',
+          width: '50%',
+          height: '100%',
+          transform: 'none',
         }}
-        // 命中区铺满磁吸容器：容器内任意位置按下都可拖拽连线，"+"仅作视觉指示
-        className="!z-10 !h-28 !w-28 !cursor-crosshair !border-0 !bg-transparent !opacity-0"
+        className="!z-10 !cursor-crosshair !border-0 !bg-transparent !opacity-0 !rounded-none"
+      />
+      <Handle
+        type={type}
+        position={isTarget ? Position.Left : Position.Right}
+        aria-hidden
+        style={{
+          top: 0,
+          left: isTarget ? '0%' : '50%',
+          width: '50%',
+          height: '100%',
+          transform: 'none',
+        }}
+        className="!z-10 !cursor-crosshair !border-0 !bg-transparent !opacity-0 !rounded-none"
       />
     </div>
   );
