@@ -9,6 +9,11 @@ import { ModelSelect, type ModelId } from '../features/home/components/ModelSele
 type AuthMode = 'login' | 'register';
 type FieldErrors = Partial<Record<'name' | 'email' | 'password', string>>;
 
+const HOME_PROMPT_PLACEHOLDER = Array.from('描述你的创作目标，例如：我要创作一个线条小狗的故事短片');
+const TYPEWRITER_TYPE_DELAY_MS = 70;
+const TYPEWRITER_DELETE_DELAY_MS = 35;
+const TYPEWRITER_HOLD_DELAY_MS = 1000;
+
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
@@ -277,6 +282,8 @@ export function HomePage() {
   const qc = useQueryClient();
   const activeView = location.pathname === '/project' ? 'workspace' : 'home';
   const [prompt, setPrompt] = useState('');
+  const [placeholderLength, setPlaceholderLength] = useState(0);
+  const [isDeletingPlaceholder, setIsDeletingPlaceholder] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ModelId>('glm-4-flash');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -290,6 +297,30 @@ export function HomePage() {
     const timer = window.setTimeout(() => setToastMessage(null), 3000);
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
+
+  useEffect(() => {
+    const isComplete = placeholderLength === HOME_PROMPT_PLACEHOLDER.length;
+    const isEmpty = placeholderLength === 0;
+    const delay = !isDeletingPlaceholder && isComplete
+      ? TYPEWRITER_HOLD_DELAY_MS
+      : isDeletingPlaceholder
+        ? TYPEWRITER_DELETE_DELAY_MS
+        : TYPEWRITER_TYPE_DELAY_MS;
+
+    const timer = window.setTimeout(() => {
+      if (!isDeletingPlaceholder && isComplete) {
+        setIsDeletingPlaceholder(true);
+        return;
+      }
+      if (isDeletingPlaceholder && isEmpty) {
+        setIsDeletingPlaceholder(false);
+        return;
+      }
+      setPlaceholderLength((length) => length + (isDeletingPlaceholder ? -1 : 1));
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [isDeletingPlaceholder, placeholderLength]);
 
   const createCanvas = useMutation({
     mutationFn: (name?: string) => {
@@ -323,10 +354,8 @@ export function HomePage() {
   };
 
   const handlePromptSubmit = () => {
-    const value = prompt.trim();
-    if (!value || createCanvas.isPending) return;
-    const canvasName = value.length > 32 ? `${value.slice(0, 32)}…` : value;
-    handleCreateCanvas(canvasName);
+    if (!prompt.trim() || createCanvas.isPending) return;
+    handleCreateCanvas();
   };
 
   const handleRemoveCanvas = (canvas: Canvas) => {
@@ -409,25 +438,35 @@ export function HomePage() {
         <main className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#050505] px-5 pb-24 sm:px-8">
           <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(circle_at_center,rgba(255,255,255,0.07)_0,rgba(255,255,255,0)_52%)]" />
           <div className="relative flex w-full max-w-[760px] -translate-y-5 flex-col items-center gap-[26px]">
-            <h1 className="text-center text-[30px] font-bold leading-tight tracking-[-0.035em] text-[#f7f7f2] sm:text-4xl">你想生成什么素材？</h1>
+            <h1 className="text-center text-[30px] font-bold leading-tight tracking-[-0.035em] text-[#f7f7f2] sm:text-4xl">今天想创作什么视频？</h1>
             <form
               onSubmit={(event) => { event.preventDefault(); handlePromptSubmit(); }}
               className="w-full rounded-2xl border border-white/[0.14] bg-[#1c1c1c] p-3 shadow-[0_28px_90px_rgba(0,0,0,0.62)] transition-colors focus-within:border-white/[0.24] sm:p-4"
             >
-              <textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault();
-                    handlePromptSubmit();
-                  }
-                }}
-                rows={3}
-                className="block min-h-[88px] w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-6 text-[#f7f7f2] outline-none placeholder:text-[#8e8e92] sm:px-1.5"
-                placeholder="描述你的素材需求，例如：为一款 AI 剪辑产品生成小红书竖版广告，黑色高级感，突出自动生成脚本和视频素材。"
-                aria-label="描述你的素材需求"
-              />
+              <div className="relative">
+                {!prompt && (
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 px-1 py-1 text-[15px] leading-6 text-[#8e8e92] sm:px-1.5"
+                  >
+                    {HOME_PROMPT_PLACEHOLDER.slice(0, placeholderLength).join('')}
+                    <span className="typewriter-cursor">_</span>
+                  </div>
+                )}
+                <textarea
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      handlePromptSubmit();
+                    }
+                  }}
+                  rows={3}
+                  className="relative block min-h-[88px] w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-6 text-[#f7f7f2] caret-[#f7f7f2] outline-none sm:px-1.5"
+                  aria-label="描述你的创作目标"
+                />
+              </div>
               <div className="mt-1 flex items-center justify-end gap-2">
                 <ModelSelect value={selectedModel} onChange={setSelectedModel} />
                 <button type="button" disabled className="flex h-9 w-9 items-center justify-center rounded-full text-[#b9b9ba] opacity-75" title="语音输入即将支持" aria-label="语音输入即将支持">

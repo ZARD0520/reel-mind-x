@@ -32,7 +32,7 @@ export class CanvasesService {
     const row = await this.prisma.canvas.create({
       data: {
         userId,
-        name: input.name?.trim() || '未命名工作流',
+        name: input.name?.trim() || '未命名',
         graph: this.toInputJson(
           CanvasGraphSchema.parse({
             version: 1,
