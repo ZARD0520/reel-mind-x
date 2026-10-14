@@ -16,6 +16,7 @@ import type {
   CanvasGraph,
   GeneratedText,
   Project,
+  User as ReelUser,
   VideoDuration,
 } from '@reel/contracts';
 import {
@@ -44,6 +45,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import {
   ArrowLeft,
+  Bot,
   Check,
   AlignLeft,
   ArrowUp,
@@ -58,7 +60,9 @@ import {
   LayoutPanelTop,
   Loader2,
   Map,
+  Maximize2,
   MessageCircle,
+  Minimize2,
   Minus,
   Plus,
   Search,
@@ -67,7 +71,7 @@ import {
   Workflow,
   X,
 } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   NodeModelSelect,
   normalizeCanvasModel,
@@ -2313,13 +2317,119 @@ function InfiniteCanvas({
   );
 }
 
+function AgentChatDrawer({
+  open,
+  fullscreen,
+  initialDraft,
+  userName,
+  onToggleFullscreen,
+  onClose,
+}: {
+  open: boolean;
+  fullscreen: boolean;
+  initialDraft: string;
+  userName: string;
+  onToggleFullscreen: () => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(initialDraft);
+
+  return (
+    <aside
+      aria-hidden={!open}
+      className={`relative z-30 h-full shrink-0 overflow-hidden bg-[#111111] transition-[width,border-color] duration-300 ease-out ${
+        open
+          ? fullscreen
+            ? 'w-full border-l border-white/[0.10]'
+            : 'w-[min(420px,86vw)] border-l border-white/[0.10]'
+          : 'w-0 border-l border-transparent'
+      }`}
+    >
+      <div
+        className={`flex h-full w-full min-w-0 flex-col transition-opacity duration-200 ${
+          open ? 'opacity-100 delay-100' : 'pointer-events-none opacity-0'
+        }`}
+      >
+        <header className="flex h-16 shrink-0 items-center border-b border-white/[0.09] px-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <h2 className="truncate text-sm font-semibold text-[#f3f3f0]">Agent Chat</h2>
+          </div>
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onToggleFullscreen}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-[#9b9b9f] transition-colors hover:bg-white/[0.08] hover:text-white"
+              aria-label={fullscreen ? '退出全屏' : '全屏显示对话'}
+              title={fullscreen ? '退出全屏' : '全屏显示对话'}
+            >
+              {fullscreen ? <Minimize2 className="h-[17px] w-[17px]" /> : <Maximize2 className="h-[17px] w-[17px]" />}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-[#9b9b9f] transition-colors hover:bg-white/[0.08] hover:text-white"
+              aria-label="收起对话"
+              title="收起对话"
+            >
+              <X className="h-[18px] w-[18px]" />
+            </button>
+          </div>
+        </header>
+
+        <div className="reel-scroll min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto flex h-full max-w-3xl flex-col items-center justify-center px-7 pb-12 text-center">
+            <div className="mt-5 text-left">
+              <h2 className="text-2xl font-semibold tracking-[-0.02em] text-[#c7c7c4]">Hi～ {userName}</h2>
+              <h2 className="mt-1 text-[28px] font-semibold tracking-[-0.025em] text-[#dededb]">今天想创作点什么？</h2>
+            </div>
+          </div>
+        </div>
+
+        <div className="shrink-0 px-4 pb-4">
+          <form
+            onSubmit={(event) => event.preventDefault()}
+            className="mx-auto max-w-3xl rounded-2xl border border-white/[0.12] bg-[#1d1d1d] p-3 shadow-[0_14px_38px_rgba(0,0,0,0.28)] focus-within:border-white/[0.22]"
+          >
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              rows={3}
+              placeholder="随意发挥你的想象～"
+              aria-label="给 Agent 发送消息"
+              className="block min-h-[72px] w-full resize-none bg-transparent px-1 py-1 text-sm leading-6 text-[#f3f3f0] outline-none placeholder:text-[#68686d]"
+            />
+            <div className="mt-2 flex items-center justify-between">
+              <span className="px-1 text-[11px] text-[#59595e]">Agent 服务即将接入</span>
+              <button
+                type="submit"
+                disabled
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/[0.10] text-white/30"
+                aria-label="发送消息（即将支持）"
+                title="发送功能即将支持"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 export function CanvasPage() {
   const { id = '' } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const routeState = location.state as { initialAgentPrompt?: unknown } | null;
+  const initialAgentPrompt =
+    typeof routeState?.initialAgentPrompt === 'string' ? routeState.initialAgentPrompt : '';
   const [name, setName] = useState('');
   const [hasNameError, setHasNameError] = useState(false);
   const [isDependencySelecting, setIsDependencySelecting] = useState(false);
+  const [isAgentChatOpen, setIsAgentChatOpen] = useState(() => initialAgentPrompt.length > 0);
+  const [isAgentChatFullscreen, setIsAgentChatFullscreen] = useState(false);
   const cancelNameEditRef = useRef(false);
 
   useEffect(() => {
@@ -2341,6 +2451,11 @@ export function CanvasPage() {
     queryKey: ['canvas', id],
     queryFn: () => api.canvases.get(id) as Promise<Canvas>,
     enabled: !!id,
+    retry: false,
+  });
+  const me = useQuery<ReelUser>({
+    queryKey: ['me'],
+    queryFn: () => api.auth.me() as Promise<ReelUser>,
     retry: false,
   });
   const updateName = useMutation({
@@ -2405,45 +2520,74 @@ export function CanvasPage() {
   }
 
   return (
-    <div className="relative h-full overflow-hidden overscroll-x-none bg-[#050505] text-[#f7f7f2]">
-      <InfiniteCanvas canvas={canvas.data} onDependencySelectionChange={setIsDependencySelecting} />
+    <div className="flex h-full overflow-hidden overscroll-x-none bg-[#050505] text-[#f7f7f2]">
+      <div className="relative h-full min-w-0 flex-1 overflow-hidden">
+        <InfiniteCanvas canvas={canvas.data} onDependencySelectionChange={setIsDependencySelecting} />
 
-      <div
-        className={`absolute left-5 top-5 z-10 flex items-center gap-3 transition-opacity ${isDependencySelecting ? 'pointer-events-none opacity-20' : ''}`}
-      >
+        <div
+          className={`absolute left-5 top-5 z-10 flex items-center gap-3 transition-opacity ${isDependencySelecting ? 'pointer-events-none opacity-20' : ''}`}
+        >
+          <button
+            type="button"
+            onClick={() => navigate('/project')}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.12] bg-[#202020] text-[#b9b9ba] shadow-lg transition-colors hover:bg-[#292929] hover:text-white"
+            aria-label="返回工作空间"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div className="relative">
+            <input
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                setHasNameError(false);
+              }}
+              onBlur={saveName}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+                if (event.key === 'Escape') {
+                  cancelNameEditRef.current = true;
+                  setName(canvas.data.name);
+                  event.currentTarget.blur();
+                }
+              }}
+              maxLength={200}
+              className={`h-10 w-[120px] rounded-xl border bg-[#202020] px-4 pr-10 text-sm font-semibold text-[#f7f7f2] shadow-lg outline-none transition-colors placeholder:text-[#7b7b80] sm:w-[160px] ${hasNameError ? 'border-red-400/60' : 'border-white/[0.12] hover:border-white/[0.2] focus:border-white/[0.3]'}`}
+              aria-label="画布名称"
+            />
+            {updateName.isPending && (
+              <Loader2 className="absolute right-3 top-3 h-4 w-4 animate-spin text-[#7b7b80]" />
+            )}
+          </div>
+        </div>
+
         <button
           type="button"
-          onClick={() => navigate('/project')}
-          className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.12] bg-[#202020] text-[#b9b9ba] shadow-lg transition-colors hover:bg-[#292929] hover:text-white"
-          aria-label="返回工作空间"
+          onClick={() => {
+            setIsAgentChatFullscreen(false);
+            setIsAgentChatOpen(true);
+          }}
+          className={`absolute bottom-5 right-5 z-20 flex h-12 w-12 items-center justify-center rounded-full border border-white/[0.16] bg-[#202020] shadow-[0_12px_35px_rgba(0,0,0,0.42)] transition-all duration-200 hover:scale-105 hover:bg-[#292929] active:scale-95 ${
+            isAgentChatOpen ? 'pointer-events-none scale-90 opacity-0' : 'scale-100 opacity-100'
+          }`}
+          aria-label="打开 Agent Chat"
+          title="打开 Agent Chat"
         >
-          <ArrowLeft className="h-5 w-5" />
+          <span className="text-lg font-black leading-none text-white">X</span>
         </button>
-        <div className="relative">
-          <input
-            value={name}
-            onChange={(event) => {
-              setName(event.target.value);
-              setHasNameError(false);
-            }}
-            onBlur={saveName}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') event.currentTarget.blur();
-              if (event.key === 'Escape') {
-                cancelNameEditRef.current = true;
-                setName(canvas.data.name);
-                event.currentTarget.blur();
-              }
-            }}
-            maxLength={200}
-            className={`h-10 w-[120px] rounded-xl border bg-[#202020] px-4 pr-10 text-sm font-semibold text-[#f7f7f2] shadow-lg outline-none transition-colors placeholder:text-[#7b7b80] sm:w-[160px] ${hasNameError ? 'border-red-400/60' : 'border-white/[0.12] hover:border-white/[0.2] focus:border-white/[0.3]'}`}
-            aria-label="画布名称"
-          />
-          {updateName.isPending && (
-            <Loader2 className="absolute right-3 top-3 h-4 w-4 animate-spin text-[#7b7b80]" />
-          )}
-        </div>
       </div>
+
+      <AgentChatDrawer
+        open={isAgentChatOpen}
+        fullscreen={isAgentChatFullscreen}
+        initialDraft={initialAgentPrompt}
+        userName={me.data?.name || me.data?.email || '用户'}
+        onToggleFullscreen={() => setIsAgentChatFullscreen((value) => !value)}
+        onClose={() => {
+          setIsAgentChatFullscreen(false);
+          setIsAgentChatOpen(false);
+        }}
+      />
     </div>
   );
 }

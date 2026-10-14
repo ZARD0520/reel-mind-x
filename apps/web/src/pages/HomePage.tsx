@@ -323,13 +323,17 @@ export function HomePage() {
   }, [isDeletingPlaceholder, placeholderLength]);
 
   const createCanvas = useMutation({
-    mutationFn: (name?: string) => {
+    mutationFn: ({ name }: { name?: string; initialAgentPrompt?: string }) => {
       return api.canvases.create(name) as Promise<Canvas>;
     },
-    onSuccess: (canvas) => {
+    onSuccess: (canvas, request) => {
       setToastMessage(null);
       void qc.invalidateQueries({ queryKey: ['canvases'] });
-      navigate(`/canvas/${canvas.id}`);
+      navigate(`/canvas/${canvas.id}`, {
+        state: request.initialAgentPrompt
+          ? { initialAgentPrompt: request.initialAgentPrompt }
+          : undefined,
+      });
     },
     onError: (error) => setToastMessage(getCanvasErrorMessage(error)),
   });
@@ -345,17 +349,18 @@ export function HomePage() {
   const logout = useMutation({ mutationFn: () => api.auth.logout(), onSuccess: () => { qc.clear(); navigate('/'); } });
   const greeting = useMemo(() => (me.data ? me.data.name || me.data.email : ''), [me.data]);
 
-  const handleCreateCanvas = (name?: string) => {
+  const handleCreateCanvas = (name?: string, initialAgentPrompt?: string) => {
     if (!me.data) {
       setIsAuthOpen(true);
       return;
     }
-    createCanvas.mutate(name);
+    createCanvas.mutate({ name, initialAgentPrompt });
   };
 
   const handlePromptSubmit = () => {
-    if (!prompt.trim() || createCanvas.isPending) return;
-    handleCreateCanvas();
+    const initialAgentPrompt = prompt.trim();
+    if (!initialAgentPrompt || createCanvas.isPending) return;
+    handleCreateCanvas(undefined, initialAgentPrompt);
   };
 
   const handleRemoveCanvas = (canvas: Canvas) => {
