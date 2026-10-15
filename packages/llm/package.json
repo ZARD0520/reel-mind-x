@@ -16,6 +16,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "echo \"no lint configured\" "
   },
+  "dependencies": {
+    "@reel/contracts": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^20.17.12",
     "typescript": "^5.7.3"

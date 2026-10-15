@@ -677,3 +677,4 @@ export const AiGenJobSchema = z.object({
   createdAt: z.coerce.date(),
 });
 export type AiGenJob = z.infer<typeof AiGenJobSchema>;
+export { SseDecoder, type SseEvent } from './sse';

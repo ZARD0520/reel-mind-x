@@ -6,6 +6,7 @@ import type {
   LlmProviderConfig,
 } from '../types';
 import { LlmError } from '../types';
+import { SseDecoder } from '@reel/contracts';
 
 /** GLM chat/completions 响应体（仅取用到的字段） */
 interface GlmResponse {
@@ -91,6 +92,67 @@ export class GlmProvider implements LlmProvider {
     } catch (err) {
       if (err instanceof LlmError) throw err;
       throw new LlmError('GLM API 网络错误', undefined, err);
+    }
+  }
+
+  async *chatStream(messages: ChatMessage[], options: ChatOptions = {}): AsyncIterable<string> {
+    const model = options.model ?? this.model;
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: messages.map(({ role, content }) => ({ role, content })),
+          stream: true,
+          ...(options.temperature !== undefined && { temperature: options.temperature }),
+          ...(options.maxTokens !== undefined && { max_tokens: options.maxTokens }),
+        }),
+        signal: options.signal,
+      });
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      throw new LlmError('GLM API 网络错误', undefined, error);
+    }
+    if (!response.ok || !response.body) {
+      const detail = await response.text().catch(() => '');
+      throw new LlmError(`GLM API 调用失败 (${response.status}): ${detail}`, response.status);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const sse = new SseDecoder();
+    let finished = false;
+    try {
+      while (!finished) {
+        const { done, value } = await reader.read();
+        const events = done
+          ? [...sse.push(decoder.decode()), ...sse.finish()]
+          : sse.push(decoder.decode(value, { stream: true }));
+        for (const event of events) {
+          if (event.data === '[DONE]') {
+            finished = true;
+            break;
+          }
+          let data: { choices?: Array<{ delta?: { content?: string } }>; error?: { message?: string } };
+          try {
+            data = JSON.parse(event.data) as typeof data;
+          } catch {
+            throw new LlmError('GLM 流式响应格式异常');
+          }
+          if (data.error) throw new LlmError(data.error.message || 'GLM 流式响应失败');
+          const content = data.choices?.[0]?.delta?.content;
+          if (content) yield content;
+        }
+        if (done) break;
+      }
+      if (!finished) throw new LlmError('GLM 流式响应中断');
+    } finally {
+      await reader.cancel().catch(() => undefined);
     }
   }
 }

@@ -1,3 +1,6 @@
+import { SseDecoder } from '@reel/contracts/sse';
+import type { Conversation } from '../features/canvas/chat-types';
+
 const BASE = '/api';
 
 export class ApiError extends Error {
@@ -89,6 +92,59 @@ export const api = {
         body: JSON.stringify(body),
       }),
     remove: (id: string) => requestVoid(`/canvases/${id}`, { method: 'DELETE' }),
+  },
+  canvasChat: {
+    list: (canvasId: string) => request(`/canvases/${canvasId}/conversations`),
+    create: (canvasId: string) => request(`/canvases/${canvasId}/conversations`, { method: 'POST' }),
+    get: (canvasId: string, conversationId: string) =>
+      request(`/canvases/${canvasId}/conversations/${conversationId}`),
+    rename: (canvasId: string, conversationId: string, title: string) =>
+      request(`/canvases/${canvasId}/conversations/${conversationId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      }),
+    remove: (canvasId: string, conversationId: string) =>
+      requestVoid(`/canvases/${canvasId}/conversations/${conversationId}`, { method: 'DELETE' }),
+    sendStream: async (canvasId: string, conversationId: string, content: string, onDelta: (text: string) => void, signal?: AbortSignal): Promise<Conversation> => {
+      const path = `/canvases/${canvasId}/conversations/${conversationId}/messages`;
+      const response = await fetch(`${BASE}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+        credentials: 'include',
+        signal,
+      });
+      if (!response.ok || !response.body) {
+        const body = await response.text().catch(() => '');
+        throw new ApiError(`POST ${path} -> ${response.status}`, response.status, body);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      const sse = new SseDecoder();
+      let completed: Conversation | undefined;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          const events = done
+            ? [...sse.push(decoder.decode()), ...sse.finish()]
+            : sse.push(decoder.decode(value, { stream: true }));
+          for (const event of events) {
+            const data = JSON.parse(event.data) as { text?: string; message?: string } | Conversation;
+            if (event.event === 'delta' && typeof (data as { text?: string }).text === 'string') {
+              onDelta((data as { text: string }).text);
+            }
+            if (event.event === 'done') completed = data as Conversation;
+            if (event.event === 'error') throw new Error((data as { message: string }).message);
+          }
+          if (done) break;
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+      if (!completed) throw new Error('对话流中断，请重试');
+      return completed;
+    },
   },
   assets: {
     list: (projectId: string) => request(`/assets?projectId=${encodeURIComponent(projectId)}`),

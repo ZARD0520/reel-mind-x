@@ -51,6 +51,7 @@ export interface LlmProvider {
   readonly name: string;
   /** 发起一次对话补全 */
   chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResult>;
+  chatStream(messages: ChatMessage[], options?: ChatOptions): AsyncIterable<string>;
 }
 
 /** provider 初始化配置 */

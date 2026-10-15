@@ -8,6 +8,11 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./sse": {
+      "types": "./src/sse.ts",
+      "browser": "./src/sse.ts",
+      "default": "./dist/sse.js"
     }
   },
   "scripts": {

@@ -23,6 +23,7 @@ model User {
   assets       Asset[]
   renderJobs   RenderJob[]
   assetFolders AssetFolder[]
+  conversations CanvasConversation[]
 
   @@map("users")
 }
@@ -37,6 +38,7 @@ model Canvas {
   updatedAt DateTime @updatedAt
 
   assets Asset[]
+  conversations CanvasConversation[]
 
   @@index([userId, updatedAt])
   @@map("canvases")
@@ -56,6 +58,34 @@ model Project {
 
   @@index([userId, updatedAt])
   @@map("projects")
+}
+
+model CanvasConversation {
+  id        String   @id @default(uuid())
+  canvasId  String
+  canvas    Canvas   @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String   @default("新对话")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages  CanvasChatMessage[]
+
+  @@index([canvasId, updatedAt])
+  @@index([userId, updatedAt])
+  @@map("canvas_conversations")
+}
+
+model CanvasChatMessage {
+  id             String             @id @default(uuid())
+  conversationId String
+  conversation   CanvasConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String             @db.Text
+  createdAt      DateTime           @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("canvas_chat_messages")
 }
 
 model Asset {

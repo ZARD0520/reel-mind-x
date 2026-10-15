@@ -55,6 +55,16 @@ body {
   animation: typewriter-cursor-blink 800ms steps(1, end) infinite;
 }
 
+.canvas-chat-caret {
+  display: inline-block;
+  width: 3px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  background: currentColor;
+  animation: typewriter-cursor-blink 800ms steps(1, end) infinite;
+}
+
 /* 工作流节点文字层级：使用专用选择器，避免被 React Flow 的主题颜色覆盖。 */
 .workflow-node-title {
   color: #c9c9cd !important;

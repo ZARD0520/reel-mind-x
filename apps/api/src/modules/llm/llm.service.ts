@@ -55,4 +55,14 @@ export class LlmService {
     this.logger.debug(`调用 LLM provider=${provider}`);
     return impl.chat(messages, options);
   }
+
+  chatStream(
+    messages: ChatMessage[],
+    options?: ChatOptions,
+    provider: LlmProviderName = this.defaultProvider,
+  ): AsyncIterable<string> {
+    const impl = this.providers.get(provider);
+    if (!impl) throw new LlmError(`未注册的 LLM provider: ${provider}`);
+    return impl.chatStream(messages, options);
+  }
 }

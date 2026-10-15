@@ -13,6 +13,7 @@ import { AssetFoldersModule } from './modules/asset-folders/asset-folders.module
 import { AssetsModule } from './modules/assets/assets.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CanvasesModule } from './modules/canvases/canvases.module';
+import { CanvasChatModule } from './modules/canvas-chat/canvas-chat.module';
 import { FilesModule } from './modules/files/files.module';
 import { LlmModule } from './modules/llm/llm.module';
 import { ProjectsModule } from './modules/projects/projects.module';
@@ -38,6 +39,7 @@ import { PrismaModule } from './prisma/prisma.module';
     PrismaModule,
     AuthModule,
     CanvasesModule,
+    CanvasChatModule,
     LlmModule,
     AgentModule,
     AiMixModule,
