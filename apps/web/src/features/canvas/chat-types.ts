@@ -5,6 +5,7 @@ export type CanvasChatReference = {
   content?: string;
   prompt?: string;
   assetId?: string;
+  url?: string;
   description?: string;
 };
 

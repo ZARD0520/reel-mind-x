@@ -1,14 +1,16 @@
 import { useRef, useState } from 'react';
-import { ArrowUp, FileText, Film, Image as ImageIcon, Loader2, X } from 'lucide-react';
+import { ArrowUp, FileText, Film, Image as ImageIcon, Loader2 } from 'lucide-react';
 import type { CanvasChatReference } from '../chat-types';
 import type { useCanvasChat } from '../useCanvasChat';
+import { CanvasChatReferenceChip } from './CanvasChatReferenceChip';
 
 const icons = { text: FileText, image: ImageIcon, video: Film };
 const labels = { text: '文本', image: '图片', video: '视频' };
 
-export function CanvasChatComposer({ chat, nodes }: {
+export function CanvasChatComposer({ chat, nodes, onFocusNode }: {
   chat: ReturnType<typeof useCanvasChat>;
   nodes: CanvasChatReference[];
+  onFocusNode: (nodeId: string) => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [mention, setMention] = useState<{ start: number; end: number; query: string } | null>(null);
@@ -58,10 +60,7 @@ export function CanvasChatComposer({ chat, nodes }: {
         </div>
       )}
       {!!chat.references.length && <div className="mb-2 flex flex-wrap gap-1.5" aria-label="已引用的画布节点">
-        {chat.references.map((reference) => {
-          const Icon = icons[reference.kind];
-          return <span key={reference.id} className="inline-flex max-w-full items-center gap-1 rounded-md bg-white/[0.10] px-2 py-1 text-xs text-[#dededb]"><Icon className="h-3.5 w-3.5 shrink-0" /><span className="max-w-44 truncate">{reference.title}</span><button type="button" onClick={() => chat.setReferences((current) => current.filter((item) => item.id !== reference.id))} aria-label={`移除引用${reference.title}`} className="rounded p-0.5 hover:bg-white/[0.12]"><X className="h-3 w-3" /></button></span>;
-        })}
+        {chat.references.map((reference) => <CanvasChatReferenceChip key={reference.id} reference={nodes.find((node) => node.id === reference.id) ?? reference} onFocusNode={onFocusNode} onRemove={() => chat.setReferences((current) => current.filter((item) => item.id !== reference.id))} />)}
       </div>}
       <textarea ref={inputRef} value={chat.draft} onChange={(event) => { chat.setDraft(event.target.value); updateMention(event.target.value, event.target.selectionStart); }} onClick={(event) => updateMention(chat.draft, event.currentTarget.selectionStart)} onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;

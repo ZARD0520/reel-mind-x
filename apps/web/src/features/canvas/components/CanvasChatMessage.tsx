@@ -6,15 +6,17 @@ import rehypeSanitize from 'rehype-sanitize';
 import { useTypewriterText } from '../useTypewriterText';
 import { rehypeChatCaret } from '../rehypeChatCaret';
 import type { CanvasChatReference } from '../chat-types';
+import { CanvasChatReferenceChip } from './CanvasChatReferenceChip';
 
 const markdownPlugins = [remarkGfm];
 const htmlPlugins = [rehypeRaw, rehypeSanitize];
 const typingHtmlPlugins = [...htmlPlugins, rehypeChatCaret];
 
-export function CanvasChatMessage({ role, content, references = [], typing = false, complete = false, onTypingComplete, onTypingProgress }: {
+export function CanvasChatMessage({ role, content, references = [], onFocusNode, typing = false, complete = false, onTypingComplete, onTypingProgress }: {
   role: 'user' | 'assistant';
   content: string;
   references?: CanvasChatReference[];
+  onFocusNode: (nodeId: string) => void;
   typing?: boolean;
   complete?: boolean;
   onTypingComplete?: () => void;
@@ -36,7 +38,7 @@ export function CanvasChatMessage({ role, content, references = [], typing = fal
 
   if (role === 'user') {
     return <div className="max-w-[90%] self-end whitespace-pre-wrap break-words rounded-2xl bg-[#303030] px-4 py-2 text-sm leading-6 text-[#f3f3f0]">
-      {!!references.length && <div className="mb-1.5 flex flex-wrap gap-1">{references.map((reference) => <span key={reference.id} className="rounded bg-white/[0.12] px-1.5 py-0.5 text-xs text-[#d7d7d8]">@{reference.title}</span>)}</div>}
+      {!!references.length && <div className="mb-1.5 flex flex-wrap gap-1">{references.map((reference) => <CanvasChatReferenceChip key={reference.id} reference={reference} onFocusNode={onFocusNode} />)}</div>}
       {content}
     </div>;
   }

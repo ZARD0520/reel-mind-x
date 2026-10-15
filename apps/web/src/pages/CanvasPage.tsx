@@ -512,6 +512,7 @@ function toChatReferences(nodes: WorkflowNode[]): CanvasChatReference[] {
     content: node.data.content.slice(0, 12000),
     prompt: node.data.prompt?.slice(0, 2000),
     assetId: node.data.assetId,
+    url: node.data.url ?? undefined,
   }));
 }
 
@@ -1383,10 +1384,12 @@ function InfiniteCanvas({
   canvas,
   onDependencySelectionChange,
   onChatNodesChange,
+  focusRequest,
 }: {
   canvas: Canvas;
   onDependencySelectionChange: (active: boolean) => void;
   onChatNodesChange: (nodes: CanvasChatReference[]) => void;
+  focusRequest: { id: string; sequence: number } | null;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -1762,7 +1765,7 @@ function InfiniteCanvas({
         node.data.title.toLocaleLowerCase().includes(normalizedNodeSearchQuery)),
   );
 
-  const focusNodeFromSearch = (node: WorkflowNode) => {
+  const focusNodeFromSearch = useCallback((node: WorkflowNode) => {
     setNodes((currentNodes) =>
       currentNodes.map((candidate) => ({ ...candidate, selected: candidate.id === node.id })),
     );
@@ -1780,7 +1783,15 @@ function InfiniteCanvas({
       duration: 320,
     });
     setShowNodeSearch(false);
-  };
+  }, [instance, setNodes]);
+  const lastFocusRequest = useRef(0);
+  useEffect(() => {
+    if (!focusRequest || lastFocusRequest.current === focusRequest.sequence || !instance) return;
+    const node = nodes.find((candidate) => candidate.id === focusRequest.id);
+    if (!node) return;
+    lastFocusRequest.current = focusRequest.sequence;
+    focusNodeFromSearch(node);
+  }, [focusRequest, focusNodeFromSearch, instance, nodes]);
 
   return (
     <div
@@ -2345,6 +2356,20 @@ export function CanvasPage() {
   const [isAgentChatOpen, setIsAgentChatOpen] = useState(() => initialAgentPrompt.length > 0);
   const [isAgentChatFullscreen, setIsAgentChatFullscreen] = useState(false);
   const [chatNodes, setChatNodes] = useState<CanvasChatReference[]>([]);
+  const [focusRequest, setFocusRequest] = useState<{ id: string; sequence: number } | null>(null);
+  const focusSequence = useRef(0);
+  const focusTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (focusTimer.current) window.clearTimeout(focusTimer.current); }, []);
+  const focusChatNode = useCallback((nodeId: string) => {
+    if (focusTimer.current) window.clearTimeout(focusTimer.current);
+    const focus = () => setFocusRequest({ id: nodeId, sequence: ++focusSequence.current });
+    if (isAgentChatFullscreen) {
+      setIsAgentChatFullscreen(false);
+      focusTimer.current = window.setTimeout(focus, 350);
+    } else {
+      focus();
+    }
+  }, [isAgentChatFullscreen]);
   const cancelNameEditRef = useRef(false);
 
   useEffect(() => {
@@ -2437,7 +2462,7 @@ export function CanvasPage() {
   return (
     <div className="flex h-full overflow-hidden overscroll-x-none bg-[#050505] text-[#f7f7f2]">
       <div className="relative h-full min-w-0 flex-1 overflow-hidden">
-        <InfiniteCanvas canvas={canvas.data} onDependencySelectionChange={setIsDependencySelecting} onChatNodesChange={setChatNodes} />
+        <InfiniteCanvas canvas={canvas.data} onDependencySelectionChange={setIsDependencySelecting} onChatNodesChange={setChatNodes} focusRequest={focusRequest} />
 
         <div
           className={`absolute left-5 top-5 z-10 flex items-center gap-3 transition-opacity ${isDependencySelecting ? 'pointer-events-none opacity-20' : ''}`}
@@ -2500,6 +2525,7 @@ export function CanvasPage() {
         fullscreen={isAgentChatFullscreen}
         initialPrompt={initialAgentPrompt}
         onInitialPromptConsumed={() => navigate(location.pathname, { replace: true, state: null })}
+        onFocusNode={focusChatNode}
         userName={me.data?.name || me.data?.email || '用户'}
         onToggleFullscreen={() => setIsAgentChatFullscreen((value) => !value)}
         onClose={() => {

@@ -6,7 +6,7 @@ import { CanvasChatComposer } from './CanvasChatComposer';
 import { CanvasChatHistory } from './CanvasChatHistory';
 import { CanvasChatMessage } from './CanvasChatMessage';
 
-export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPrompt, userName, onInitialPromptConsumed, onToggleFullscreen, onClose }: {
+export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPrompt, userName, onInitialPromptConsumed, onFocusNode, onToggleFullscreen, onClose }: {
   canvasId: string;
   nodes: CanvasChatReference[];
   open: boolean;
@@ -14,6 +14,7 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
   initialPrompt: string;
   userName: string;
   onInitialPromptConsumed: () => void;
+  onFocusNode: (nodeId: string) => void;
   onToggleFullscreen: () => void;
   onClose: () => void;
 }) {
@@ -39,11 +40,11 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
           {chat.detail.isLoading && chat.activeId && !chat.pending && <div className="flex justify-center pt-8"><Loader2 className="h-5 w-5 animate-spin text-[#99999d]" /></div>}
           {!chat.detail.data?.messages.length && !chat.pending && !chat.detail.isLoading && <div className="flex h-full flex-col items-center justify-center text-center"><h2 className="text-xl font-semibold text-[#dededb]">Hi～{userName}</h2><p className="mt-2 text-sm text-[#89898d]">今天想创作点什么？</p></div>}
           <div className="mx-auto flex max-w-3xl flex-col gap-5">
-            {chat.detail.data?.messages.map((message) => <CanvasChatMessage key={message.id} role={message.role} content={message.content} references={message.references} />)}
+            {chat.detail.data?.messages.map((message) => <CanvasChatMessage key={message.id} role={message.role} content={message.content} references={message.references} onFocusNode={onFocusNode} />)}
             {chat.pending && <>
-              <CanvasChatMessage role="user" content={chat.pending.prompt} references={chat.pending.references} />
+              <CanvasChatMessage role="user" content={chat.pending.prompt} references={chat.pending.references} onFocusNode={onFocusNode} />
               {chat.pending.answer
-                ? <CanvasChatMessage key={chat.pending.key} role="assistant" content={chat.pending.answer} typing complete={!!chat.pending.completed} onTypingComplete={chat.finishTurn} onTypingProgress={() => bottomRef.current?.scrollIntoView({ block: 'end' })} />
+                ? <CanvasChatMessage key={chat.pending.key} role="assistant" content={chat.pending.answer} onFocusNode={onFocusNode} typing complete={!!chat.pending.completed} onTypingComplete={chat.finishTurn} onTypingProgress={() => bottomRef.current?.scrollIntoView({ block: 'end' })} />
                 : <div className="flex items-center gap-2 text-sm text-[#99999d]"><Loader2 className="h-4 w-4 animate-spin" />思考中...</div>}
             </>}
             <div ref={bottomRef} />
@@ -52,7 +53,7 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
 
         <div className="shrink-0 px-4 pb-4">
           {chat.error && <p role="alert" className="mb-2 px-1 text-xs text-red-400">{chat.error}</p>}
-          <CanvasChatComposer chat={chat} nodes={nodes} />
+          <CanvasChatComposer chat={chat} nodes={nodes} onFocusNode={onFocusNode} />
         </div>
       </div>
     </aside>

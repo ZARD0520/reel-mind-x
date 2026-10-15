@@ -8,6 +8,7 @@ export const CanvasChatReferenceSchema = z.object({
   content: z.string().max(12000).optional(),
   prompt: z.string().max(2000).optional(),
   assetId: z.string().uuid().optional(),
+  url: z.string().max(2000).optional(),
   description: z.string().max(2000).optional(),
 });
 export type CanvasChatReference = z.infer<typeof CanvasChatReferenceSchema>;

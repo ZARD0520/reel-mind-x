@@ -98,7 +98,7 @@ export class CanvasChatService {
     if (assetIds.length) {
       const ownedAssets = await this.prisma.asset.findMany({
         where: { id: { in: assetIds }, userId },
-        select: { id: true, name: true, kind: true, prompt: true, width: true, height: true, durationInFrames: true },
+        select: { id: true, name: true, kind: true, prompt: true, width: true, height: true, durationInFrames: true, url: true },
       });
       if (new Set(ownedAssets.map((asset) => asset.id)).size !== new Set(assetIds).size) {
         throw new BadRequestException('引用的素材不存在');
@@ -110,6 +110,7 @@ export class CanvasChatService {
         if (asset.kind !== reference.kind) throw new BadRequestException('引用的素材类型不匹配');
         return {
           ...reference,
+          url: asset.url ?? undefined,
           description: [asset.name, asset.kind, asset.width && asset.height ? `${asset.width}×${asset.height}` : '', asset.durationInFrames ? `${asset.durationInFrames} 帧` : '', asset.prompt ? `素材提示词：${asset.prompt}` : ''].filter(Boolean).join('；').slice(0, 2000),
         };
       });
