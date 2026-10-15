@@ -1,5 +1,5 @@
 import { SseDecoder } from '@reel/contracts/sse';
-import type { Conversation } from '../features/canvas/chat-types';
+import type { CanvasChatReference, Conversation } from '../features/canvas/chat-types';
 
 const BASE = '/api';
 
@@ -106,12 +106,12 @@ export const api = {
       }),
     remove: (canvasId: string, conversationId: string) =>
       requestVoid(`/canvases/${canvasId}/conversations/${conversationId}`, { method: 'DELETE' }),
-    sendStream: async (canvasId: string, conversationId: string, content: string, onDelta: (text: string) => void, signal?: AbortSignal): Promise<Conversation> => {
+    sendStream: async (canvasId: string, conversationId: string, content: string, references: CanvasChatReference[], onDelta: (text: string) => void, signal?: AbortSignal): Promise<Conversation> => {
       const path = `/canvases/${canvasId}/conversations/${conversationId}/messages`;
       const response = await fetch(`${BASE}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, references }),
         credentials: 'include',
         signal,
       });

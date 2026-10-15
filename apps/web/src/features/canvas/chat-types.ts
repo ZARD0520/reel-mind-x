@@ -1,3 +1,13 @@
+export type CanvasChatReference = {
+  id: string;
+  kind: 'text' | 'image' | 'video';
+  title: string;
+  content?: string;
+  prompt?: string;
+  assetId?: string;
+  description?: string;
+};
+
 export type ConversationSummary = {
   id: string;
   title: string;
@@ -6,5 +16,5 @@ export type ConversationSummary = {
 };
 
 export type Conversation = ConversationSummary & {
-  messages: { id: string; role: 'user' | 'assistant'; content: string; createdAt: string }[];
+  messages: { id: string; role: 'user' | 'assistant'; content: string; references: CanvasChatReference[]; createdAt: string }[];
 };

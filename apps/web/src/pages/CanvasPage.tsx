@@ -80,6 +80,7 @@ import { AssetLibraryDialog } from '../features/canvas/components/AssetLibraryDi
 import { AssetFolderPickerDialog } from '../features/canvas/components/AssetFolderPickerDialog';
 import { AssetHistoryDialog } from '../features/canvas/components/AssetHistoryDialog';
 import { CanvasChatDrawer } from '../features/canvas/components/CanvasChatDrawer';
+import type { CanvasChatReference } from '../features/canvas/chat-types';
 import { Select, type SelectOption } from '../components/ui/Select';
 import {
   IMAGE_SIZE_BY_RATIO,
@@ -501,6 +502,17 @@ function serializeCanvasGraph(
     })),
     viewport,
   };
+}
+
+function toChatReferences(nodes: WorkflowNode[]): CanvasChatReference[] {
+  return nodes.map((node) => ({
+    id: node.id,
+    kind: node.data.kind,
+    title: node.data.title.trim().slice(0, 200) || nodeLabels[node.data.kind],
+    content: node.data.content.slice(0, 12000),
+    prompt: node.data.prompt?.slice(0, 2000),
+    assetId: node.data.assetId,
+  }));
 }
 
 type GenerationResult = { type: 'text'; value: GeneratedText } | { type: 'media'; value: Asset };
@@ -1370,9 +1382,11 @@ function IconButton({
 function InfiniteCanvas({
   canvas,
   onDependencySelectionChange,
+  onChatNodesChange,
 }: {
   canvas: Canvas;
   onDependencySelectionChange: (active: boolean) => void;
+  onChatNodesChange: (nodes: CanvasChatReference[]) => void;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -1382,6 +1396,7 @@ function InfiniteCanvas({
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>(
     canvas.graph.nodes.map(normalizeNode),
   );
+  useEffect(() => onChatNodesChange(toChatReferences(nodes)), [nodes, onChatNodesChange]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     canvas.graph.edges.map(normalizeEdge),
   );
@@ -2329,6 +2344,7 @@ export function CanvasPage() {
   const [isDependencySelecting, setIsDependencySelecting] = useState(false);
   const [isAgentChatOpen, setIsAgentChatOpen] = useState(() => initialAgentPrompt.length > 0);
   const [isAgentChatFullscreen, setIsAgentChatFullscreen] = useState(false);
+  const [chatNodes, setChatNodes] = useState<CanvasChatReference[]>([]);
   const cancelNameEditRef = useRef(false);
 
   useEffect(() => {
@@ -2421,7 +2437,7 @@ export function CanvasPage() {
   return (
     <div className="flex h-full overflow-hidden overscroll-x-none bg-[#050505] text-[#f7f7f2]">
       <div className="relative h-full min-w-0 flex-1 overflow-hidden">
-        <InfiniteCanvas canvas={canvas.data} onDependencySelectionChange={setIsDependencySelecting} />
+        <InfiniteCanvas canvas={canvas.data} onDependencySelectionChange={setIsDependencySelecting} onChatNodesChange={setChatNodes} />
 
         <div
           className={`absolute left-5 top-5 z-10 flex items-center gap-3 transition-opacity ${isDependencySelecting ? 'pointer-events-none opacity-20' : ''}`}
@@ -2479,6 +2495,7 @@ export function CanvasPage() {
       <CanvasChatDrawer
         key={canvas.data.id}
         canvasId={canvas.data.id}
+        nodes={chatNodes}
         open={isAgentChatOpen}
         fullscreen={isAgentChatFullscreen}
         initialPrompt={initialAgentPrompt}

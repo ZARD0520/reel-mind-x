@@ -68,7 +68,7 @@ export class CanvasChatController {
     const abort = new AbortController();
     response.on('close', () => abort.abort());
     try {
-      for await (const item of this.chat.sendStream(user.id, canvasId, conversationId, dto.content, abort.signal)) {
+      for await (const item of this.chat.sendStream(user.id, canvasId, conversationId, dto.content, dto.references, abort.signal)) {
         if (response.writableEnded || abort.signal.aborted) break;
         response.write(`event: ${item.event}\ndata: ${JSON.stringify(item.data)}\n\n`);
       }
