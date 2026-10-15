@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   Asset,
@@ -60,8 +61,10 @@ import {
   LayoutPanelTop,
   Loader2,
   Map,
+  Maximize2,
   MessageCircle,
   Minus,
+  Minimize2,
   Plus,
   Search,
   Scissors,
@@ -1155,6 +1158,28 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState(data.title);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [copyStatus, setCopyStatus] = useState('');
+  const contentInputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!selected && !isFullscreen) setIsEditing(false);
+  }, [selected, isFullscreen]);
+
+  useEffect(() => {
+    const editor = contentInputRef.current;
+    if (!isEditing || !editor) return;
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    editor.scrollTop = editor.scrollHeight;
+  }, [isEditing, isFullscreen]);
+
+  useEffect(() => {
+    if (!copyStatus) return;
+    const timeout = window.setTimeout(() => setCopyStatus(''), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [copyStatus]);
 
   // 文本内容用本地草稿直驱 textarea：若受控值每次按键都经 ReactFlow store 往返，
   // 与输入法组合中的缓冲不一致会打断中文输入；组合期间只写本地、结束后再入库
@@ -1175,6 +1200,43 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     setContentDraft(value);
     if (!composingRef.current) updateNodeData(id, { content: value });
   };
+
+  const copyContent = async () => {
+    try {
+      await navigator.clipboard.writeText(contentDraft);
+      setCopyStatus('已复制');
+    } catch {
+      setCopyStatus('复制失败，请重试');
+    }
+  };
+
+  const renderContentEditor = () => (
+    <textarea
+      ref={contentInputRef}
+      value={contentDraft}
+      onChange={(event) => commitContent(event.target.value)}
+      onCompositionStart={() => { composingRef.current = true; }}
+      onCompositionEnd={(event) => {
+        composingRef.current = false;
+        commitContent(event.currentTarget.value);
+      }}
+      onBlur={(event) => {
+        composingRef.current = false;
+        commitContent(event.currentTarget.value);
+      }}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+          if (isFullscreen) setIsFullscreen(false);
+          else setIsEditing(false);
+        }
+      }}
+      onDoubleClick={(event) => event.stopPropagation()}
+      placeholder="尚无文本内容"
+      aria-label={`${data.title}内容`}
+      className="workflow-node-editor nodrag nopan nowheel reel-scroll h-full w-full resize-none overflow-y-auto bg-transparent text-base font-normal leading-7 outline-none"
+    />
+  );
 
   useEffect(() => {
     if (isRenaming) titleInputRef.current?.select();
@@ -1243,7 +1305,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     );
   return (
     <div
-      className={`group transition-[width,opacity,filter] duration-200 ${isSelectingDependency && !isDependencyCandidate ? 'pointer-events-none opacity-20 grayscale' : ''} ${isDependencyCandidate ? 'cursor-copy drop-shadow-[0_0_14px_rgba(255,255,255,0.16)]' : ''}`}
+      className={`workflow-card group cursor-grab active:cursor-grabbing transition-[width,opacity,filter] duration-200 ${isSelectingDependency && !isDependencyCandidate ? 'pointer-events-none opacity-20 grayscale' : ''} ${isDependencyCandidate ? 'cursor-copy drop-shadow-[0_0_14px_rgba(255,255,255,0.16)]' : ''}`}
       style={{ width: nodeWidth }}
       onContextMenu={(event) => event.preventDefault()}
     >
@@ -1281,35 +1343,39 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         ) : (
           <button
             type="button"
-            onClick={startRenaming}
+            onClick={data.kind === 'text' ? undefined : startRenaming}
+            onDoubleClickCapture={data.kind === 'text' ? startRenaming : undefined}
             onDoubleClick={(event) => event.stopPropagation()}
-            className={`min-w-0 flex-1 truncate text-left ${selected ? 'cursor-text rounded px-1 hover:bg-white/[0.06]' : 'cursor-default'}`}
-            title={selected ? '点击修改节点名称' : data.title}
+            className="min-w-0 flex-1 cursor-grab truncate rounded px-1 text-left hover:bg-white/[0.06] active:cursor-grabbing"
+            title={selected ? (data.kind === 'text' ? '双击修改节点名称' : '点击修改节点名称') : data.title}
           >
             {data.title}
           </button>
+        )}
+        {data.kind === 'text' && isEditing && (
+          <div role="toolbar" aria-label="文本工具条" className="nodrag nopan flex items-center gap-1 rounded-lg border border-white/10 bg-[#242424] p-1" onDoubleClick={(event) => event.stopPropagation()}>
+            <button type="button" onClick={() => void copyContent()} aria-label="复制文本" title={copyStatus || '复制文本'} className="flex h-7 w-7 cursor-pointer items-center justify-center rounded hover:bg-white/10">
+              {copyStatus === '已复制' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            </button>
+            <button type="button" onClick={() => setIsFullscreen(true)} aria-label="全屏编辑文本" title="全屏编辑文本" className="flex h-7 w-7 cursor-pointer items-center justify-center rounded hover:bg-white/10"><Maximize2 className="h-4 w-4" /></button>
+            <span role="status" className="sr-only">{copyStatus}</span>
+          </div>
         )}
       </div>
       <MagneticConnectionHandle type="target" selected={selected} />
       {data.kind === 'text' ? (
         <div
           className={`h-[360px] overflow-hidden rounded-[24px] border bg-[#202020] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            if (!isSelectingDependency) setIsEditing(true);
+          }}
         >
-          <textarea
-            value={contentDraft}
-            onChange={(event) => commitContent(event.target.value)}
-            onCompositionStart={() => {
-              composingRef.current = true;
-            }}
-            onCompositionEnd={(event) => {
-              composingRef.current = false;
-              commitContent((event.target as HTMLTextAreaElement).value);
-            }}
-            onWheel={(event) => event.stopPropagation()}
-            placeholder="尚无文本内容"
-            aria-label={`${data.title}内容`}
-            className="workflow-node-editor reel-scroll nopan nowheel h-full w-full resize-none overflow-y-auto bg-transparent text-base font-normal leading-7 outline-none"
-          />
+          {isEditing && !isFullscreen ? renderContentEditor() : (
+            <div className={`workflow-node-content h-full overflow-hidden whitespace-pre-wrap break-words text-base leading-7 ${contentDraft ? '' : 'workflow-node-placeholder'}`}>
+              {contentDraft || '尚无文本内容'}
+            </div>
+          )}
         </div>
       ) : (
         <div
@@ -1342,6 +1408,34 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         </div>
       )}
       <MagneticConnectionHandle type="source" selected={selected} />
+      {isFullscreen && createPortal(
+        <div role="dialog" aria-modal="true" aria-label={`全屏编辑：${data.title}`} className="fixed inset-0 z-[100] flex flex-col bg-[#171717] text-white" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onKeyDownCapture={(event) => {
+          if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+            event.stopPropagation();
+            setIsFullscreen(false);
+          }
+          if (event.key === 'Tab') {
+            const controls = event.currentTarget.querySelectorAll<HTMLElement>('button, textarea');
+            const first = controls[0];
+            const last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last?.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first?.focus();
+            }
+          }
+        }}>
+          <div className="flex h-16 shrink-0 items-center gap-3 border-b border-white/10 px-6">
+            <AlignLeft className="h-5 w-5" /><span className="min-w-0 flex-1 truncate font-semibold">{data.title}</span>
+            <button type="button" onClick={() => void copyContent()} aria-label="复制文本" title={copyStatus || '复制文本'} className="rounded-lg p-2 hover:bg-white/10"><Copy className="h-5 w-5" /></button>
+            <button type="button" onClick={() => setIsFullscreen(false)} aria-label="退出全屏" title="退出全屏" className="rounded-lg p-2 hover:bg-white/10"><Minimize2 className="h-5 w-5" /></button>
+            <span role="status" className="sr-only">{copyStatus}</span>
+          </div>
+          <div className="mx-auto min-h-0 w-full max-w-5xl flex-1 p-8">{renderContentEditor()}</div>
+        </div>, document.body,
+      )}
     </div>
   );
 }
@@ -1422,6 +1516,51 @@ function InfiniteCanvas({
   const [showEdges, setShowEdges] = useState(true);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [dependencyTargetId, setDependencyTargetId] = useState<string | null>(null);
+  const [isPanKeyPressed, setIsPanKeyPressed] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || event.repeat) return;
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, button, [contenteditable="true"]')) return;
+      event.preventDefault();
+      setIsPanKeyPressed(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space') setIsPanKeyPressed(false);
+    };
+    const reset = () => setIsPanKeyPressed(false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', reset);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', reset);
+    };
+  }, []);
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper || dependencyTargetId) return;
+    // React Flow 给可拖动节点添加 nopan；将节点和提示词上的滚轮交给画布处理。
+    const forwardWheel = (event: WheelEvent) => {
+      if (!(event.target instanceof Element)) return;
+      if (!event.target.closest('.react-flow__node, .react-flow__node-toolbar')) return;
+      if (event.target.closest('.workflow-node-editor, [role="dialog"]')) return;
+      const pane = wrapper.querySelector('.react-flow__pane');
+      if (!pane) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pane.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, deltaX: event.deltaX, deltaY: event.deltaY,
+        deltaZ: event.deltaZ, deltaMode: event.deltaMode, clientX: event.clientX,
+        clientY: event.clientY, ctrlKey: event.ctrlKey, metaKey: event.metaKey,
+        shiftKey: event.shiftKey, altKey: event.altKey, view: window,
+      }));
+    };
+    wrapper.addEventListener('wheel', forwardWheel, { capture: true, passive: false });
+    return () => wrapper.removeEventListener('wheel', forwardWheel, true);
+  }, [dependencyTargetId]);
   const [nodeActionMenu, setNodeActionMenu] = useState<{
     nodeId: string;
     x: number;
@@ -1796,7 +1935,7 @@ function InfiniteCanvas({
   return (
     <div
       ref={wrapperRef}
-      className={`absolute inset-0 ${dependencyTargetId ? 'canvas-dependency-selecting' : ''}`}
+      className={`absolute inset-0 ${dependencyTargetId ? 'canvas-dependency-selecting' : ''} ${isPanKeyPressed && !dependencyTargetId ? 'canvas-panning' : ''}`}
       onPointerDownCapture={(event) => {
         if (
           nodeActionMenu &&
@@ -1866,7 +2005,8 @@ function InfiniteCanvas({
             nodeClickDistance={4}
             snapToGrid={snapToGrid}
             snapGrid={[24, 24]}
-            nodesDraggable={!dependencyTargetId}
+            nodesDraggable={!dependencyTargetId && !isPanKeyPressed}
+            zoomOnDoubleClick={false}
             nodesConnectable={!dependencyTargetId}
             panOnDrag={!dependencyTargetId}
             panOnScroll={!dependencyTargetId}

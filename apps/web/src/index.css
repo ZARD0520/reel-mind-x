@@ -87,6 +87,20 @@ body {
   opacity: 1;
 }
 
+/* 空格平移时，让节点和浮动提示词面板透过鼠标事件。 */
+.canvas-panning .react-flow__node,
+.canvas-panning .react-flow__node-toolbar {
+  pointer-events: none !important;
+}
+
+.canvas-panning .react-flow__pane {
+  cursor: grab !important;
+}
+
+.canvas-panning .react-flow__pane:active {
+  cursor: grabbing !important;
+}
+
 /* 选择依赖节点时弱化画布关系与背景，候选节点自身由组件保持高亮。 */
 .canvas-dependency-selecting .react-flow__edge {
   opacity: 0.16;
