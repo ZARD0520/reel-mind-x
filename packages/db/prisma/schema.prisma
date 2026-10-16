@@ -112,6 +112,8 @@ model Asset {
   width            Int?
   height           Int?
   prompt           String?
+  model            String?
+  references       Json         @default("[]")
   createdAt        DateTime     @default(now())
 
   @@index([userId, projectId, createdAt])

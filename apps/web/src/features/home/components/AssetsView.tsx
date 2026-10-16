@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Asset } from '@reel/contracts';
-import { AudioLines, Film, FolderOpen, Image as ImageIcon, Library, Loader2, Upload } from 'lucide-react';
+import { AlignLeft, AudioLines, Film, FolderOpen, Image as ImageIcon, Library, Loader2 } from 'lucide-react';
 import { api } from '../../../lib/api';
+import { MaterialDetailDialog } from './MaterialDetailDialog';
+import { AssetLibraryDialog } from '../../canvas/components/AssetLibraryDialog';
 
 const FILTERS = [
   { value: 'all', label: '全部' },
@@ -18,38 +20,63 @@ function dateKey(value: Date | string): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-function MaterialCard({ asset }: { asset: Asset }) {
-  const Icon = asset.kind === 'video' ? Film : asset.kind === 'audio' ? AudioLines : ImageIcon;
+function MaterialCard({ asset, onOpen }: { asset: Asset; onOpen: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const isPreviewing = useRef(false);
+  const playPreview = () => {
+    isPreviewing.current = true;
+    const video = videoRef.current;
+    if (!video) return;
+    void video.play().then(() => {
+      if (!isPreviewing.current) video.pause();
+    }).catch(() => { /* 预览不可播放时继续展示静态缩略图。 */ });
+  };
+  const stopPreview = () => {
+    isPreviewing.current = false;
+    const video = videoRef.current;
+    if (!video) return;
+    video.pause();
+    video.currentTime = 0;
+  };
+  const Icon = asset.kind === 'video' ? Film : asset.kind === 'audio' ? AudioLines : asset.kind === 'text' ? AlignLeft : ImageIcon;
   return (
-    <article className="min-w-0 overflow-hidden rounded-xl border border-white/[0.10] bg-[#191919]" title={asset.prompt ?? asset.name}>
+    <button type="button" onMouseEnter={playPreview} onMouseLeave={stopPreview} onFocus={playPreview} onBlur={stopPreview} onClick={() => { stopPreview(); onOpen(); }} aria-label={`查看素材：${asset.name}`} className="group min-w-0 cursor-zoom-in overflow-hidden rounded-xl border border-white/[0.10] bg-[#191919] text-left transition-colors hover:border-white/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60">
       <div className="relative flex aspect-[4/3] items-center justify-center overflow-hidden bg-[#202020]">
+        <div className="flex h-full w-full items-center justify-center transition-transform duration-300 ease-out group-hover:scale-105 group-focus-visible:scale-105 motion-reduce:transition-none">
         {asset.kind === 'image' && asset.url ? (
           <img src={asset.url} alt={asset.name} loading="lazy" className="h-full w-full object-contain" />
         ) : asset.kind === 'video' && asset.url ? (
-          <video src={asset.url} controls preload="metadata" className="h-full w-full object-contain" />
+          <video ref={videoRef} src={asset.url} muted loop playsInline preload="metadata" className="pointer-events-none h-full w-full object-contain" />
         ) : asset.kind === 'audio' ? (
           <div className="flex w-full min-w-0 flex-col items-center gap-5 px-3">
             <AudioLines className="h-9 w-9 text-[#77777c]" />
-            {asset.url && <audio src={asset.url} controls preload="none" aria-label={asset.name} className="h-8 w-full" />}
           </div>
         ) : asset.kind === 'text' ? (
           <p className="line-clamp-5 whitespace-pre-wrap px-4 text-sm leading-6 text-[#b9b9ba]">{asset.content ?? asset.name}</p>
         ) : (
           <Icon className="h-9 w-9 text-[#77777c]" />
         )}
+        </div>
       </div>
-      <p className="truncate px-3 py-3 text-sm text-[#d7d7da]">{asset.name}</p>
-    </article>
+    </button>
   );
 }
 
-export function AssetsView({ isAuthenticated, isAuthLoading, onLogin }: {
+export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogin }: {
   isAuthenticated: boolean;
   isAuthLoading: boolean;
+  creatorName?: string;
   onLogin: () => void;
 }) {
   const [section, setSection] = useState<'materials' | 'assets'>('materials');
   const [filter, setFilter] = useState<MediaFilter>('all');
+  const [detailAsset, setDetailAsset] = useState<Asset | null>(null);
+  const [libraryToast, setLibraryToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!libraryToast) return;
+    const timeout = window.setTimeout(() => setLibraryToast(null), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [libraryToast]);
   const history = useQuery<Asset[]>({
     queryKey: ['assetHistory', 'home', 'all'],
     queryFn: () => api.assets.history({ scope: 'all' }) as Promise<Asset[]>,
@@ -86,7 +113,7 @@ export function AssetsView({ isAuthenticated, isAuthLoading, onLogin }: {
       </aside>
 
       <section aria-label={section === 'materials' ? '素材库' : '资产库'} className="flex min-w-0 flex-1 flex-col">
-        <div className="shrink-0 px-4 pt-8 sm:px-8 lg:px-10">
+        {(section === 'materials' || !isAuthenticated || isAuthLoading) && <div className="shrink-0 px-4 pt-8 sm:px-8 lg:px-10">
           <h1 className="text-xl font-semibold text-[#f7f7f2]">{section === 'materials' ? '素材库' : '资产库'}</h1>
           {section === 'materials' && (
             <div className="mt-6 flex gap-1 border-b border-white/[0.08] pb-4" role="group" aria-label="素材类型筛选">
@@ -98,23 +125,17 @@ export function AssetsView({ isAuthenticated, isAuthLoading, onLogin }: {
               ))}
             </div>
           )}
-        </div>
+        </div>}
 
-        {section === 'assets' ? (
-          <div className="flex flex-1 flex-col items-center justify-center px-4 pb-16 text-center">
-            <FolderOpen className="mb-5 h-12 w-12 text-[#55555a]" strokeWidth={1.3} />
-            <p className="text-[16px] text-fg-secondary">当前暂无资产</p>
-            <button type="button" className="mt-5 flex h-10 items-center gap-2 rounded-lg bg-[#f7f7f2] px-5 text-sm font-semibold text-[#151515] transition-colors hover:bg-white">
-              <Upload className="h-4 w-4" />点击上传资产
-            </button>
-          </div>
-        ) : isAuthLoading || (isAuthenticated && history.isLoading) ? (
+        {isAuthLoading || (section === 'materials' && isAuthenticated && history.isLoading) ? (
           <div role="status" aria-label="正在加载素材" className="flex flex-1 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-[#77777c]" /></div>
         ) : !isAuthenticated ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-4 px-4 pb-16 text-center">
-            <p className="text-sm text-[#9a9a9f]">登录后查看历史生成的素材</p>
+            <p className="text-sm text-[#9a9a9f]">{section === 'assets' ? '登录后查看资产库' : '登录后查看历史生成的素材'}</p>
             <button type="button" onClick={onLogin} className="h-10 rounded-lg border border-white/[0.16] px-5 text-sm text-[#f7f7f2] hover:bg-white/[0.08]">登录</button>
           </div>
+        ) : section === 'assets' ? (
+          <AssetLibraryDialog embedded onClose={() => {}} onToast={setLibraryToast} onSelectAsset={setDetailAsset} />
         ) : history.isError ? (
           <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-4 px-4 pb-16 text-center">
             <p className="text-sm text-[#9a9a9f]">素材加载失败，请重试</p>
@@ -134,14 +155,17 @@ export function AssetsView({ isAuthenticated, isAuthLoading, onLogin }: {
                   <div className="h-px flex-1 bg-white/[0.08]" />
                   <span className="text-xs text-[#66666b]">{assets.length} 个素材</span>
                 </div>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-                  {assets.map((asset) => <MaterialCard key={asset.id} asset={asset} />)}
+                <div className="grid gap-4 [--material-columns:1] sm:[--material-columns:2] lg:[--material-columns:3] xl:[--material-columns:4] 2xl:[--material-columns:5]"
+                  style={{ gridTemplateColumns: 'repeat(auto-fill, min(100%, calc((100% - (var(--material-columns) - 1) * 1rem) / var(--material-columns) * 0.7)))' }}>
+                  {assets.map((asset) => <MaterialCard key={asset.id} asset={asset} onOpen={() => setDetailAsset(asset)} />)}
                 </div>
               </section>
             ))}
           </div>
         )}
       </section>
+      {libraryToast && <div role="status" className="fixed bottom-8 left-1/2 z-[80] -translate-x-1/2 rounded-xl border border-white/10 bg-[#292929] px-4 py-3 text-sm text-white shadow-xl">{libraryToast}</div>}
+      {detailAsset && <MaterialDetailDialog key={detailAsset.id} asset={detailAsset} creatorName={creatorName} onClose={() => setDetailAsset(null)} />}
     </main>
   );
 }

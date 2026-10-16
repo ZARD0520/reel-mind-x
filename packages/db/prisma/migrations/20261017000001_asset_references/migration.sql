@@ -1,0 +1,1 @@
+ALTER TABLE "assets" ADD COLUMN "references" JSONB NOT NULL DEFAULT '[]';

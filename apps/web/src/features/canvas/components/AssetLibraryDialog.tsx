@@ -47,7 +47,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
 
 function formatFolderDate(value: string | Date): string {
   const date = value instanceof Date ? value : new Date(value);
-  return `${date.getMonth() + 1}月${date.getDate()}日创建`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function urlExtension(url: string): string {
@@ -99,6 +99,7 @@ interface LibraryAssetThumbProps {
   onCommitRename?: () => void;
   onCancelRename?: () => void;
   onAdd: () => void;
+  browseOnly?: boolean;
   onOpenMenu?: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }
 
@@ -110,44 +111,69 @@ function LibraryAssetThumb({
   onCommitRename,
   onCancelRename,
   onAdd,
+  browseOnly = false,
   onOpenMenu,
 }: LibraryAssetThumbProps) {
   const Icon = asset.kind === 'audio' ? AudioLines : asset.kind === 'image' ? ImageIcon : Film;
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const previewingRef = useRef(false);
+  const startPreview = () => {
+    if (!browseOnly) return;
+    previewingRef.current = true;
+    const video = videoRef.current;
+    if (video) void video.play().then(() => { if (!previewingRef.current) video.pause(); }).catch(() => {});
+  };
+  const stopPreview = () => {
+    previewingRef.current = false;
+    if (!videoRef.current) return;
+    videoRef.current.pause();
+    videoRef.current.currentTime = 0;
+  };
   return (
     <div
-      className="group relative"
-      title={`添加 ${asset.name} 到画布`}
+      className="group relative min-w-0"
+      title={browseOnly ? `查看 ${asset.name} 详情` : `添加 ${asset.name} 到画布`}
     >
       <button
         type="button"
-        onClick={onAdd}
-        className="flex h-[76px] w-full items-center justify-center overflow-hidden rounded-lg bg-white/[0.055] transition-shadow hover:ring-2 hover:ring-[#f3f3f0]/60"
+        onClick={() => { stopPreview(); onAdd(); }}
+        onMouseEnter={startPreview}
+        onMouseLeave={stopPreview}
+        onFocus={startPreview}
+        onBlur={stopPreview}
+        aria-label={browseOnly ? `查看素材：${asset.name}` : `添加 ${asset.name} 到画布`}
+        className={browseOnly ? 'group/preview flex aspect-[4/3] w-full cursor-zoom-in items-center justify-center overflow-hidden rounded-xl border border-white/[0.10] bg-[#202020] text-left transition-colors hover:border-white/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60' : 'flex h-[76px] w-full items-center justify-center overflow-hidden rounded-lg bg-white/[0.055] transition-shadow hover:ring-2 hover:ring-[#f3f3f0]/60'}
       >
+        <div className={browseOnly ? 'flex h-full w-full items-center justify-center transition-transform duration-300 ease-out group-hover/preview:scale-105 group-focus-visible/preview:scale-105 motion-reduce:transition-none' : 'contents'}>
         {asset.kind === 'image' && asset.url ? (
           <img
             src={asset.url}
             alt={asset.name}
             draggable={false}
-            className="h-full w-full object-cover"
+            className={`h-full w-full ${browseOnly ? 'object-contain' : 'object-cover'}`}
           />
         ) : asset.kind === 'video' && asset.url ? (
           <video
+            ref={videoRef}
             src={asset.url}
             draggable={false}
-            className="h-full w-full object-cover"
+            className={`pointer-events-none h-full w-full ${browseOnly ? 'object-contain' : 'object-cover'}`}
             muted
+            loop={browseOnly}
+            playsInline
             preload="metadata"
           />
         ) : asset.kind === 'text' ? (
-          <span className="block h-full w-full overflow-hidden px-2 py-1.5 text-left text-[10px] leading-4 text-[#b8b8bd] line-clamp-4">
+          <span className={browseOnly ? 'line-clamp-5 whitespace-pre-wrap px-4 text-sm leading-6 text-[#b9b9ba]' : 'block h-full w-full overflow-hidden px-2 py-1.5 text-left text-[10px] leading-4 text-[#b8b8bd] line-clamp-4'}>
             {asset.content || '（空文本）'}
           </span>
         ) : (
           <div className="flex flex-col items-center gap-1 text-[#9a9a9f]">
-            <Icon className="h-[22px] w-[22px]" />
+            <Icon className={browseOnly ? 'h-9 w-9 text-[#77777c]' : 'h-[22px] w-[22px]'} />
           </div>
         )}
-        {renaming ? null : (
+        </div>
+        {renaming || browseOnly ? null : (
           <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-1.5 py-0.5 text-left text-[10px] text-white">
             {asset.name}
           </span>
@@ -192,6 +218,7 @@ function LibraryAssetThumb({
 }
 
 interface FolderRowProps {
+  tile?: boolean;
   folder: AssetFolder;
   renaming: boolean;
   renameValue: string;
@@ -204,6 +231,7 @@ interface FolderRowProps {
 }
 
 function FolderRow({
+  tile = false,
   folder,
   renaming,
   renameValue,
@@ -215,11 +243,13 @@ function FolderRow({
   onOpenMenu,
 }: FolderRowProps) {
   return (
-    <div className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/[0.07]">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.07] text-[#b8b8bd]">
-        <Folder className="h-4.5 w-4.5" />
-      </span>
-      <div className="min-w-0 flex-1">
+    <div className={tile ? 'group relative min-w-0' : 'group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/[0.07]'}>
+      {tile ? (
+        <button type="button" onClick={onOpen} aria-label={`打开文件夹：${folder.name}`} className="flex aspect-[4/3] w-full cursor-pointer items-center justify-center rounded-xl border border-white/[0.10] bg-[#191919] text-[#77777c] transition-colors hover:border-white/25 hover:bg-[#202020] hover:text-[#b9b9ba] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/60"><Folder className="h-12 w-12 stroke-[1.3] transition-transform duration-300 group-hover:scale-105" /></button>
+      ) : (
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.07] text-[#b8b8bd]"><Folder className="h-4.5 w-4.5" /></span>
+      )}
+      <div className={tile ? 'min-w-0 px-1 pt-3' : 'min-w-0 flex-1'}>
         {renaming ? (
           <input
             autoFocus
@@ -241,7 +271,7 @@ function FolderRow({
             className="w-full rounded-lg border border-white/[0.12] bg-black/20 px-2.5 py-1.5 text-sm font-medium text-white outline-none focus:border-white/[0.24]"
           />
         ) : (
-          <button type="button" onClick={onOpen} className="block w-full text-left">
+          <button type="button" onClick={onOpen} className="block w-full cursor-pointer text-left">
             <span className="block truncate text-sm font-medium text-[#eeeeef]">{folder.name}</span>
             <span className="mt-1 block text-xs text-[#77777c]">
               {formatFolderDate(folder.createdAt)}
@@ -253,7 +283,7 @@ function FolderRow({
         type="button"
         onClick={onOpenMenu}
         aria-label={`${folder.name} 的更多操作`}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[#85858a] opacity-0 transition-opacity hover:bg-white/[0.07] hover:text-white focus:opacity-100 group-hover:opacity-100"
+        className={`${tile ? 'absolute right-2 top-2 bg-black/40' : 'shrink-0'} flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-[#85858a] opacity-0 transition-opacity hover:bg-white/[0.07] hover:text-white focus:opacity-100 group-hover:opacity-100`}
       >
         <MoreVertical className="h-4 w-4" />
       </button>
@@ -265,13 +295,30 @@ export function AssetLibraryDialog({
   onClose,
   onToast,
   onAddToCanvas,
+  embedded = false,
+  onSelectAsset,
 }: {
   onClose: () => void;
   onToast: (message: string) => void;
   /** 点击素材时把素材作为新节点添加到画布 */
-  onAddToCanvas: (asset: Asset) => void;
+  onAddToCanvas?: (asset: Asset) => void;
+  embedded?: boolean;
+  onSelectAsset?: (asset: Asset) => void;
 }) {
   const queryClient = useQueryClient();
+  const gridClassName = embedded
+    ? 'grid gap-4 [--material-columns:1] sm:[--material-columns:2] lg:[--material-columns:3] xl:[--material-columns:4] 2xl:[--material-columns:5]'
+    : 'grid grid-cols-3 gap-2';
+  const gridStyle = embedded ? {
+    gridTemplateColumns: 'repeat(auto-fill, min(100%, calc((100% - (var(--material-columns) - 1) * 1rem) / var(--material-columns) * 0.7)))',
+  } : undefined;
+  const sectionHeading = (label: string, count: number) => embedded && (
+    <div className="mb-4 flex items-center gap-4">
+      <h2 className="shrink-0 text-sm font-medium text-[#b9b9ba]">{label}</h2>
+      <div className="h-px flex-1 bg-white/[0.08]" />
+      <span className="text-xs text-[#66666b]">{count} 个{label === '文件夹' ? '文件夹' : '素材'}</span>
+    </div>
+  );
   const [scope, setScope] = useState<AssetFolderScope>('personal');
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -554,16 +601,20 @@ export function AssetLibraryDialog({
   };
 
   const addAssetToCanvas = (asset: Asset) => {
+    if (embedded) {
+      onSelectAsset?.(asset);
+      return;
+    }
     if (asset.status !== 'ready') return;
     if (asset.kind !== 'image' && asset.kind !== 'video' && asset.kind !== 'text') return;
-    onAddToCanvas(asset);
+    onAddToCanvas?.(asset);
     onClose();
   };
 
   const renderFolderRows = () => (
-    <div className="space-y-1">
+    <div className={embedded ? gridClassName : 'space-y-1'} style={gridStyle}>
       {creating && (
-        <div className="flex items-center gap-3 rounded-xl bg-white/[0.05] px-3 py-2.5">
+        <div className={`flex items-center gap-3 rounded-xl bg-white/[0.05] px-3 py-2.5 ${embedded ? 'col-span-full max-w-[560px]' : ''}`}>
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.07] text-[#b8b8bd]">
             <Folder className="h-4.5 w-4.5" />
           </span>
@@ -613,6 +664,7 @@ export function AssetLibraryDialog({
         <FolderRow
           key={folder.id}
           folder={folder}
+          tile={embedded}
           renaming={renamingId === folder.id}
           renameValue={renameValue}
           onRenameValueChange={setRenameValue}
@@ -642,30 +694,45 @@ export function AssetLibraryDialog({
 
   return (
     <div
-      className="absolute inset-0 z-40 flex items-center justify-center bg-black/35 px-5 backdrop-blur-[2px]"
+      className={embedded ? 'relative flex min-h-0 flex-1 flex-col px-4 pb-6 pt-8 sm:px-8 lg:px-10' : 'absolute inset-0 z-40 flex items-center justify-center bg-black/35 px-5 backdrop-blur-[2px]'}
       onPointerDown={() => {
+        if (embedded) return;
         // 关闭前先提交进行中的重命名，避免卸载输入框导致 blur 保存丢失
         commitRename();
         commitAssetRename();
         onClose();
       }}
     >
+      {embedded && (
+        <nav aria-label="文件夹路径" className="mb-6 flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <h1 className="text-xl font-semibold">
+            <button type="button" onClick={() => setCurrentFolderId(null)} aria-current={currentFolderId === null ? 'page' : undefined} className={`cursor-pointer rounded transition-colors hover:text-white ${currentFolderId === null ? 'text-[#f7f7f2]' : 'text-[#8e8e92]'}`}>资产库</button>
+          </h1>
+          {breadcrumb.map((folder) => (
+            <span key={folder.id} className="flex min-w-0 items-center gap-2">
+              <ChevronRight className="h-4 w-4 shrink-0 text-[#66666b]" />
+              <button type="button" onClick={() => setCurrentFolderId(folder.id)} aria-current={folder.id === currentFolderId ? 'page' : undefined}
+                className={`max-w-[240px] cursor-pointer truncate rounded py-1 text-sm transition-colors hover:text-white ${folder.id === currentFolderId ? 'text-[#eeeeef]' : 'text-[#8e8e92]'}`}>{folder.name}</button>
+            </span>
+          ))}
+        </nav>
+      )}
       <section
-        role="dialog"
-        aria-modal="true"
-        aria-label="素材库"
-        className="nodrag nopan nowheel flex max-h-[72vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-white/[0.14] bg-[#242424] shadow-[0_28px_80px_rgba(0,0,0,0.62)]"
+        role={embedded ? 'region' : 'dialog'}
+        aria-modal={embedded ? undefined : true}
+        aria-label="资产库"
+        className={embedded ? 'flex min-h-0 w-full flex-1 flex-col' : 'nodrag nopan nowheel flex max-h-[72vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-white/[0.14] bg-[#242424] shadow-[0_28px_80px_rgba(0,0,0,0.62)]'}
         onPointerDown={(event) => event.stopPropagation()}
       >
-        <div className="border-b border-white/[0.08] p-4 pb-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1" aria-label="素材库范围切换">
+        <div className={embedded ? 'flex flex-wrap items-center gap-4 border-b border-white/[0.08] pb-4' : 'border-b border-white/[0.08] p-4 pb-3'}>
+          <div className={embedded ? 'contents' : 'flex items-center justify-between gap-2'}>
+            <div className="flex items-center gap-1" aria-label="资产库范围切换">
               {SCOPE_TABS.map((tab) => (
                 <button
                   key={tab.value}
                   type="button"
                   onClick={() => switchScope(tab.value)}
-                  className={`h-8 rounded-lg px-3 text-xs font-medium transition-colors ${scope === tab.value ? 'bg-[#f3f3f0] text-[#151515]' : 'text-[#a4a4a8] hover:bg-white/[0.07] hover:text-white'}`}
+                  className={`${embedded ? 'h-9 cursor-pointer px-4 text-sm' : 'h-8 px-3 text-xs'} rounded-lg font-medium transition-colors ${scope === tab.value ? embedded ? 'bg-white/[0.12] text-[#f7f7f2]' : 'bg-[#f3f3f0] text-[#151515]' : 'text-[#8e8e92] hover:bg-white/[0.05] hover:text-[#f7f7f2]'}`}
                 >
                   {tab.label}
                 </button>
@@ -676,13 +743,13 @@ export function AssetLibraryDialog({
               onClick={openCreating}
               disabled={scope === 'team'}
               title={scope === 'team' ? '团队功能上线后开放' : undefined}
-              className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.12] bg-white/[0.055] px-3 text-xs font-medium text-[#e1e1e3] transition-colors hover:bg-white/[0.09] disabled:cursor-not-allowed disabled:opacity-40"
+              className={`${embedded ? 'order-3 h-9 cursor-pointer bg-[#f7f7f2] px-4 text-sm text-[#151515] hover:bg-white' : 'h-8 border border-white/[0.12] bg-white/[0.055] px-3 text-xs text-[#e1e1e3] hover:bg-white/[0.09]'} flex shrink-0 items-center gap-1.5 rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40`}
             >
               <Plus className="h-3.5 w-3.5" />
               新建文件夹
             </button>
           </div>
-          <div className="mt-3 flex h-9 items-center gap-2 rounded-xl border border-white/[0.12] bg-white/[0.055] px-3 transition-colors focus-within:border-white/[0.24]">
+          <div className={`${embedded ? 'order-2 ml-auto w-full sm:w-[260px]' : 'mt-3'} flex h-9 items-center gap-2 rounded-lg border border-white/[0.12] bg-white/[0.055] px-3 transition-colors focus-within:border-white/[0.24]`}>
             <Search className="h-4 w-4 shrink-0 text-[#85858a]" />
             <input
               ref={searchInputRef}
@@ -706,17 +773,17 @@ export function AssetLibraryDialog({
               </button>
             )}
           </div>
-          {currentFolderId !== null && (
+          {!embedded && currentFolderId !== null && (
             <nav
               aria-label="文件夹路径"
-              className="mt-3 flex min-w-0 items-center gap-0.5 text-xs"
+              className={`${embedded ? 'order-4 w-full' : 'mt-3'} flex min-w-0 items-center gap-0.5 text-xs`}
             >
               <button
                 type="button"
                 onClick={() => setCurrentFolderId(null)}
                 className="rounded-md px-1.5 py-1 text-[#a4a4a8] transition-colors hover:bg-white/[0.07] hover:text-white"
               >
-                素材库
+                资产库
               </button>
               {breadcrumb.map((folder) => (
                 <span key={folder.id} className="flex min-w-0 items-center gap-0.5">
@@ -734,7 +801,7 @@ export function AssetLibraryDialog({
           )}
         </div>
 
-        <div className="reel-scroll min-h-40 flex-1 overflow-y-auto p-2">
+        <div className={`reel-scroll min-h-40 flex-1 overflow-y-auto ${embedded ? 'py-6' : 'p-2'}`}>
           {foldersQuery.isLoading ? (
             <div className="flex min-h-40 items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-[#77777c]" />
@@ -745,11 +812,12 @@ export function AssetLibraryDialog({
                 <Loader2 className="h-5 w-5 animate-spin text-[#77777c]" />
               </div>
             ) : searchResults.length > 0 ? (
-              <div className="grid grid-cols-3 gap-2">
+              <div className={gridClassName} style={gridStyle}>
                 {searchResults.map((result) => (
                   <div key={result.id} className="flex min-w-0 flex-col">
                     <LibraryAssetThumb
                       asset={result}
+                      browseOnly={embedded}
                       renaming={renamingAssetId === result.id}
                       renameValue={assetRenameValue}
                       onRenameValueChange={setAssetRenameValue}
@@ -762,7 +830,7 @@ export function AssetLibraryDialog({
                       className="mt-1 truncate px-0.5 text-[10px] text-[#77777c]"
                       title={result.folderPath.map((folder) => folder.name).join(' / ')}
                     >
-                      {result.folderPath.map((folder) => folder.name).join(' / ') || '素材库根目录'}
+                      {result.folderPath.map((folder) => folder.name).join(' / ') || '资产库根目录'}
                     </span>
                   </div>
                 ))}
@@ -785,7 +853,7 @@ export function AssetLibraryDialog({
               ) : (
                 <>
                   <Users className="h-6 w-6 text-[#55555a]" />
-                  <p className="mt-3 text-sm text-[#9a9a9f]">团队素材库暂无文件夹</p>
+                  <p className="mt-3 text-sm text-[#9a9a9f]">团队资产库暂无文件夹</p>
                   <p className="mt-1 text-xs text-[#66666b]">
                     团队功能上线后，这里将展示团队共享的素材文件夹
                   </p>
@@ -793,19 +861,22 @@ export function AssetLibraryDialog({
               )}
             </div>
           ) : (
-            <div className="space-y-3">
-              {renderFolderRows()}
+            <div className={embedded ? 'space-y-8' : 'space-y-3'}>
+              {(childFolders.length > 0 || creating) && renderFolderRows()}
               {currentFolderId !== null &&
                 (folderAssetsQuery.isLoading ? (
                   <div className="flex min-h-24 items-center justify-center">
                     <Loader2 className="h-5 w-5 animate-spin text-[#77777c]" />
                   </div>
                 ) : folderAssets.length > 0 ? (
-                  <div className="grid grid-cols-3 gap-2">
+                  <div>
+                  {sectionHeading('素材', folderAssets.length)}
+                  <div className={gridClassName} style={gridStyle}>
                     {folderAssets.map((asset) => (
                       <LibraryAssetThumb
                         key={asset.id}
                         asset={asset}
+                        browseOnly={embedded}
                         renaming={renamingAssetId === asset.id}
                         renameValue={assetRenameValue}
                         onRenameValueChange={setAssetRenameValue}
@@ -815,6 +886,7 @@ export function AssetLibraryDialog({
                         onOpenMenu={(event) => openAssetMenu(asset, event)}
                       />
                     ))}
+                  </div>
                   </div>
                 ) : childFolders.length === 0 && !creating ? (
                   <div className="flex min-h-40 flex-col items-center justify-center text-center">
@@ -829,7 +901,7 @@ export function AssetLibraryDialog({
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-white/[0.08] px-4 py-2.5 text-xs">
+        <div className={`flex items-center justify-between py-2.5 text-xs ${embedded ? 'text-[#66666b]' : 'border-t border-white/[0.08] px-4'}`}>
           {actionError ? (
             <span className="text-red-400">{actionError}</span>
           ) : searching ? (
@@ -935,7 +1007,8 @@ export function AssetLibraryDialog({
               type="button"
               role="menuitem"
               onClick={() => {
-                setPreviewAsset(menuAsset.asset);
+                if (embedded) onSelectAsset?.(menuAsset.asset);
+                else setPreviewAsset(menuAsset.asset);
                 setMenuAsset(null);
               }}
               className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-[#dddddf] transition-colors hover:bg-white/[0.08] hover:text-white"

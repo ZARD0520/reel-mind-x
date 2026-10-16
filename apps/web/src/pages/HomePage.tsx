@@ -448,7 +448,7 @@ export function HomePage() {
       </header>
 
       {activeView === 'assets' ? (
-        <AssetsView isAuthenticated={!!me.data} isAuthLoading={me.isLoading} onLogin={() => setIsAuthOpen(true)} />
+        <AssetsView isAuthenticated={!!me.data} isAuthLoading={me.isLoading} creatorName={me.data?.name || me.data?.email} onLogin={() => setIsAuthOpen(true)} />
       ) : activeView === 'home' ? (
         <main className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#050505] px-5 pb-24 sm:px-8">
           <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(circle_at_center,rgba(255,255,255,0.07)_0,rgba(255,255,255,0)_52%)]" />

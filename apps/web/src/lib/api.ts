@@ -1,4 +1,5 @@
 import { SseDecoder } from '@reel/contracts/sse';
+import type { AssetReference } from '@reel/contracts';
 import type { CanvasChatReference, Conversation } from '../features/canvas/chat-types';
 
 const BASE = '/api';
@@ -249,6 +250,8 @@ export const api = {
       projectId?: string;
       canvasId?: string;
       prompt: string;
+      userPrompt?: string;
+      references?: AssetReference[];
       size?: string;
       model?: string;
     }) =>
@@ -261,6 +264,8 @@ export const api = {
       projectId?: string;
       canvasId?: string;
       prompt: string;
+      userPrompt?: string;
+      references?: AssetReference[];
       size?: string;
       duration?: 5 | 10;
       withAudio?: boolean;

@@ -13,6 +13,7 @@ import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   Asset,
+  AssetReference,
   Canvas,
   CanvasGraph,
   GeneratedText,
@@ -649,17 +650,34 @@ function NodeGenerationPrompt({
           throw new Error('首尾帧图片尚未生成完成');
         }
         generateOne = async () => {
+          const referenceNodes = kind === 'video'
+            ? videoReferenceNodes
+            : selectedReferenceIds
+                .filter((source) => dependencySelection.edges.some((edge) => edge.target === nodeId && edge.source === source))
+                .map((source) => dependencySelection.nodes.find((node) => node.id === source))
+                .filter((node): node is WorkflowNode => !!node && node.data.kind === 'text');
+          const references: AssetReference[] = referenceNodes.map((node) => ({
+            kind: node.data.kind,
+            name: node.data.title,
+            content: node.data.kind === 'text' ? node.data.content || node.data.prompt || node.data.title : undefined,
+            url: node.data.url ?? undefined,
+            assetId: node.data.assetId,
+          }));
           const value = (
             kind === 'image'
               ? await api.aiGenMedia.generateImage({
                   canvasId,
                   prompt: imagePrompt,
+                  userPrompt: nextPrompt,
+                  references,
                   size: IMAGE_SIZE_BY_RATIO[aspectRatio],
                   model,
                 })
               : await api.aiGenMedia.generateVideo({
                   canvasId,
                   prompt: videoPrompt,
+                  userPrompt: nextPrompt,
+                  references,
                   size: VIDEO_SIZE_BY_RATIO[videoRequestAspectRatio],
                   duration: videoDuration,
                   withAudio: videoWithAudio,
@@ -1188,7 +1206,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const composingRef = useRef(false);
 
   useEffect(() => {
-    // 外部更新（生成结果、素材库导入）时同步本地草稿
+    // 外部更新（生成结果、资产库导入）时同步本地草稿
     if (data.content !== contentSyncRef.current) {
       contentSyncRef.current = data.content;
       setContentDraft(data.content);
@@ -1790,7 +1808,7 @@ function InfiniteCanvas({
     [instance, setNodes],
   );
 
-  // 把素材库中的素材作为就绪节点加到画布视口中心
+  // 把资产库中的素材作为就绪节点加到画布视口中心
   const addAssetNode = useCallback(
     (asset: Asset) => {
       if (!instance || !wrapperRef.current) return;
@@ -2090,16 +2108,16 @@ function InfiniteCanvas({
               title={
                 actionMenuNode.data.kind === 'text'
                   ? actionMenuNode.data.content.trim()
-                    ? '保存到素材库'
+                    ? '保存到资产库'
                     : '文本内容为空，无法保存'
                   : actionMenuNode.data.status === 'ready'
-                    ? '保存到素材库'
+                    ? '保存到资产库'
                     : '素材生成完成后才能保存'
               }
               className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-[#dddddf] transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
               <FolderPlus className="h-4 w-4" />
-              保存到素材库
+              保存到资产库
             </button>
           )}
           {actionMenuNode?.data.kind === 'video' && (
@@ -2275,7 +2293,7 @@ function InfiniteCanvas({
           onClose={() => setSaveToLibraryTarget(null)}
           onSaved={(folderName) => {
             setSaveToLibraryTarget(null);
-            showToast(folderName ? `已保存到素材库「${folderName}」` : '已保存到素材库');
+            showToast(folderName ? `已保存到资产库「${folderName}」` : '已保存到资产库');
           }}
         />
       )}
@@ -2346,7 +2364,7 @@ function InfiniteCanvas({
           <Search className="h-5 w-5" />
         </IconButton>
         <IconButton
-          label="素材库"
+          label="资产库"
           active={showAssetLibrary}
           onClick={() => {
             setShowAddMenu(false);

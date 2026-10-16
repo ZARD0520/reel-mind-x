@@ -1,5 +1,7 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Env } from '../../config/env';
 import {
   AssetSchema,
   type Asset,
@@ -27,6 +29,7 @@ const JOB_OPTS = {
 export class AiGenMediaService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService<Env, true>,
     @InjectQueue(QueueNames.AI_GEN_MEDIA) private readonly queue: Queue,
   ) {}
 
@@ -76,7 +79,8 @@ export class AiGenMediaService {
   }
 
   async generateImage(userId: string, input: GenerateImageInput): Promise<Asset> {
-    const { prompt, size, model } = input;
+    const { prompt, size } = input;
+    const model = input.model ?? this.config.get('GLM_IMAGE_MODEL', { infer: true });
     await this.assertScopeOwned(userId, input);
     const assetId = randomUUID();
 
@@ -94,7 +98,9 @@ export class AiGenMediaService {
         width: null,
         height: null,
         durationInFrames: null,
-        prompt,
+        prompt: input.userPrompt ?? prompt,
+        references: input.references ?? [],
+        model,
       },
     });
 
@@ -108,7 +114,8 @@ export class AiGenMediaService {
   }
 
   async generateVideo(userId: string, input: GenerateVideoInput): Promise<Asset> {
-    const { prompt, size, duration, withAudio, model, imageAssetIds = [] } = input;
+    const { prompt, size, duration, withAudio, imageAssetIds = [] } = input;
+    const model = input.model ?? this.config.get('GLM_VIDEO_MODEL', { infer: true });
     await this.assertScopeOwned(userId, input);
     await this.assertImageAssetsReady(userId, input, imageAssetIds);
     const assetId = randomUUID();
@@ -127,7 +134,9 @@ export class AiGenMediaService {
         width: null,
         height: null,
         durationInFrames: null,
-        prompt,
+        prompt: input.userPrompt ?? prompt,
+        references: input.references ?? [],
+        model,
       },
     });
 

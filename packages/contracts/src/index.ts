@@ -59,6 +59,16 @@ export type AssetSource = z.infer<typeof AssetSourceSchema>;
 export const AssetStatusSchema = z.enum(['ready', 'generating', 'failed']);
 export type AssetStatus = z.infer<typeof AssetStatusSchema>;
 
+/** 生成时参考内容的快照，避免原节点修改后丢失生成依据。 */
+export const AssetReferenceSchema = z.object({
+  kind: AssetKindSchema,
+  name: z.string().max(200),
+  content: z.string().max(50000).optional(),
+  url: z.string().max(4000).optional(),
+  assetId: z.string().uuid().optional(),
+});
+export type AssetReference = z.infer<typeof AssetReferenceSchema>;
+
 /**
  * 素材条目：可复用的媒体。
  * 归属三选一：project / canvas / folder（素材库素材独立于项目与画布）。
@@ -87,6 +97,9 @@ export const AssetSchema = z.object({
   height: z.number().int().positive().nullable(),
   /** AI 生成时的提示词（source=ai 时有意义） */
   prompt: z.string().max(2000).nullable(),
+  /** 生成时使用的模型；历史素材可能未记录。 */
+  model: z.string().nullable().optional(),
+  references: z.array(AssetReferenceSchema).max(100).optional(),
   createdAt: z.coerce.date(),
 });
 export type Asset = z.infer<typeof AssetSchema>;
@@ -126,7 +139,7 @@ export const CreateAssetFolderSchema = z
     teamId: z.string().uuid().optional(),
   })
   .refine((input) => input.scope !== 'team' || !!input.teamId, {
-    message: '团队素材库必须提供 teamId',
+    message: '团队资产库必须提供 teamId',
   });
 export type CreateAssetFolderInput = z.infer<typeof CreateAssetFolderSchema>;
 
@@ -632,6 +645,8 @@ export const GenerateImageSchema = z
     projectId: z.string().uuid().optional(),
     canvasId: z.string().uuid().optional(),
     prompt: z.string().min(1).max(2000),
+    userPrompt: z.string().min(1).max(2000).optional(),
+    references: z.array(AssetReferenceSchema).max(100).optional(),
     size: SizeSchema.default('1024x1024'),
     model: z.string().min(1).max(100).optional(),
   })
@@ -649,6 +664,8 @@ export const GenerateVideoSchema = z
     projectId: z.string().uuid().optional(),
     canvasId: z.string().uuid().optional(),
     prompt: z.string().min(1).max(2000),
+    userPrompt: z.string().min(1).max(2000).optional(),
+    references: z.array(AssetReferenceSchema).max(100).optional(),
     size: VideoSizeSchema.default('1280x720'),
     duration: VideoDurationSchema.default(5),
     withAudio: z.boolean().default(false),

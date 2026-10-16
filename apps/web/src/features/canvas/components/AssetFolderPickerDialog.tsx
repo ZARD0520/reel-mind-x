@@ -24,7 +24,7 @@ export function AssetFolderPickerDialog({
   onClose,
   onSaved,
 }: {
-  /** 保存时作为素材库名称的展示名（如画布节点名） */
+  /** 保存时作为资产库名称的展示名（如画布节点名） */
   assetName?: string;
   /** 选择文件夹后执行的保存动作（媒体素材 / 文本素材由调用方决定） */
   save: (folderId: string) => Promise<Asset>;
@@ -87,7 +87,7 @@ export function AssetFolderPickerDialog({
     onSuccess: (_asset, folderId) => {
       const folder = folders.find((item) => item.id === folderId);
       void queryClient.invalidateQueries({ queryKey: ['assetFolders'] });
-      onSaved(folder?.name ?? '素材库');
+      onSaved(folder?.name ?? '资产库');
     },
     onError: (error) => setActionError(apiErrorMessage(error, '保存失败，请稍后重试')),
   });
@@ -100,12 +100,12 @@ export function AssetFolderPickerDialog({
       <section
         role="dialog"
         aria-modal="true"
-        aria-label="保存到素材库"
+        aria-label="保存到资产库"
         className="nodrag nopan nowheel flex max-h-[72vh] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl border border-white/[0.14] bg-[#242424] shadow-[0_28px_80px_rgba(0,0,0,0.62)]"
         onPointerDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-3">
-          <h2 className="text-sm font-semibold text-[#eeeeef]">保存到素材库</h2>
+          <h2 className="text-sm font-semibold text-[#eeeeef]">保存到资产库</h2>
           <button
             type="button"
             onClick={onClose}
@@ -125,7 +125,7 @@ export function AssetFolderPickerDialog({
             <div className="flex min-h-40 flex-col items-center justify-center text-center">
               <FolderPlus className="h-6 w-6 text-[#55555a]" />
               <p className="mt-3 text-sm text-[#9a9a9f]">还没有文件夹</p>
-              <p className="mt-1 text-xs text-[#66666b]">先在左侧素材库中创建文件夹</p>
+              <p className="mt-1 text-xs text-[#66666b]">先在资产库中创建文件夹</p>
             </div>
           ) : (
             <div className="space-y-0.5">

@@ -36,6 +36,7 @@ type AssetRow = {
   width: number | null;
   height: number | null;
   prompt: string | null;
+  model?: string | null;
   createdAt: Date;
 };
 
@@ -154,7 +155,7 @@ export class AssetsService {
   ): Promise<Asset> {
     const asset = await this.prisma.asset.findFirst({ where: { id, userId } });
     if (!asset) throw new NotFoundException(`Asset ${id} not found`);
-    if (asset.folderId) throw new BadRequestException('该素材已在素材库中');
+    if (asset.folderId) throw new BadRequestException('该素材已在资产库中');
 
     const folder = await this.prisma.assetFolder.findFirst({
       where: { id: input.folderId, userId, teamId: null },
@@ -178,6 +179,8 @@ export class AssetsService {
         width: asset.width,
         height: asset.height,
         prompt: asset.prompt,
+        model: asset.model,
+        references: asset.references ?? [],
       },
     });
     return this.toAsset(row);
