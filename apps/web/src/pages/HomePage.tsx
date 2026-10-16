@@ -5,6 +5,7 @@ import { AlertCircle, AlertTriangle, ArrowUp, Check, Clapperboard, Loader2, LogO
 import type { AuthSession, Canvas, User as ReelUser } from '@reel/contracts';
 import { ApiError, api } from '../lib/api';
 import { ModelSelect, type ModelId } from '../features/home/components/ModelSelect';
+import { AssetsView } from '../features/home/components/AssetsView';
 
 type AuthMode = 'login' | 'register';
 type FieldErrors = Partial<Record<'name' | 'email' | 'password', string>>;
@@ -280,7 +281,7 @@ export function HomePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const qc = useQueryClient();
-  const activeView = location.pathname === '/project' ? 'workspace' : 'home';
+  const activeView = location.pathname === '/assets' ? 'assets' : location.pathname === '/project' ? 'workspace' : 'home';
   const [prompt, setPrompt] = useState('');
   const [placeholderLength, setPlaceholderLength] = useState(0);
   const [isDeletingPlaceholder, setIsDeletingPlaceholder] = useState(false);
@@ -393,14 +394,21 @@ export function HomePage() {
             <button
               type="button"
               onClick={() => navigate('/')}
-              className={`h-[34px] min-w-[92px] rounded-md px-4 text-sm transition-colors sm:min-w-[118px] ${activeView === 'home' ? 'bg-white/[0.10] font-semibold text-[#f7f7f2]' : 'font-medium text-[#b9b9ba] hover:text-[#f7f7f2]'}`}
+              className={`h-[34px] min-w-[60px] rounded-md px-3 text-sm transition-colors sm:min-w-[118px] ${activeView === 'home' ? 'bg-white/[0.10] font-semibold text-[#f7f7f2]' : 'font-medium text-[#b9b9ba] hover:text-[#f7f7f2]'}`}
             >
               主页
             </button>
             <button
               type="button"
+              onClick={() => navigate('/assets')}
+              className={`h-[34px] min-w-[60px] rounded-md px-3 text-sm transition-colors sm:min-w-[118px] ${activeView === 'assets' ? 'bg-white/[0.10] font-semibold text-[#f7f7f2]' : 'font-medium text-[#b9b9ba] hover:text-[#f7f7f2]'}`}
+            >
+              资产
+            </button>
+            <button
+              type="button"
               onClick={() => navigate('/project')}
-              className={`h-[34px] min-w-[92px] rounded-md px-4 text-sm transition-colors sm:min-w-[118px] ${activeView === 'workspace' ? 'bg-white/[0.10] font-semibold text-[#f7f7f2]' : 'font-medium text-[#b9b9ba] hover:text-[#f7f7f2]'}`}
+              className={`h-[34px] min-w-[60px] rounded-md px-3 text-sm transition-colors sm:min-w-[118px] ${activeView === 'workspace' ? 'bg-white/[0.10] font-semibold text-[#f7f7f2]' : 'font-medium text-[#b9b9ba] hover:text-[#f7f7f2]'}`}
             >
               工作空间
             </button>
@@ -439,7 +447,9 @@ export function HomePage() {
         )}
       </header>
 
-      {activeView === 'home' ? (
+      {activeView === 'assets' ? (
+        <AssetsView isAuthenticated={!!me.data} isAuthLoading={me.isLoading} onLogin={() => setIsAuthOpen(true)} />
+      ) : activeView === 'home' ? (
         <main className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#050505] px-5 pb-24 sm:px-8">
           <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:radial-gradient(circle_at_center,rgba(255,255,255,0.07)_0,rgba(255,255,255,0)_52%)]" />
           <div className="relative flex w-full max-w-[760px] -translate-y-5 flex-col items-center gap-[26px]">

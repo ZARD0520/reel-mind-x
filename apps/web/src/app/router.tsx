@@ -7,6 +7,7 @@ import { CanvasPage } from '../pages/CanvasPage';
 export const router = createBrowserRouter([
   { path: '/', element: <HomePage /> },
   { path: '/project', element: <HomePage /> },
+  { path: '/assets', element: <HomePage /> },
   { path: '/canvas/:id', element: <CanvasPage /> },
   { path: '/editor/:id', element: <EditorPage /> },
 ]);
