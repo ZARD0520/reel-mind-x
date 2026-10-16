@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Loader2, Maximize2, Minimize2, X } from 'lucide-react';
 import { useCanvasChat } from '../useCanvasChat';
 import type { CanvasChatReference } from '../chat-types';
@@ -19,6 +19,7 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
   onClose: () => void;
 }) {
   const chat = useCanvasChat(canvasId, initialPrompt, onInitialPromptConsumed);
+  const availableNodeIds = useMemo(() => new Set(nodes.map((node) => node.id)), [nodes]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,11 +41,11 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
           {chat.detail.isLoading && chat.activeId && !chat.pending && <div className="flex justify-center pt-8"><Loader2 className="h-5 w-5 animate-spin text-[#99999d]" /></div>}
           {!chat.detail.data?.messages.length && !chat.pending && !chat.detail.isLoading && <div className="flex h-full flex-col items-center justify-center text-center"><h2 className="text-xl font-semibold text-[#dededb]">Hi～{userName}</h2><p className="mt-2 text-sm text-[#89898d]">今天想创作点什么？</p></div>}
           <div className="mx-auto flex max-w-3xl flex-col gap-5">
-            {chat.detail.data?.messages.map((message) => <CanvasChatMessage key={message.id} role={message.role} content={message.content} references={message.references} onFocusNode={onFocusNode} />)}
+            {chat.detail.data?.messages.map((message) => <CanvasChatMessage key={message.id} role={message.role} content={message.content} references={message.references} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />)}
             {chat.pending && <>
-              <CanvasChatMessage role="user" content={chat.pending.prompt} references={chat.pending.references} onFocusNode={onFocusNode} />
+              <CanvasChatMessage role="user" content={chat.pending.prompt} references={chat.pending.references} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />
               {chat.pending.answer
-                ? <CanvasChatMessage key={chat.pending.key} role="assistant" content={chat.pending.answer} onFocusNode={onFocusNode} typing complete={!!chat.pending.completed} onTypingComplete={chat.finishTurn} onTypingProgress={() => bottomRef.current?.scrollIntoView({ block: 'end' })} />
+                ? <CanvasChatMessage key={chat.pending.key} role="assistant" content={chat.pending.answer} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} typing complete={!!chat.pending.completed} onTypingComplete={chat.finishTurn} onTypingProgress={() => bottomRef.current?.scrollIntoView({ block: 'end' })} />
                 : <div className="flex items-center gap-2 text-sm text-[#99999d]"><Loader2 className="h-4 w-4 animate-spin" />思考中...</div>}
             </>}
             <div ref={bottomRef} />

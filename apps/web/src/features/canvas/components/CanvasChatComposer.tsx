@@ -60,7 +60,10 @@ export function CanvasChatComposer({ chat, nodes, onFocusNode }: {
         </div>
       )}
       {!!chat.references.length && <div className="mb-2 flex flex-wrap gap-1.5" aria-label="已引用的画布节点">
-        {chat.references.map((reference) => <CanvasChatReferenceChip key={reference.id} reference={nodes.find((node) => node.id === reference.id) ?? reference} onFocusNode={onFocusNode} onRemove={() => chat.setReferences((current) => current.filter((item) => item.id !== reference.id))} />)}
+        {chat.references.map((reference) => {
+          const node = nodes.find((candidate) => candidate.id === reference.id);
+          return <CanvasChatReferenceChip key={reference.id} reference={node ?? reference} available={!!node} onFocusNode={onFocusNode} onRemove={() => chat.setReferences((current) => current.filter((item) => item.id !== reference.id))} />;
+        })}
       </div>}
       <textarea ref={inputRef} value={chat.draft} onChange={(event) => { chat.setDraft(event.target.value); updateMention(event.target.value, event.target.selectionStart); }} onClick={(event) => updateMention(chat.draft, event.currentTarget.selectionStart)} onKeyDown={(event) => {
         if (event.nativeEvent.isComposing) return;

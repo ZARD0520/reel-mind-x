@@ -12,10 +12,11 @@ const markdownPlugins = [remarkGfm];
 const htmlPlugins = [rehypeRaw, rehypeSanitize];
 const typingHtmlPlugins = [...htmlPlugins, rehypeChatCaret];
 
-export function CanvasChatMessage({ role, content, references = [], onFocusNode, typing = false, complete = false, onTypingComplete, onTypingProgress }: {
+export function CanvasChatMessage({ role, content, references = [], availableNodeIds, onFocusNode, typing = false, complete = false, onTypingComplete, onTypingProgress }: {
   role: 'user' | 'assistant';
   content: string;
   references?: CanvasChatReference[];
+  availableNodeIds: ReadonlySet<string>;
   onFocusNode: (nodeId: string) => void;
   typing?: boolean;
   complete?: boolean;
@@ -38,7 +39,7 @@ export function CanvasChatMessage({ role, content, references = [], onFocusNode,
 
   if (role === 'user') {
     return <div className="max-w-[90%] self-end whitespace-pre-wrap break-words rounded-2xl bg-[#303030] px-4 py-2 text-sm leading-6 text-[#f3f3f0]">
-      {!!references.length && <div className="mb-1.5 flex flex-wrap gap-1">{references.map((reference) => <CanvasChatReferenceChip key={reference.id} reference={reference} onFocusNode={onFocusNode} />)}</div>}
+      {!!references.length && <div className="mb-1.5 flex flex-wrap gap-1">{references.map((reference) => <CanvasChatReferenceChip key={reference.id} reference={reference} available={availableNodeIds.has(reference.id)} onFocusNode={onFocusNode} />)}</div>}
       {content}
     </div>;
   }
