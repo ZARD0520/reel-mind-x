@@ -126,6 +126,7 @@ export class AssetsService {
         userId,
         source: 'ai',
         status: 'ready',
+        historyDeletedAt: null,
         ...(query.scope === 'canvas' && query.canvasId ? { canvasId: query.canvasId } : {}),
         ...(query.q ? { prompt: { contains: query.q, mode: 'insensitive' as const } } : {}),
       },
@@ -133,6 +134,14 @@ export class AssetsService {
       take: 200,
     });
     return rows.map((row) => this.toAsset(row));
+  }
+
+  async removeHistory(userId: string, id: string): Promise<void> {
+    const result = await this.prisma.asset.updateMany({
+      where: { id, userId, source: 'ai', status: 'ready' },
+      data: { historyDeletedAt: new Date() },
+    });
+    if (result.count === 0) throw new NotFoundException(`Asset history ${id} not found`);
   }
 
   async remove(userId: string, id: string): Promise<void> {

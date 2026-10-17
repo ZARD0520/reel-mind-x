@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Loader2, Sparkles, Trash2, X } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import type { GeneratedText } from '@reel/contracts';
-import { api } from '../../../lib/api';
+import { MODEL_BUSY_MESSAGE } from '@reel/contracts/generation';
+import { ApiError, api } from '../../../lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -10,20 +11,21 @@ interface Message {
 }
 
 interface TextGenDialogProps {
+  projectId: string;
   open: boolean;
   onClose: () => void;
   /** 应用生成结果：选中文本片段则更新，否则新建（由调用方决定） */
   onApply: (text: string) => void;
 }
 
-export function TextGenDialog({ open, onClose, onApply }: TextGenDialogProps) {
+export function TextGenDialog({ projectId, open, onClose, onApply }: TextGenDialogProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
 
   const generate = useMutation({
     // 传完整对话历史，让模型记住上下文（多轮对话）。
     mutationFn: (nextMessages: Message[]) =>
-      api.textGen.generate({ messages: nextMessages, maxLength: 100 }) as Promise<GeneratedText>,
+      api.textGen.generate({ projectId, messages: nextMessages, maxLength: 100 }) as Promise<GeneratedText>,
     onSuccess: (data) => {
       setMessages((prev) => [...prev, { role: 'assistant', content: data.text }]);
     },
@@ -130,7 +132,7 @@ export function TextGenDialog({ open, onClose, onApply }: TextGenDialogProps) {
               )}
               {generate.isError && (
                 <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-300">
-                  {generate.error instanceof Error ? generate.error.message : '生成失败'}
+                  {generate.error instanceof ApiError && generate.error.status === 429 ? MODEL_BUSY_MESSAGE : generate.error instanceof Error ? generate.error.message : '生成失败'}
                 </div>
               )}
             </div>

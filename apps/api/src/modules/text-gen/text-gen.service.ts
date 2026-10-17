@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import type { GenerateTextInput, GeneratedText } from '@reel/contracts';
 import type { ChatMessage } from '@reel/llm';
 import { LlmService } from '../llm/llm.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 /**
  * AI 文本生成业务逻辑。
@@ -9,10 +10,16 @@ import { LlmService } from '../llm/llm.service';
  */
 @Injectable()
 export class TextGenService {
-  constructor(private readonly llm: LlmService) {}
+  constructor(private readonly llm: LlmService, private readonly prisma: PrismaService) {}
 
-  async generate(input: GenerateTextInput): Promise<GeneratedText> {
+  async generate(input: GenerateTextInput, userId: string): Promise<GeneratedText> {
     const { prompt, messages: history, maxLength, temperature, model } = input;
+    if (input.canvasId || input.projectId) {
+      const scope = input.canvasId
+        ? await this.prisma.canvas.findFirst({ where: { id: input.canvasId, userId }, select: { id: true } })
+        : await this.prisma.project.findFirst({ where: { id: input.projectId, userId, deletedAt: null }, select: { id: true } });
+      if (!scope) throw new NotFoundException('Generation scope not found');
+    }
 
     // system prompt 由后端统一注入，前端只传对话历史（user/assistant）。
     const systemMessage: ChatMessage = {
@@ -40,9 +47,25 @@ export class TextGenService {
 
     // 兜底：模型可能超出字数限制，硬截断保证契约。
     const text = this.clamp(result.text.trim(), maxLength);
+    let assetId: string | undefined;
+    if (input.canvasId || input.projectId) {
+      const userPrompt = input.userPrompt ?? prompt ?? [...(history ?? [])].reverse().find((message) => message.role === 'user')?.content ?? '';
+      const asset = await this.prisma.asset.create({ data: {
+        userId,
+        ...(input.canvasId ? { canvasId: input.canvasId } : { projectId: input.projectId }),
+        kind: 'text', source: 'ai', status: 'ready',
+        name: `AI Text: ${userPrompt.slice(0, 30)}`,
+        content: text,
+        prompt: userPrompt.slice(0, 2000),
+        model: result.model,
+        references: input.references ?? [],
+      } });
+      assetId = asset.id;
+    }
 
     return {
       text,
+      assetId,
       model: result.model,
       usage: result.usage,
     };

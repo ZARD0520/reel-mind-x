@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
 import { LlmError } from '@reel/llm';
+import { MODEL_BUSY_MESSAGE } from '@reel/contracts';
 
 /**
  * 全局异常过滤器：把 LlmError 映射成合适的 HTTP 响应。
@@ -17,6 +18,10 @@ import { LlmError } from '@reel/llm';
 @Catch(LlmError)
 export class LlmExceptionFilter extends BaseExceptionFilter {
   catch(exception: LlmError, host: ArgumentsHost) {
+    if (exception.status === 429) {
+      super.catch(new HttpException(MODEL_BUSY_MESSAGE, HttpStatus.TOO_MANY_REQUESTS), host);
+      return;
+    }
     const status =
       exception.status === 401 || exception.status === 403
         ? HttpStatus.BAD_REQUEST

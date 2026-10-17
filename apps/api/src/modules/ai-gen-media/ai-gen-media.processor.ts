@@ -1,7 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ZhipuAiGenProvider } from '@reel/ai-gen';
+import { AiGenError, ZhipuAiGenProvider } from '@reel/ai-gen';
+import { MODEL_BUSY_MESSAGE } from '@reel/contracts';
 import type { Job } from 'bullmq';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -156,6 +157,7 @@ export class AiGenMediaProcessor extends WorkerHost {
       where: { id: assetId },
       data: {
         status: 'ready',
+        error: null,
         url: `/files/users/${userId}/uploads/${filename}`,
         localPath,
         width: probe.width,
@@ -168,7 +170,10 @@ export class AiGenMediaProcessor extends WorkerHost {
   private async markFailed(assetId: string, err: unknown): Promise<void> {
     this.logger.error(`Generation ${assetId} failed: ${(err as Error).message}`);
     await this.prisma.asset
-      .update({ where: { id: assetId }, data: { status: 'failed' } })
+      .update({ where: { id: assetId }, data: {
+        status: 'failed',
+        error: err instanceof AiGenError && err.status === 429 ? MODEL_BUSY_MESSAGE : '生成失败，请稍后重试',
+      } })
       .catch(() => undefined);
   }
 }

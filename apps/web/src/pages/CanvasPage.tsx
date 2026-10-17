@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { MODEL_BUSY_MESSAGE } from '@reel/contracts/generation';
 import type {
   Asset,
   AssetReference,
@@ -86,6 +87,7 @@ import { AssetHistoryDialog } from '../features/canvas/components/AssetHistoryDi
 import { CanvasChatDrawer } from '../features/canvas/components/CanvasChatDrawer';
 import type { CanvasChatReference } from '../features/canvas/chat-types';
 import { Select, type SelectOption } from '../components/ui/Select';
+import { ReferencePreview } from '../components/ui/ReferencePreview';
 import {
   IMAGE_SIZE_BY_RATIO,
   RATIO_OPTIONS,
@@ -525,6 +527,7 @@ type GenerationBatchResult = { values: GenerationResult[]; failedCount: number }
 
 function generationErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.status === 429) return MODEL_BUSY_MESSAGE;
     try {
       const body = JSON.parse(error.body) as { message?: string | string[] };
       if (Array.isArray(body.message)) return body.message.join('；');
@@ -576,11 +579,11 @@ function NodeGenerationPrompt({
     mutationFn: async ({ prompt: nextPrompt, count }) => {
       let generateOne: () => Promise<GenerationResult>;
       if (kind === 'text') {
-        const references = dependencySelection.edges
+        const referenceNodes = dependencySelection.edges
           .filter((edge) => edge.target === nodeId && selectedReferenceIds.includes(edge.source))
           .map((edge) => dependencySelection.nodes.find((node) => node.id === edge.source))
-          .filter((node): node is WorkflowNode => !!node)
-          .map((node) => {
+          .filter((node): node is WorkflowNode => !!node);
+        const references = referenceNodes.map((node) => {
             const reference = node.data.content || node.data.prompt || node.data.title;
             return `【${node.data.title}】${reference}`;
           });
@@ -589,7 +592,10 @@ function NodeGenerationPrompt({
           : nextPrompt;
         generateOne = async () => {
           const value = (await api.textGen.generate({
+            canvasId,
             prompt: promptWithReferences,
+            userPrompt: nextPrompt,
+            references: referenceNodes.map((node) => ({ kind: node.data.kind, name: node.data.title, content: node.data.content || node.data.prompt || node.data.title, url: node.data.url ?? undefined, assetId: node.data.assetId })),
             maxLength: 2000,
             model,
           })) as GeneratedText;
@@ -724,6 +730,7 @@ function NodeGenerationPrompt({
       if (result.type === 'text') {
         updateNodeData(nodeId, {
           content: result.value.text,
+          assetId: result.value.assetId,
           model: result.value.model,
           status: 'ready',
           error: '',
@@ -765,7 +772,7 @@ function NodeGenerationPrompt({
               videoDuration: kind === 'video' ? videoDuration : undefined,
               videoWithAudio: kind === 'video' ? videoWithAudio : undefined,
               content: additionalResult.type === 'text' ? additionalResult.value.text : '',
-              assetId: additionalResult.type === 'media' ? additionalResult.value.id : undefined,
+              assetId: additionalResult.type === 'media' ? additionalResult.value.id : additionalResult.value.assetId,
               url: additionalResult.type === 'media' ? additionalResult.value.url : null,
               status: additionalResult.type === 'text' ? 'ready' : additionalResult.value.status,
               error: '',
@@ -888,8 +895,8 @@ function NodeGenerationPrompt({
             const ReferenceIcon = nodeIcons[node.data.kind];
             const frameIndex = videoImageReferenceIds.indexOf(node.id);
             return (
+              <ReferencePreview key={edge.id} reference={{ kind: node.data.kind, name: node.data.title, content: node.data.content || node.data.prompt, url: node.data.url ?? undefined }}>
               <div
-                key={edge.id}
                 role="button"
                 tabIndex={0}
                 onClick={() => addReferenceToInput(node.id)}
@@ -900,7 +907,6 @@ function NodeGenerationPrompt({
                   }
                 }}
                 className={`group/reference flex h-7 max-w-36 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-xs text-[#d0d0d2] transition-colors ${selectedReferenceIds.includes(node.id) ? 'bg-white/[0.13]' : 'bg-white/[0.07] hover:bg-white/[0.1]'}`}
-                title={node.data.title}
               >
                 <ReferenceIcon className="h-3.5 w-3.5 shrink-0" />
                 {kind === 'video' && frameIndex >= 0 && (
@@ -923,6 +929,7 @@ function NodeGenerationPrompt({
                   <X className="h-3 w-3" />
                 </button>
               </div>
+              </ReferencePreview>
             );
           })}
         </div>
@@ -949,10 +956,10 @@ function NodeGenerationPrompt({
           const ReferenceIcon = nodeIcons[node.data.kind];
           const frameIndex = videoImageReferenceIds.indexOf(node.id);
           return (
+            <ReferencePreview key={node.id} reference={{ kind: node.data.kind, name: node.data.title, content: node.data.content || node.data.prompt, url: node.data.url ?? undefined }}>
             <span
-              key={node.id}
+              tabIndex={0}
               className="mt-0.5 flex h-7 max-w-36 shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.1] px-2 text-xs text-[#e0e0e2]"
-              title={node.data.title}
             >
               <ReferenceIcon className="h-3.5 w-3.5 shrink-0" />
               {kind === 'video' && frameIndex >= 0 && (
@@ -962,6 +969,7 @@ function NodeGenerationPrompt({
               )}
               <span className="truncate">{node.data.title}</span>
             </span>
+            </ReferencePreview>
           );
         })}
         <textarea
@@ -1288,13 +1296,14 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
 
   useEffect(() => {
     if (!asset.data) return;
-    if (asset.data.status === data.status && asset.data.url === data.url) return;
+    const error = asset.data.status === 'failed' ? asset.data.error || '生成失败' : '';
+    if (asset.data.status === data.status && asset.data.url === data.url && error === data.error) return;
     updateNodeData(id, {
       url: asset.data.url,
       status: asset.data.status,
-      error: asset.data.status === 'failed' ? '生成失败' : '',
+      error,
     });
-  }, [asset.data, data.status, data.url, id, updateNodeData]);
+  }, [asset.data, data.status, data.url, data.error, id, updateNodeData]);
 
   const isVideo = data.kind === 'video';
   const nodeWidth = isVideo
@@ -1420,7 +1429,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           )}
           {data.status === 'failed' && !data.url && (
             <div className="absolute bottom-5 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">
-              生成失败，请重新尝试
+              {data.error || '生成失败，请重新尝试'}
             </div>
           )}
         </div>
@@ -1523,7 +1532,7 @@ function InfiniteCanvas({
   const [showAssetHistory, setShowAssetHistory] = useState(false);
   const [saveToLibraryTarget, setSaveToLibraryTarget] = useState<
     | { type: 'media'; assetId: string; title: string }
-    | { type: 'text'; title: string; content: string; prompt?: string }
+    | { type: 'text'; title: string; content: string; prompt?: string; model?: string; sourceAssetId?: string }
     | null
   >(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -1564,7 +1573,7 @@ function InfiniteCanvas({
     const forwardWheel = (event: WheelEvent) => {
       if (!(event.target instanceof Element)) return;
       if (!event.target.closest('.react-flow__node, .react-flow__node-toolbar')) return;
-      if (event.target.closest('.workflow-node-editor, [role="dialog"]')) return;
+      if (event.target.closest('.workflow-node-editor, [role="dialog"], [role="tooltip"]')) return;
       const pane = wrapper.querySelector('.react-flow__pane');
       if (!pane) return;
       event.preventDefault();
@@ -1832,6 +1841,8 @@ function InfiniteCanvas({
                 title: asset.name,
                 content: asset.content ?? '',
                 prompt: asset.prompt ?? '',
+                model: asset.model ?? undefined,
+                assetId: asset.id,
                 status: 'ready',
               }
             : {
@@ -1839,6 +1850,8 @@ function InfiniteCanvas({
                 title: asset.name,
                 assetId: asset.id,
                 url: asset.url,
+                prompt: asset.prompt ?? '',
+                model: asset.model ?? undefined,
                 status: 'ready',
                 aspectRatio: closestAspectRatio(
                   asset.width,
@@ -2090,6 +2103,8 @@ function InfiniteCanvas({
                     title: actionMenuNode.data.title,
                     content: actionMenuNode.data.content,
                     prompt: actionMenuNode.data.prompt,
+                    model: actionMenuNode.data.model,
+                    sourceAssetId: actionMenuNode.data.assetId,
                   });
                   return;
                 }
@@ -2288,6 +2303,8 @@ function InfiniteCanvas({
                   name: saveToLibraryTarget.title,
                   content: saveToLibraryTarget.content,
                   prompt: saveToLibraryTarget.prompt,
+                  model: saveToLibraryTarget.model,
+                  sourceAssetId: saveToLibraryTarget.sourceAssetId,
                 }) as Promise<Asset>)
           }
           onClose={() => setSaveToLibraryTarget(null)}

@@ -112,6 +112,10 @@ export class AssetFoldersService {
     input: CreateTextAssetInput,
   ): Promise<Asset> {
     await this.findOwnedRow(userId, folderId);
+    const source = input.sourceAssetId
+      ? await this.prisma.asset.findFirst({ where: { id: input.sourceAssetId, userId, kind: 'text' } })
+      : null;
+    if (input.sourceAssetId && !source) throw new NotFoundException('Source text asset not found');
     const row = await this.prisma.asset.create({
       data: {
         userId,
@@ -126,6 +130,8 @@ export class AssetFoldersService {
         localPath: null,
         content: input.content,
         prompt: input.prompt ?? null,
+        model: source?.model ?? input.model ?? null,
+        references: source?.references ?? [],
       },
     });
     return this.toAsset(row);

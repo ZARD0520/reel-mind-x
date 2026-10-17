@@ -9,6 +9,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./generation": {
+      "types": "./src/generation.ts",
+      "browser": "./src/generation.ts",
+      "default": "./dist/generation.js"
+    },
     "./sse": {
       "types": "./src/sse.ts",
       "browser": "./src/sse.ts",

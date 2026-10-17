@@ -159,6 +159,7 @@ export const api = {
       });
     },
     remove: (id: string) => requestVoid(`/assets/${id}`, { method: 'DELETE' }),
+    removeHistory: (id: string) => requestVoid(`/assets/${id}/history`, { method: 'DELETE' }),
     rename: (id: string, name: string) =>
       request(`/assets/${id}`, {
         method: 'PATCH',
@@ -188,7 +189,7 @@ export const api = {
         body: JSON.stringify(body),
       }),
     listAssets: (id: string) => request(`/asset-folders/${id}/assets`),
-    createTextAsset: (folderId: string, body: { name: string; content: string; prompt?: string }) =>
+    createTextAsset: (folderId: string, body: { name: string; content: string; prompt?: string; model?: string; sourceAssetId?: string }) =>
       request(`/asset-folders/${folderId}/assets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -233,6 +234,10 @@ export const api = {
   },
   textGen: {
     generate: (body: {
+      canvasId?: string;
+      projectId?: string;
+      userPrompt?: string;
+      references?: AssetReference[];
       prompt?: string;
       messages?: { role: 'user' | 'assistant'; content: string }[];
       maxLength?: number;

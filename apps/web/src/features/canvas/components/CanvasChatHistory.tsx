@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { ConversationSummary } from '../chat-types';
@@ -6,6 +6,18 @@ import type { useCanvasChat } from '../useCanvasChat';
 
 export function CanvasChatHistory({ chat }: { chat: ReturnType<typeof useCanvasChat> }) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+        setOpen(false);
+        setEditingId(null);
+      }
+    };
+    document.addEventListener('pointerdown', closeOutside, true);
+    return () => document.removeEventListener('pointerdown', closeOutside, true);
+  }, [open]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<ConversationSummary | null>(null);
@@ -24,7 +36,7 @@ export function CanvasChatHistory({ chat }: { chat: ReturnType<typeof useCanvasC
   }
 
   return (
-    <div className="relative min-w-0 flex-1">
+    <div ref={rootRef} className="relative min-w-0 flex-1">
       <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label="选择对话" className="flex max-w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-semibold text-[#f3f3f0] hover:bg-white/[0.08]">
         <span className="truncate">{chat.title}</span><ChevronDown className="h-4 w-4 shrink-0 text-[#99999d]" />
       </button>

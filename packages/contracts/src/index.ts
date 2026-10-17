@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export { MODEL_BUSY_MESSAGE } from './generation';
 
 /**
  * 共享契约：Zod 是单一事实来源。
@@ -85,6 +86,7 @@ export const AssetSchema = z.object({
   kind: AssetKindSchema,
   source: AssetSourceSchema,
   status: AssetStatusSchema,
+  error: z.string().nullable().optional(),
   name: z.string().min(1).max(200),
   /** 媒体访问地址（上传后或 AI 生成完成后填充；generating 时可为空） */
   url: z.string().min(1).nullable(),
@@ -181,6 +183,8 @@ export const CreateTextAssetSchema = z.object({
   name: z.string().trim().min(1).max(200),
   content: z.string().trim().min(1).max(50000),
   prompt: z.string().max(2000).optional(),
+  model: z.string().max(100).optional(),
+  sourceAssetId: z.string().uuid().optional(),
 });
 export type CreateTextAssetInput = z.infer<typeof CreateTextAssetSchema>;
 
@@ -600,6 +604,10 @@ export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 /** AI 文本生成请求入参 */
 export const GenerateTextSchema = z
   .object({
+    projectId: z.string().uuid().optional(),
+    canvasId: z.string().uuid().optional(),
+    userPrompt: z.string().min(1).max(2000).optional(),
+    references: z.array(AssetReferenceSchema).max(100).optional(),
     /** 用户提示词（单轮快捷模式，与 messages 二选一） */
     prompt: z.string().min(1).max(2000).optional(),
     /** 完整对话历史（多轮模式，包含所有 user 和 assistant 消息） */
@@ -613,11 +621,15 @@ export const GenerateTextSchema = z
   })
   .refine((data) => data.prompt || data.messages, {
     message: 'prompt 或 messages 必须提供其一',
+  })
+  .refine((data) => !(data.projectId && data.canvasId), {
+    message: 'projectId 和 canvasId 不能同时提供',
   });
 export type GenerateTextInput = z.infer<typeof GenerateTextSchema>;
 
 /** AI 文本生成响应 */
 export const GeneratedTextSchema = z.object({
+  assetId: z.string().uuid().optional(),
   /** 生成的文本内容 */
   text: z.string(),
   /** 实际使用的模型名称 */

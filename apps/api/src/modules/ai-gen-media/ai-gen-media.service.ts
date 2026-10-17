@@ -5,6 +5,7 @@ import type { Env } from '../../config/env';
 import {
   AssetSchema,
   type Asset,
+  type AssetReference,
   type GenerateImageInput,
   type GenerateVideoInput,
 } from '@reel/contracts';
@@ -57,8 +58,8 @@ export class AiGenMediaService {
     userId: string,
     input: { projectId?: string; canvasId?: string },
     imageAssetIds: string[],
-  ): Promise<void> {
-    if (imageAssetIds.length === 0) return;
+  ): Promise<AssetReference[]> {
+    if (imageAssetIds.length === 0) return [];
     const uniqueIds = [...new Set(imageAssetIds)];
     if (uniqueIds.length !== imageAssetIds.length) {
       throw new BadRequestException('首帧和尾帧不能使用同一个图片素材');
@@ -71,11 +72,15 @@ export class AiGenMediaService {
         status: 'ready',
         ...this.scopeData(input),
       },
-      select: { id: true, localPath: true },
+      select: { id: true, localPath: true, name: true, url: true },
     });
     if (assets.length !== uniqueIds.length || assets.some((asset) => !asset.localPath)) {
       throw new BadRequestException('首尾帧必须是当前画布中已生成完成的图片');
     }
+    return imageAssetIds.map((assetId) => {
+      const asset = assets.find((candidate) => candidate.id === assetId)!;
+      return { kind: 'image', name: asset.name, url: asset.url ?? undefined, assetId };
+    });
   }
 
   async generateImage(userId: string, input: GenerateImageInput): Promise<Asset> {
@@ -117,7 +122,12 @@ export class AiGenMediaService {
     const { prompt, size, duration, withAudio, imageAssetIds = [] } = input;
     const model = input.model ?? this.config.get('GLM_VIDEO_MODEL', { infer: true });
     await this.assertScopeOwned(userId, input);
-    await this.assertImageAssetsReady(userId, input, imageAssetIds);
+    const frameReferences = await this.assertImageAssetsReady(userId, input, imageAssetIds);
+    const references = [...(input.references ?? [])];
+    for (const frame of frameReferences) {
+      if (!references.some((reference) => reference.kind === 'image' && reference.assetId === frame.assetId)) references.push(frame);
+    }
+    if (references.length > 100) throw new BadRequestException('参考内容最多支持 100 项');
     const assetId = randomUUID();
 
     const row = await this.prisma.asset.create({
@@ -135,7 +145,7 @@ export class AiGenMediaService {
         height: null,
         durationInFrames: null,
         prompt: input.userPrompt ?? prompt,
-        references: input.references ?? [],
+        references,
         model,
       },
     });

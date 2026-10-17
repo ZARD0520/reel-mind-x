@@ -108,4 +108,13 @@ export class AssetsController {
   ): Promise<void> {
     return this.assets.remove(user.id, id);
   }
+
+  @Delete(':id/history')
+  @HttpCode(204)
+  removeHistory(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<void> {
+    return this.assets.removeHistory(user.id, id);
+  }
 }

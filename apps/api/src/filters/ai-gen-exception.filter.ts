@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
 import { AiGenError } from '@reel/ai-gen';
+import { MODEL_BUSY_MESSAGE } from '@reel/contracts';
 
 /**
  * 全局异常过滤器：把 AiGenError 映射成合适的 HTTP 响应。
@@ -16,6 +17,10 @@ import { AiGenError } from '@reel/ai-gen';
 @Catch(AiGenError)
 export class AiGenExceptionFilter extends BaseExceptionFilter {
   catch(exception: AiGenError, host: ArgumentsHost) {
+    if (exception.status === 429) {
+      super.catch(new HttpException(MODEL_BUSY_MESSAGE, HttpStatus.TOO_MANY_REQUESTS), host);
+      return;
+    }
     const status =
       exception.status === 401 || exception.status === 403
         ? HttpStatus.BAD_REQUEST

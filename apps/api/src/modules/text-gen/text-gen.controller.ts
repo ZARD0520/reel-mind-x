@@ -3,6 +3,8 @@ import type { GeneratedText } from '@reel/contracts';
 import { AuthGuard } from '../auth/auth.guard';
 import { GenerateTextDto } from './text-gen.dto';
 import { TextGenService } from './text-gen.service';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { AuthUser } from '../auth/auth.types';
 
 /**
  * AI 文本生成接口。controller 保持薄，只做接收与响应。
@@ -14,7 +16,7 @@ export class TextGenController {
 
   /** 同步生成一段受字数限制的文案 */
   @Post('generate')
-  async generate(@Body() dto: GenerateTextDto): Promise<GeneratedText> {
-    return this.textGen.generate(dto);
+  async generate(@Body() dto: GenerateTextDto, @CurrentUser() user: AuthUser): Promise<GeneratedText> {
+    return this.textGen.generate(dto, user.id);
   }
 }

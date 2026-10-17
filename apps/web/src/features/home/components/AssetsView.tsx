@@ -83,6 +83,14 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
     queryFn: () => api.assets.history({ scope: 'all' }) as Promise<Asset[]>,
     enabled: isAuthenticated && section === 'materials',
   });
+  const filterCounts = useMemo(() => {
+    const counts = { all: 0, image: 0, video: 0, audio: 0 };
+    for (const asset of history.data ?? []) {
+      counts.all++;
+      if (asset.kind !== 'text') counts[asset.kind]++;
+    }
+    return counts;
+  }, [history.data]);
   const groups = useMemo(() => {
     const byDay = new Map<string, Asset[]>();
     const assets = (history.data ?? [])
@@ -117,11 +125,11 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
         {(section === 'materials' || !isAuthenticated || isAuthLoading) && <div className="shrink-0 px-4 pt-8 sm:px-8 lg:px-10">
           <h1 className="text-xl font-semibold text-[#f7f7f2]">{section === 'materials' ? '素材库' : '资产库'}</h1>
           {section === 'materials' && (
-            <div className="mt-6 flex gap-1 border-b border-white/[0.08] pb-4" role="group" aria-label="素材类型筛选">
+            <div className="mt-6 flex flex-wrap gap-1 border-b border-white/[0.08] pb-4" role="group" aria-label="素材类型筛选">
               {FILTERS.map(({ value, label }) => (
                 <button key={value} type="button" onClick={() => setFilter(value)} aria-pressed={filter === value}
                   className={`h-9 rounded-lg px-3 text-sm transition-colors sm:px-5 ${filter === value ? 'bg-white/[0.12] font-medium text-[#f7f7f2]' : 'text-[#8e8e92] hover:bg-white/[0.05] hover:text-[#f7f7f2]'}`}>
-                  {label}
+                  {label} {filterCounts[value]}
                 </button>
               ))}
             </div>
@@ -151,11 +159,7 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
           <div className="reel-scroll min-h-0 flex-1 space-y-8 overflow-y-auto px-4 py-6 sm:px-8 lg:px-10">
             {groups.map(([day, assets]) => (
               <section key={day} aria-label={day}>
-                <div className="mb-4 flex items-center gap-4">
-                  <h2 className="shrink-0 text-sm font-medium text-[#b9b9ba]">{day}</h2>
-                  <div className="h-px flex-1 bg-white/[0.08]" />
-                  <span className="text-xs text-[#66666b]">{assets.length} 个素材</span>
-                </div>
+                <h2 className="mb-4 text-sm font-medium text-[#b9b9ba]">{day}</h2>
                 <div className="grid gap-4 [--material-columns:1] sm:[--material-columns:2] lg:[--material-columns:3] xl:[--material-columns:4] 2xl:[--material-columns:5]"
                   style={{ gridTemplateColumns: 'repeat(auto-fill, min(100%, calc((100% - (var(--material-columns) - 1) * 1rem) / var(--material-columns) * 0.7)))' }}>
                   {assets.map((asset) => <MaterialCard key={asset.id} asset={asset} onOpen={() => setDetailAsset(asset)} />)}
@@ -167,14 +171,16 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
       </section>
       {libraryToast && <div role="status" className="fixed bottom-8 left-1/2 z-[80] -translate-x-1/2 rounded-xl border border-white/10 bg-[#292929] px-4 py-3 text-sm text-white shadow-xl">{libraryToast}</div>}
       {detailAsset && <MaterialDetailDialog key={detailAsset.id} asset={detailAsset} creatorName={creatorName} onClose={() => setDetailAsset(null)}
-        onDelete={section === 'assets' ? async (asset) => {
-          await api.assets.remove(asset.id);
+        deleteHistory={section === 'materials'}
+        onDelete={async (asset) => {
+          if (section === 'materials') await api.assets.removeHistory(asset.id);
+          else await api.assets.remove(asset.id);
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['assetFolders'] }),
             queryClient.invalidateQueries({ queryKey: ['assetHistory'] }),
           ]);
-          setLibraryToast('资产已删除');
-        } : undefined} />}
+          setLibraryToast(section === 'materials' ? '生成历史已删除' : '资产已删除');
+        }} />}
     </main>
   );
 }

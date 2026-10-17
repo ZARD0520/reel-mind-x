@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { ApiError, api } from '../../../lib/api';
+import { ConfirmDeleteDialog } from '../../../components/ui/ConfirmDeleteDialog';
 
 const SCOPE_TABS: { value: AssetFolderScope; label: string }[] = [
   { value: 'personal', label: '个人' },
@@ -332,6 +333,7 @@ export function AssetLibraryDialog({
     y: number;
   } | null>(null);
   const [menuAsset, setMenuAsset] = useState<{ asset: Asset; x: number; y: number } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ kind: 'asset'; asset: Asset } | { kind: 'folder'; folder: AssetFolder } | null>(null);
   const [previewAsset, setPreviewAsset] = useState<Asset | null>(null);
   const [renamingAssetId, setRenamingAssetId] = useState<string | null>(null);
   const [assetRenameValue, setAssetRenameValue] = useState('');
@@ -460,7 +462,7 @@ export function AssetLibraryDialog({
       setActionError(null);
       invalidateFolderAssets();
     },
-    onError: (error) => setActionError(apiErrorMessage(error, '删除文件夹失败，请稍后重试')),
+    onError: (error) => onToast(apiErrorMessage(error, '删除文件夹失败，请稍后重试')),
   });
 
   // 素材/搜索/文件夹列表同属一个前缀，统一失效保证搜索结果与文件夹视图同步
@@ -486,7 +488,7 @@ export function AssetLibraryDialog({
       setActionError(null);
       invalidateFolderAssets();
     },
-    onError: (error) => setActionError(apiErrorMessage(error, '删除素材失败，请稍后重试')),
+    onError: (error) => onToast(apiErrorMessage(error, '删除素材失败，请稍后重试')),
   });
 
   const switchScope = (next: AssetFolderScope) => {
@@ -972,7 +974,7 @@ export function AssetLibraryDialog({
             <button
               type="button"
               role="menuitem"
-              onClick={() => deleteFolder.mutate(menuFolder.folder.id)}
+              onClick={() => { setDeleteTarget({ kind: 'folder', folder: menuFolder.folder }); setMenuFolder(null); }}
               disabled={deleteFolder.isPending}
               className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-[#ef9b9b] transition-colors hover:bg-red-500/[0.12] hover:text-red-300 disabled:opacity-40"
             >
@@ -1042,7 +1044,7 @@ export function AssetLibraryDialog({
             <button
               type="button"
               role="menuitem"
-              onClick={() => deleteAsset.mutate(menuAsset.asset.id)}
+              onClick={() => { setDeleteTarget({ kind: 'asset', asset: menuAsset.asset }); setMenuAsset(null); }}
               disabled={deleteAsset.isPending}
               className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-[#ef9b9b] transition-colors hover:bg-red-500/[0.12] hover:text-red-300 disabled:opacity-40"
             >
@@ -1057,6 +1059,14 @@ export function AssetLibraryDialog({
         </>
       )}
 
+      {deleteTarget && <ConfirmDeleteDialog title={deleteTarget.kind === 'folder' ? '删除文件夹？' : '删除素材？'}
+        description={deleteTarget.kind === 'folder' ? `确认删除文件夹「${deleteTarget.folder.name}」？此操作无法撤销。` : `确认删除「${deleteTarget.asset.name}」？此操作无法撤销。`}
+        onClose={() => setDeleteTarget(null)} onConfirm={async () => {
+          try {
+            if (deleteTarget.kind === 'folder') await deleteFolder.mutateAsync(deleteTarget.folder.id);
+            else await deleteAsset.mutateAsync(deleteTarget.asset.id);
+          } catch { /* 失败提示由对应 mutation 的 onError 显示。 */ }
+        }} />}
       {previewAsset && (
         <div
           className="fixed inset-0 z-[70] flex flex-col items-center justify-center bg-black/85 p-6"

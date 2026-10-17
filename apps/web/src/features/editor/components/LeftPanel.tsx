@@ -270,6 +270,7 @@ export function LeftPanel({ projectId }: { projectId: string }) {
 
       {/* AI 文案生成对话框 */}
       <TextGenDialog
+        projectId={projectId}
         open={textGenOpen}
         onClose={() => setTextGenOpen(false)}
         onApply={applyGeneratedText}

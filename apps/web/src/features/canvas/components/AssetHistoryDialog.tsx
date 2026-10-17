@@ -9,6 +9,13 @@ const SCOPE_TABS: { value: AssetHistoryScope; label: string }[] = [
   { value: 'canvas', label: '当前项目' },
 ];
 
+const TYPE_TABS = [
+  { value: 'all', label: '全部' },
+  { value: 'image', label: '图片' },
+  { value: 'video', label: '视频' },
+  { value: 'audio', label: '音频' },
+] as const;
+
 function kindIcon(asset: Asset) {
   if (asset.kind === 'audio') return AudioLines;
   if (asset.kind === 'video') return Film;
@@ -26,6 +33,7 @@ export function AssetHistoryDialog({
   onAddToCanvas: (asset: Asset) => void;
 }) {
   const [scope, setScope] = useState<AssetHistoryScope>('all');
+  const [mediaType, setMediaType] = useState<(typeof TYPE_TABS)[number]['value']>('all');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -51,7 +59,7 @@ export function AssetHistoryDialog({
   }, []);
 
   const historyQuery = useQuery<Asset[]>({
-    queryKey: ['assetHistory', scope, debouncedSearch],
+    queryKey: ['assetHistory', scope, scope === 'canvas' ? canvasId : null, debouncedSearch],
     queryFn: () =>
       api.assets.history({
         scope,
@@ -59,11 +67,11 @@ export function AssetHistoryDialog({
         q: debouncedSearch || undefined,
       }) as Promise<Asset[]>,
   });
-  const assets = historyQuery.data ?? [];
+  const assets = (historyQuery.data ?? []).filter((asset) => mediaType === 'all' || asset.kind === mediaType);
 
   const addAsset = (asset: Asset) => {
     if (asset.status !== 'ready') return;
-    if (asset.kind !== 'image' && asset.kind !== 'video') return;
+    if (asset.kind !== 'image' && asset.kind !== 'video' && asset.kind !== 'text') return;
     onAddToCanvas(asset);
     onClose();
   };
@@ -77,24 +85,36 @@ export function AssetHistoryDialog({
         role="dialog"
         aria-modal="true"
         aria-label="历史"
-        className="nodrag nopan nowheel flex max-h-[72vh] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-white/[0.14] bg-[#242424] shadow-[0_28px_80px_rgba(0,0,0,0.62)]"
+        className="nodrag nopan nowheel flex h-[412px] max-h-[calc(100dvh-40px)] w-full max-w-[560px] flex-col overflow-hidden rounded-2xl border border-white/[0.14] bg-[#242424] shadow-[0_28px_80px_rgba(0,0,0,0.62)]"
         onPointerDown={(event) => event.stopPropagation()}
       >
-        <div className="border-b border-white/[0.08] p-4 pb-3">
-          <div className="flex items-center gap-1" aria-label="历史范围切换">
+        <div className="shrink-0 border-b border-white/[0.08] p-4 pb-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex h-9 shrink-0 items-center gap-0.5 rounded-lg border border-white/[0.08] bg-black/20 p-0.5" role="group" aria-label="历史范围切换">
             {SCOPE_TABS.map((tab) => (
               <button
                 key={tab.value}
                 type="button"
                 onClick={() => setScope(tab.value)}
-                className={`h-8 rounded-lg px-3 text-xs font-medium transition-colors ${scope === tab.value ? 'bg-[#f3f3f0] text-[#151515]' : 'text-[#a4a4a8] hover:bg-white/[0.07] hover:text-white'}`}
+                aria-pressed={scope === tab.value}
+                className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-1.5 text-[10px] font-medium transition-colors sm:px-3 sm:text-xs ${scope === tab.value ? 'bg-[#f3f3f0] text-[#151515] shadow-sm' : 'text-[#a4a4a8] hover:bg-white/[0.07] hover:text-white'}`}
               >
                 {tab.label}
               </button>
             ))}
           </div>
-          <div className="mt-3 flex h-11 items-center gap-2.5 rounded-xl border border-white/[0.12] bg-white/[0.055] px-3 focus-within:border-white/[0.24]">
-            <Search className="h-4.5 w-4.5 shrink-0 text-[#85858a]" />
+          <span aria-hidden="true" className="h-5 w-px shrink-0 bg-white/[0.16]" />
+          <div className="flex items-center gap-0.5 sm:gap-1" role="group" aria-label="历史素材类型筛选">
+            {TYPE_TABS.map((tab) => (
+              <button key={tab.value} type="button" onClick={() => setMediaType(tab.value)} aria-pressed={mediaType === tab.value}
+                className={`h-8 cursor-pointer whitespace-nowrap rounded-lg px-1.5 text-[10px] font-medium transition-colors sm:px-3 sm:text-xs ${mediaType === tab.value ? 'bg-white/[0.12] text-white' : 'text-[#a4a4a8] hover:bg-white/[0.07] hover:text-white'}`}>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          </div>
+          <div className="mt-3 flex h-9 items-center gap-2 rounded-lg border border-white/[0.12] bg-white/[0.055] px-3 transition-colors focus-within:border-white/[0.24]">
+            <Search className="h-4 w-4 shrink-0 text-[#85858a]" />
             <input
               ref={searchInputRef}
               value={search}
@@ -110,16 +130,16 @@ export function AssetHistoryDialog({
                   setSearch('');
                   searchInputRef.current?.focus();
                 }}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-[#85858a] hover:bg-white/[0.07] hover:text-white"
+                className="flex h-6 w-6 items-center justify-center rounded-lg text-[#85858a] hover:bg-white/[0.07] hover:text-white"
                 aria-label="清空搜索"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-3 w-3" />
               </button>
             )}
           </div>
         </div>
 
-        <div className="reel-scroll min-h-40 flex-1 overflow-y-auto p-2">
+        <div className="reel-scroll min-h-0 flex-1 overflow-y-auto p-2">
           {historyQuery.isLoading ? (
             <div className="flex min-h-40 items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-[#77777c]" />
@@ -129,7 +149,7 @@ export function AssetHistoryDialog({
               {assets.map((asset) => {
                 const KindIcon = kindIcon(asset);
                 return (
-                  <div key={asset.id} className="group relative" title={asset.prompt ?? asset.name}>
+                  <div key={asset.id} className="group relative">
                     <button
                       type="button"
                       onClick={() => addAsset(asset)}
@@ -160,7 +180,7 @@ export function AssetHistoryDialog({
                       </span>
                     </button>
                     <span
-                      aria-label={asset.kind === 'image' ? '图片素材' : asset.kind === 'video' ? '视频素材' : '音频素材'}
+                      aria-label={asset.kind === 'image' ? '图片素材' : asset.kind === 'video' ? '视频素材' : asset.kind === 'text' ? '文本素材' : '音频素材'}
                       className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded bg-black/65 text-white"
                     >
                       <KindIcon className="h-3 w-3" />
@@ -182,7 +202,7 @@ export function AssetHistoryDialog({
           )}
         </div>
 
-        <div className="border-t border-white/[0.08] px-4 py-2.5 text-xs text-[#66666b]">
+        <div className="shrink-0 border-t border-white/[0.08] px-4 py-2.5 text-xs text-[#66666b]">
           共 {assets.length} 个素材
         </div>
       </section>

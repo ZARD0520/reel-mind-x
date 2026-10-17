@@ -103,6 +103,7 @@ model Asset {
   kind             String
   source           String
   status           String
+  error            String?
   name             String
   url              String?
   localPath        String?
@@ -114,6 +115,7 @@ model Asset {
   prompt           String?
   model            String?
   references       Json         @default("[]")
+  historyDeletedAt DateTime?
   createdAt        DateTime     @default(now())
 
   @@index([userId, projectId, createdAt])

@@ -4,6 +4,9 @@ import { AlignLeft, AudioLines, Download, Film, Image as ImageIcon, Loader2, Tra
 import { downloadAssetFile } from '../../../lib/download-asset';
 import { MaterialReferenceChip } from './MaterialReferenceChip';
 import { materialGenerationInfo } from './material-generation-info';
+import { ConfirmDeleteDialog } from '../../../components/ui/ConfirmDeleteDialog';
+import { Toast } from '../../../components/ui/Toast';
+import { ApiError } from '../../../lib/api';
 
 const KIND_LABELS = { image: '图片', video: '视频', audio: '音频', text: '文本' };
 
@@ -13,16 +16,19 @@ function aspectRatio(width: number, height: number): string {
   return `${width / divisor}:${height / divisor}`;
 }
 
-export function MaterialDetailDialog({ asset, creatorName, onClose, onDelete }: {
+export function MaterialDetailDialog({ asset, creatorName, onClose, onDelete, deleteHistory = false }: {
   asset: Asset;
   creatorName?: string;
   onClose: () => void;
   onDelete?: (asset: Asset) => Promise<void>;
+  deleteHistory?: boolean;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
+  const [deleteConfirmation, setDeleteConfirmation] = useState(false);
+  const [toast, setToast] = useState('');
   const generationInfo = materialGenerationInfo(asset);
   const Icon = { image: ImageIcon, video: Film, audio: AudioLines, text: AlignLeft }[asset.kind];
   const tags = [
@@ -49,20 +55,20 @@ export function MaterialDetailDialog({ asset, creatorName, onClose, onDelete }: 
 
   const deleteAsset = async () => {
     if (!onDelete || deleting) return;
-    setError('');
+    setToast('');
     setDeleting(true);
     try {
       await onDelete(asset);
       close();
-    } catch {
-      setError('删除素材失败，请稍后重试');
+    } catch (cause) {
+      setToast(cause instanceof ApiError && cause.status === 401 ? '登录已过期，请重新登录' : deleteHistory ? '删除生成历史失败，请稍后重试' : '删除素材失败，请稍后重试');
     } finally {
       setDeleting(false);
     }
   };
 
   return (
-    <dialog ref={dialogRef} aria-label="素材详情" onCancel={(event) => { event.preventDefault(); close(); }} onClose={onClose}
+    <><dialog ref={dialogRef} aria-label="素材详情" onCancel={(event) => { event.preventDefault(); close(); }} onClose={onClose}
       onClick={(event) => { if (event.target === event.currentTarget) close(); }}
       className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-32px)] max-w-[1120px] overflow-hidden rounded-2xl border border-white/[0.12] bg-[#191919] p-0 text-[#f7f7f2] shadow-[0_32px_120px_rgba(0,0,0,0.7)] backdrop:bg-black/75 backdrop:backdrop-blur-sm">
       <div className="relative flex max-h-[90dvh] flex-col md:h-[min(720px,85dvh)] md:flex-row">
@@ -99,12 +105,15 @@ export function MaterialDetailDialog({ asset, creatorName, onClose, onDelete }: 
           <div className="shrink-0 p-6">
             {error && <p role="alert" className="mb-3 text-xs text-red-400">{error}</p>}
             <div className="flex gap-3">
-              <button type="button" onClick={() => void deleteAsset()} disabled={deleting || downloading} aria-disabled={!onDelete || deleting || downloading} title={onDelete ? undefined : '暂未开放'} className={`flex h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/[0.12] text-sm disabled:cursor-not-allowed disabled:opacity-50 ${onDelete ? 'text-[#ef9b9b] hover:border-red-400/30 hover:bg-red-500/10' : 'text-[#8e8e92]'}`}>{deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}{deleting ? '删除中' : '删除'}</button>
+              <button type="button" onClick={() => { if (onDelete) setDeleteConfirmation(true); }} disabled={deleting || downloading} aria-disabled={!onDelete || deleting || downloading} title={onDelete ? undefined : '暂未开放'} className={`flex h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/[0.12] text-sm disabled:cursor-not-allowed disabled:opacity-50 ${onDelete ? 'text-[#ef9b9b] hover:border-red-400/30 hover:bg-red-500/10' : 'text-[#8e8e92]'}`}>{deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}{deleting ? '删除中' : '删除'}</button>
               <button type="button" onClick={() => void download()} disabled={deleting || downloading || (asset.kind !== 'text' && !asset.url)} className="flex h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#f7f7f2] text-sm font-medium text-[#151515] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}{downloading ? '下载中' : '下载'}</button>
             </div>
           </div>
         </aside>
       </div>
     </dialog>
+    {deleteConfirmation && <ConfirmDeleteDialog title={deleteHistory ? '删除生成历史？' : '删除素材？'} description={deleteHistory ? '确认删除这条生成历史？' : `确认删除「${asset.name}」？此操作无法撤销。`} onConfirm={deleteAsset} onClose={() => setDeleteConfirmation(false)} />}
+    {toast && <Toast message={toast} onDismiss={() => setToast('')} />}
+    </>
   );
 }
