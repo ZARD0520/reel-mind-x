@@ -20,6 +20,7 @@ import { ProjectsModule } from './modules/projects/projects.module';
 import { RenderModule } from './modules/render/render.module';
 import { TextGenModule } from './modules/text-gen/text-gen.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { GenerationTasksWorkerModule } from './modules/generation-tasks/generation-tasks-worker.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { PrismaModule } from './prisma/prisma.module';
     RenderModule,
     TextGenModule,
     AiGenMediaModule,
+    GenerationTasksWorkerModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

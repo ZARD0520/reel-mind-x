@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { ApiError, api } from '../../../lib/api';
+import type { ToastType } from '../../../components/ui/Toast';
 import { ConfirmDeleteDialog } from '../../../components/ui/ConfirmDeleteDialog';
 
 const SCOPE_TABS: { value: AssetFolderScope; label: string }[] = [
@@ -300,7 +301,7 @@ export function AssetLibraryDialog({
   onSelectAsset,
 }: {
   onClose: () => void;
-  onToast: (message: string) => void;
+  onToast: (message: string, type?: ToastType) => void;
   /** 点击素材时把素材作为新节点添加到画布 */
   onAddToCanvas?: (asset: Asset) => void;
   embedded?: boolean;
@@ -462,7 +463,7 @@ export function AssetLibraryDialog({
       setActionError(null);
       invalidateFolderAssets();
     },
-    onError: (error) => onToast(apiErrorMessage(error, '删除文件夹失败，请稍后重试')),
+    onError: (error) => onToast(apiErrorMessage(error, '删除文件夹失败，请稍后重试'), 'error'),
   });
 
   // 素材/搜索/文件夹列表同属一个前缀，统一失效保证搜索结果与文件夹视图同步
@@ -488,7 +489,7 @@ export function AssetLibraryDialog({
       setActionError(null);
       invalidateFolderAssets();
     },
-    onError: (error) => onToast(apiErrorMessage(error, '删除素材失败，请稍后重试')),
+    onError: (error) => onToast(apiErrorMessage(error, '删除素材失败，请稍后重试'), 'error'),
   });
 
   const switchScope = (next: AssetFolderScope) => {
@@ -546,15 +547,15 @@ export function AssetLibraryDialog({
       const assets = (await api.assetFolders.listAssets(folder.id)) as Asset[];
       const ready = assets.filter((asset) => asset.status === 'ready' && asset.url);
       if (ready.length === 0) {
-        onToast('暂无素材内容可供下载');
+        onToast('暂无素材内容可供下载', 'warning');
         return;
       }
       for (const asset of ready) {
         await downloadAssetFile(asset);
       }
-      onToast(`已开始下载 ${ready.length} 个素材`);
+      onToast(`已开始下载 ${ready.length} 个素材`, 'success');
     } catch {
-      onToast('下载失败，请稍后重试');
+      onToast('下载失败，请稍后重试', 'error');
     } finally {
       setDownloading(false);
     }
@@ -594,9 +595,9 @@ export function AssetLibraryDialog({
     setDownloading(true);
     try {
       await downloadAssetFile(asset);
-      onToast('已开始下载素材');
+      onToast('已开始下载素材', 'success');
     } catch {
-      onToast('下载失败，请稍后重试');
+      onToast('下载失败，请稍后重试', 'error');
     } finally {
       setDownloading(false);
     }

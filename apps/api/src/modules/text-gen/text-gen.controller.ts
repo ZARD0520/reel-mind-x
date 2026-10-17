@@ -5,6 +5,8 @@ import { GenerateTextDto } from './text-gen.dto';
 import { TextGenService } from './text-gen.service';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../auth/auth.types';
+import { GenerationTasksService } from '../generation-tasks/generation-tasks.service';
+import { randomUUID } from 'crypto';
 
 /**
  * AI 文本生成接口。controller 保持薄，只做接收与响应。
@@ -12,11 +14,16 @@ import type { AuthUser } from '../auth/auth.types';
 @Controller('text-gen')
 @UseGuards(AuthGuard)
 export class TextGenController {
-  constructor(private readonly textGen: TextGenService) {}
+  constructor(private readonly textGen: TextGenService, private readonly tasks: GenerationTasksService) {}
 
   /** 同步生成一段受字数限制的文案 */
   @Post('generate')
   async generate(@Body() dto: GenerateTextDto, @CurrentUser() user: AuthUser): Promise<GeneratedText> {
+    if (dto.canvasId || dto.projectId) {
+      const prompt = dto.prompt ?? [...(dto.messages ?? [])].reverse().find((message) => message.role === 'user')?.content ?? '';
+      const task = await this.tasks.create(user.id, { ...dto, prompt, kind: 'text', requestId: dto.requestId ?? randomUUID() });
+      return this.tasks.waitForText(user.id, task.id);
+    }
     return this.textGen.generate(dto, user.id);
   }
 }

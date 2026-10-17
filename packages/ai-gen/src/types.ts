@@ -59,6 +59,7 @@ export class AiGenError extends Error {
     message: string,
     readonly status?: number,
     readonly cause?: unknown,
+    readonly outcome?: 'rejected' | 'unknown',
   ) {
     super(message);
     this.name = 'AiGenError';

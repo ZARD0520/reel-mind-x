@@ -8,7 +8,8 @@
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
-    "test": "echo \"no tests yet\" "
+    "test": "echo \"no tests yet\" ",
+    "test:generation": "node --test test/generation-reliability.test.cjs"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",

@@ -12,6 +12,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class TextGenService {
   constructor(private readonly llm: LlmService, private readonly prisma: PrismaService) {}
 
+  async generateContent(input: GenerateTextInput, signal?: AbortSignal): Promise<GeneratedText> {
+    const messages: ChatMessage[] = [{ role: 'system', content:
+      `你是短视频文案助手。请根据用户需求生成一段简洁有力的文案，严格控制在 ${input.maxLength} 字以内，不要输出多余解释、标题或引号。注意结合上下文。`,
+    }, ...(input.messages?.length ? input.messages.map((message) => ({ role: message.role, content: message.content })) : [{ role: 'user' as const, content: input.prompt! }])];
+    const result = await this.llm.chat(messages, { temperature: input.temperature, model: input.model, maxTokens: Math.ceil(input.maxLength * 2), signal });
+    return { text: this.clamp(result.text.trim(), input.maxLength), model: result.model, usage: result.usage };
+  }
+
   async generate(input: GenerateTextInput, userId: string): Promise<GeneratedText> {
     const { prompt, messages: history, maxLength, temperature, model } = input;
     if (input.canvasId || input.projectId) {

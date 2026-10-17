@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, AlertTriangle, ArrowUp, Check, Clapperboard, Loader2, LogOut, Mic, Plus, Trash2, User, X } from 'lucide-react';
 import type { AuthSession, Canvas, User as ReelUser } from '@reel/contracts';
 import { ApiError, api } from '../lib/api';
+import { useToast } from '../components/ui/Toast';
 import { ModelSelect, type ModelId } from '../features/home/components/ModelSelect';
 import { AssetsView } from '../features/home/components/AssetsView';
 
@@ -92,17 +93,6 @@ function inputClass(hasError: boolean): string {
   ].join(' ');
 }
 
-function Toast({ message }: { message: string }) {
-  return (
-    <div className="pointer-events-none fixed left-1/2 top-5 z-50 -translate-x-1/2">
-      <div className="flex max-w-[calc(100vw-32px)] items-center gap-2 rounded-md border border-red-400/30 bg-[#3a2024] px-4 py-2.5 text-sm text-red-100 shadow-[0_12px_32px_rgba(0,0,0,0.35)]">
-        <AlertCircle className="h-4 w-4 shrink-0 text-red-300" />
-        <span className="whitespace-nowrap">{message}</span>
-      </div>
-    </div>
-  );
-}
-
 function PasswordChecklist({ password }: { password: string }) {
   return (
     <div className="grid gap-2 rounded-md border border-border-subtle bg-base/50 p-3">
@@ -186,13 +176,8 @@ function AuthPanel({ onClose, onAuthenticated }: { onClose: () => void; onAuthen
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toast = useToast();
 
-  useEffect(() => {
-    if (!toastMessage) return undefined;
-    const timer = window.setTimeout(() => setToastMessage(null), 3000);
-    return () => window.clearTimeout(timer);
-  }, [toastMessage]);
 
   const auth = useMutation({
     mutationFn: () => mode === 'login'
@@ -200,12 +185,11 @@ function AuthPanel({ onClose, onAuthenticated }: { onClose: () => void; onAuthen
       : (api.auth.register({ email, password, name }) as Promise<AuthSession>),
     onSuccess: (session) => {
       setFieldErrors({});
-      setToastMessage(null);
       qc.setQueryData(['me'], session.user);
       void qc.invalidateQueries({ queryKey: ['canvases'] });
       onAuthenticated();
     },
-    onError: (error) => setToastMessage(getAuthErrorMessage(error, mode)),
+    onError: (error) => toast.error(getAuthErrorMessage(error, mode)),
   });
 
   const validateField = (field: keyof FieldErrors) => {
@@ -216,7 +200,6 @@ function AuthPanel({ onClose, onAuthenticated }: { onClose: () => void; onAuthen
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
     auth.reset();
-    setToastMessage(null);
     const nextErrors = validateAuthForm(mode, { name, email, password });
     setFieldErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
@@ -226,13 +209,11 @@ function AuthPanel({ onClose, onAuthenticated }: { onClose: () => void; onAuthen
   const switchMode = () => {
     setMode(mode === 'login' ? 'register' : 'login');
     setFieldErrors({});
-    setToastMessage(null);
     auth.reset();
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 px-6 backdrop-blur-md" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      {toastMessage && <Toast message={toastMessage} />}
       <form noValidate onSubmit={onSubmit} className="relative flex w-full max-w-[400px] flex-col gap-4 rounded-2xl border border-white/[0.14] bg-[#171717] p-7 shadow-[0_28px_90px_rgba(0,0,0,0.62)]">
         <button type="button" onClick={onClose} className="absolute right-3.5 top-3.5 flex h-8 w-8 items-center justify-center rounded-lg text-[#8e8e92] transition-colors hover:bg-white/[0.08] hover:text-[#f7f7f2]" aria-label="关闭登录窗口">
           <X className="h-4 w-4" />
@@ -288,16 +269,11 @@ export function HomePage() {
   const [selectedModel, setSelectedModel] = useState<ModelId>('glm-4-flash');
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toast = useToast();
   const [canvasPendingDeletion, setCanvasPendingDeletion] = useState<Canvas | null>(null);
   const me = useQuery<ReelUser>({ queryKey: ['me'], queryFn: () => api.auth.me() as Promise<ReelUser>, retry: false });
   const canvases = useQuery<Canvas[]>({ queryKey: ['canvases'], queryFn: () => api.canvases.list() as Promise<Canvas[]>, enabled: !!me.data });
 
-  useEffect(() => {
-    if (!toastMessage) return undefined;
-    const timer = window.setTimeout(() => setToastMessage(null), 3000);
-    return () => window.clearTimeout(timer);
-  }, [toastMessage]);
 
   useEffect(() => {
     const isComplete = placeholderLength === HOME_PROMPT_PLACEHOLDER.length;
@@ -328,7 +304,6 @@ export function HomePage() {
       return api.canvases.create(name) as Promise<Canvas>;
     },
     onSuccess: (canvas, request) => {
-      setToastMessage(null);
       void qc.invalidateQueries({ queryKey: ['canvases'] });
       navigate(`/canvas/${canvas.id}`, {
         state: request.initialAgentPrompt
@@ -336,16 +311,15 @@ export function HomePage() {
           : undefined,
       });
     },
-    onError: (error) => setToastMessage(getCanvasErrorMessage(error)),
+    onError: (error) => toast.error(getCanvasErrorMessage(error)),
   });
   const removeCanvas = useMutation({
     mutationFn: (id: string) => api.canvases.remove(id),
     onSuccess: () => {
-      setToastMessage(null);
       setCanvasPendingDeletion(null);
       void qc.invalidateQueries({ queryKey: ['canvases'] });
     },
-    onError: (error) => setToastMessage(getCanvasErrorMessage(error)),
+    onError: (error) => toast.error(getCanvasErrorMessage(error)),
   });
   const logout = useMutation({ mutationFn: () => api.auth.logout(), onSuccess: () => { qc.clear(); navigate('/'); } });
   const greeting = useMemo(() => (me.data ? me.data.name || me.data.email : ''), [me.data]);
@@ -375,7 +349,6 @@ export function HomePage() {
 
   return (
     <div className="flex h-full flex-col bg-base text-fg">
-      {toastMessage && <Toast message={toastMessage} />}
       {isAuthOpen && <AuthPanel onClose={() => setIsAuthOpen(false)} onAuthenticated={() => setIsAuthOpen(false)} />}
       {canvasPendingDeletion && (
         <DeleteCanvasDialog

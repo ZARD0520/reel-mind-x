@@ -1,5 +1,5 @@
 import { SseDecoder } from '@reel/contracts/sse';
-import type { AssetReference } from '@reel/contracts';
+import type { AssetReference, CreateGenerationTaskInput, GenerationTask } from '@reel/contracts';
 import type { CanvasChatReference, Conversation } from '../features/canvas/chat-types';
 
 const BASE = '/api';
@@ -38,6 +38,12 @@ async function requestVoid(path: string, init?: RequestInit): Promise<void> {
 }
 
 export const api = {
+  generationTasks: {
+    create: (body: Omit<CreateGenerationTaskInput, 'references' | 'imageAssetIds' | 'maxLength' | 'count'> & Partial<Pick<CreateGenerationTaskInput, 'references' | 'imageAssetIds' | 'maxLength' | 'count'>>) => request<GenerationTask>('/generation-tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    list: (canvasId: string) => request<GenerationTask[]>(`/generation-tasks?canvasId=${encodeURIComponent(canvasId)}`),
+    get: (id: string) => request<GenerationTask>(`/generation-tasks/${id}`),
+    resume: (id: string) => request<GenerationTask>(`/generation-tasks/${id}/resume`, { method: 'POST' }),
+  },
   auth: {
     me: () => request('/auth/me'),
     login: (body: { email: string; password: string }) =>

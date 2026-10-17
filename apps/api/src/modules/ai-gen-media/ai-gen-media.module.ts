@@ -4,9 +4,10 @@ import { QueueNames } from './ai-gen-media.constants';
 import { AiGenMediaController } from './ai-gen-media.controller';
 import { AiGenMediaProcessor } from './ai-gen-media.processor';
 import { AiGenMediaService } from './ai-gen-media.service';
+import { GenerationTasksModule } from '../generation-tasks/generation-tasks.module';
 
 @Module({
-  imports: [BullModule.registerQueue({ name: QueueNames.AI_GEN_MEDIA })],
+  imports: [BullModule.registerQueue({ name: QueueNames.AI_GEN_MEDIA }), GenerationTasksModule],
   controllers: [AiGenMediaController],
   providers: [AiGenMediaService, AiGenMediaProcessor],
   exports: [AiGenMediaService],

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   AssetSchema,
@@ -119,13 +119,14 @@ export class AssetsService {
     return rows.map((row) => this.toAsset(row));
   }
 
-  /** 素材生成历史：AI 生成的就绪素材，q 按生成指令（prompt）模糊搜索 */
+  /** 生成历史只包括原始生成素材，不包括保存到资产库的独立副本。 */
   async history(userId: string, query: AssetHistoryQueryInput): Promise<Asset[]> {
     const rows = await this.prisma.asset.findMany({
       where: {
         userId,
         source: 'ai',
         status: 'ready',
+        folderId: null,
         historyDeletedAt: null,
         ...(query.scope === 'canvas' && query.canvasId ? { canvasId: query.canvasId } : {}),
         ...(query.q ? { prompt: { contains: query.q, mode: 'insensitive' as const } } : {}),
@@ -138,7 +139,7 @@ export class AssetsService {
 
   async removeHistory(userId: string, id: string): Promise<void> {
     const result = await this.prisma.asset.updateMany({
-      where: { id, userId, source: 'ai', status: 'ready' },
+      where: { id, userId, source: 'ai', status: 'ready', folderId: null },
       data: { historyDeletedAt: new Date() },
     });
     if (result.count === 0) throw new NotFoundException(`Asset history ${id} not found`);
@@ -147,6 +148,10 @@ export class AssetsService {
   async remove(userId: string, id: string): Promise<void> {
     const row = await this.prisma.asset.findFirst({ where: { id, userId } });
     if (!row) throw new NotFoundException(`Asset ${id} not found`);
+    const generation = await this.prisma.generationTaskItem.findUnique({ where: { assetId: id }, select: { status: true, providerResult: true } });
+    if (generation && ((generation.status !== 'completed' && generation.status !== 'failed') || (generation.status === 'failed' && generation.providerResult))) {
+      throw new ConflictException('该素材的生成任务尚未结束或仍可恢复，暂时无法删除');
+    }
     if (row.localPath) {
       await fs.promises.unlink(row.localPath).catch(() => undefined);
     }
@@ -154,7 +159,7 @@ export class AssetsService {
   }
 
   /**
-   * 保存素材到素材库：复制一条独立的素材库记录指向同一文件，
+   * 保存素材到资产库：复制一条独立的资产库记录指向同一文件，不是新的生成记录。
    * 不复制 localPath（文件清理仍由原素材记录负责）。
    */
   async saveToLibrary(

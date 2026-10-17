@@ -11,13 +11,13 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MODEL_BUSY_MESSAGE } from '@reel/contracts/generation';
+import { MODEL_BUSY_MESSAGE, isGenerationActive } from '@reel/contracts/generation';
 import type {
   Asset,
   AssetReference,
   Canvas,
   CanvasGraph,
-  GeneratedText,
+  GenerationTask,
   Project,
   User as ReelUser,
   VideoDuration,
@@ -96,6 +96,8 @@ import {
 } from '../features/editor/constants';
 import { ApiError, api } from '../lib/api';
 import { uuid } from '../lib/uuid';
+import { useToast } from '../components/ui/Toast';
+import { generationFeedbackMessage, generationTasksPollingInterval, recoverGenerationTasks } from '../features/canvas/generation-recovery';
 
 type WorkflowNodeKind = CanvasNodeKind;
 type GenerationCount = 1 | 2 | 4;
@@ -167,6 +169,15 @@ type WorkflowNodeData = {
   aspectRatio?: AspectRatioKey;
   videoDuration?: VideoDuration;
   videoWithAudio?: boolean;
+  generationTaskId?: string;
+  generationRequestId?: string;
+  generationStatus?: GenerationTask['status'];
+  generationAppliedTaskId?: string;
+  generationCanResume?: boolean;
+  generationMessage?: string;
+  generationProgress?: string;
+  /** Visit-local feedback; never restored from the saved graph. */
+  generationFailureVisible?: boolean;
 };
 
 type WorkflowNode = Node<WorkflowNodeData, 'workflow'>;
@@ -451,6 +462,15 @@ function normalizeNode(node: CanvasGraph['nodes'][number]): WorkflowNode {
           ? rawData.status
           : 'idle',
       error: typeof rawData.error === 'string' ? rawData.error : '',
+      generationTaskId: rawData.generationTaskId,
+      // Server history is authoritative on reload; the request token only fences in-flight UI updates.
+      generationRequestId: undefined,
+      generationStatus: rawData.generationStatus,
+      generationAppliedTaskId: rawData.generationAppliedTaskId,
+      generationCanResume: rawData.generationCanResume,
+      generationMessage: rawData.generationMessage,
+      generationProgress: rawData.generationProgress,
+      generationFailureVisible: false,
       referenceNodeIds: Array.isArray(rawData.referenceNodeIds)
         ? rawData.referenceNodeIds.filter((id): id is string => typeof id === 'string')
         : [],
@@ -497,7 +517,7 @@ function serializeCanvasGraph(
       id: node.id,
       type: node.type ?? 'workflow',
       position: node.position,
-      data: node.data,
+      data: { ...node.data, generationFailureVisible: undefined },
     })),
     edges: edges.map((edge) => ({
       id: edge.id,
@@ -522,8 +542,7 @@ function toChatReferences(nodes: WorkflowNode[]): CanvasChatReference[] {
   }));
 }
 
-type GenerationResult = { type: 'text'; value: GeneratedText } | { type: 'media'; value: Asset };
-type GenerationBatchResult = { values: GenerationResult[]; failedCount: number };
+class GenerationPreparationError extends Error {}
 
 function generationErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -550,7 +569,10 @@ function NodeGenerationPrompt({
   kind: WorkflowNodeKind;
   data: WorkflowNodeData;
 }) {
-  const { addEdges, addNodes, getNode, updateNodeData } = useReactFlow<WorkflowNode, Edge>();
+  const { updateNodeData } = useReactFlow<WorkflowNode, Edge>();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const submissionRef = useRef(false);
   const dependencySelection = useContext(DependencySelectionContext);
   const [prompt, setPrompt] = useState(data.prompt ?? '');
   const [model, setModel] = useState<CanvasModelId>(normalizeCanvasModel(kind, data.model));
@@ -568,247 +590,60 @@ function NodeGenerationPrompt({
   const [videoWithAudio, setVideoWithAudio] = useState(
     data.videoWithAudio ?? DEFAULT_VIDEO_WITH_AUDIO,
   );
-  const [batchNotice, setBatchNotice] = useState('');
   const selectedReferenceIds = data.referenceNodeIds ?? [];
-
-  const generation = useMutation<
-    GenerationBatchResult,
-    Error,
-    { prompt: string; count: GenerationCount }
-  >({
-    mutationFn: async ({ prompt: nextPrompt, count }) => {
-      let generateOne: () => Promise<GenerationResult>;
-      if (kind === 'text') {
-        const referenceNodes = dependencySelection.edges
-          .filter((edge) => edge.target === nodeId && selectedReferenceIds.includes(edge.source))
-          .map((edge) => dependencySelection.nodes.find((node) => node.id === edge.source))
-          .filter((node): node is WorkflowNode => !!node);
-        const references = referenceNodes.map((node) => {
-            const reference = node.data.content || node.data.prompt || node.data.title;
-            return `【${node.data.title}】${reference}`;
-          });
-        const promptWithReferences = references.length
-          ? `请参考以下内容：\n${references.join('\n')}\n\n生成要求：${nextPrompt}`
-          : nextPrompt;
-        generateOne = async () => {
-          const value = (await api.textGen.generate({
-            canvasId,
-            prompt: promptWithReferences,
-            userPrompt: nextPrompt,
-            references: referenceNodes.map((node) => ({ kind: node.data.kind, name: node.data.title, content: node.data.content || node.data.prompt || node.data.title, url: node.data.url ?? undefined, assetId: node.data.assetId })),
-            maxLength: 2000,
-            model,
-          })) as GeneratedText;
-          return { type: 'text', value };
-        };
-      } else {
-        const imageReferences =
-          kind === 'image'
-            ? dependencySelection.edges
-                .filter(
-                  (edge) => edge.target === nodeId && selectedReferenceIds.includes(edge.source),
-                )
-                .map((edge) => dependencySelection.nodes.find((node) => node.id === edge.source))
-                .filter((node): node is WorkflowNode => !!node && node.data.kind === 'text')
-                .map((node) => node.data.content || node.data.prompt || node.data.title)
-            : [];
-        const imagePrompt = imageReferences.length
-          ? `参考文本：\n${imageReferences.join('\n')}\n\n画面要求：${nextPrompt}`
-          : nextPrompt;
-        const videoReferenceNodes =
-          kind === 'video'
-            ? selectedReferenceIds
-                .filter((referenceNodeId) =>
-                  dependencySelection.edges.some(
-                    (edge) => edge.target === nodeId && edge.source === referenceNodeId,
-                  ),
-                )
-                .map((referenceNodeId) =>
-                  dependencySelection.nodes.find((node) => node.id === referenceNodeId),
-                )
-                .filter(
-                  (node): node is WorkflowNode =>
-                    !!node && (node.data.kind === 'text' || node.data.kind === 'image'),
-                )
-            : [];
-        const videoTextReferences = videoReferenceNodes
-          .filter((node) => node.data.kind === 'text')
-          .map((node) => `【${node.data.title}】${node.data.content || node.data.prompt}`);
-        const videoPrompt = (
-          videoTextReferences.length
-            ? `视频要求：${nextPrompt}\n\n参考文本：\n${videoTextReferences.join('\n')}`
-            : nextPrompt
-        ).slice(0, 512);
-        const videoImageNodes = videoReferenceNodes
-          .filter((node) => node.data.kind === 'image')
-          .slice(0, 2);
-        const videoFrameAspectRatios = videoImageNodes.map((node) =>
-          normalizeVideoAspectRatio(node.data.aspectRatio),
-        );
-        if (new Set(videoFrameAspectRatios).size > 1) {
-          throw new Error('首帧和尾帧的比例需要保持一致');
-        }
-        const videoRequestAspectRatio = videoFrameAspectRatios[0] ?? aspectRatio;
-        const videoImageAssetIds = videoImageNodes
-          .map((node) => node.data.assetId)
-          .filter((assetId): assetId is string => !!assetId);
-        if (videoImageAssetIds.length !== videoImageNodes.length) {
-          throw new Error('首尾帧图片尚未生成完成');
-        }
-        generateOne = async () => {
-          const referenceNodes = kind === 'video'
-            ? videoReferenceNodes
-            : selectedReferenceIds
-                .filter((source) => dependencySelection.edges.some((edge) => edge.target === nodeId && edge.source === source))
-                .map((source) => dependencySelection.nodes.find((node) => node.id === source))
-                .filter((node): node is WorkflowNode => !!node && node.data.kind === 'text');
-          const references: AssetReference[] = referenceNodes.map((node) => ({
-            kind: node.data.kind,
-            name: node.data.title,
-            content: node.data.kind === 'text' ? node.data.content || node.data.prompt || node.data.title : undefined,
-            url: node.data.url ?? undefined,
-            assetId: node.data.assetId,
-          }));
-          const value = (
-            kind === 'image'
-              ? await api.aiGenMedia.generateImage({
-                  canvasId,
-                  prompt: imagePrompt,
-                  userPrompt: nextPrompt,
-                  references,
-                  size: IMAGE_SIZE_BY_RATIO[aspectRatio],
-                  model,
-                })
-              : await api.aiGenMedia.generateVideo({
-                  canvasId,
-                  prompt: videoPrompt,
-                  userPrompt: nextPrompt,
-                  references,
-                  size: VIDEO_SIZE_BY_RATIO[videoRequestAspectRatio],
-                  duration: videoDuration,
-                  withAudio: videoWithAudio,
-                  model,
-                  imageAssetIds: videoImageAssetIds,
-                })
-          ) as Asset;
-          return { type: 'media', value };
-        };
-      }
-
-      const settled = await Promise.allSettled(Array.from({ length: count }, () => generateOne()));
-      const values = settled
-        .filter(
-          (result): result is PromiseFulfilledResult<GenerationResult> =>
-            result.status === 'fulfilled',
-        )
-        .map((result) => result.value);
-      if (values.length === 0) {
-        const firstFailure = settled.find(
-          (result): result is PromiseRejectedResult => result.status === 'rejected',
-        );
-        throw firstFailure?.reason instanceof Error
-          ? firstFailure.reason
-          : new Error('生成请求失败，请稍后重试');
-      }
-      return { values, failedCount: count - values.length };
-    },
-    onMutate: ({ prompt: nextPrompt, count }) => {
-      setBatchNotice('');
-      updateNodeData(nodeId, {
-        prompt: nextPrompt,
-        model,
-        generationCount: count,
-        ...(kind === 'image' || kind === 'video' ? { aspectRatio } : {}),
-        ...(kind === 'video' ? { videoDuration, videoWithAudio } : {}),
-        status: 'generating',
-        error: '',
+  const invalidateTasks = () => { void queryClient.invalidateQueries({ queryKey: ['generation-tasks', canvasId] }); };
+  const generation = useMutation({
+    mutationFn: async ({ prompt: nextPrompt, count, requestId }: { prompt: string; count: GenerationCount; requestId: string }) => {
+      const referenceNodes = selectedReferenceIds
+        .filter((source) => dependencySelection.edges.some((edge) => edge.target === nodeId && edge.source === source))
+        .map((source) => dependencySelection.nodes.find((node) => node.id === source))
+        .filter((node): node is WorkflowNode => !!node && (kind === 'text' || node.data.kind === 'text' || (kind === 'video' && node.data.kind === 'image')));
+      const references: AssetReference[] = referenceNodes.map((node) => ({ kind: node.data.kind, name: node.data.title, content: node.data.kind === 'text' ? node.data.content || node.data.prompt || node.data.title : undefined, url: node.data.url ?? undefined, assetId: node.data.assetId }));
+      const texts = referenceNodes.filter((node) => kind === 'text' || node.data.kind === 'text').map((node) => '【' + node.data.title + '】' + (node.data.content || node.data.prompt || node.data.title));
+      const frames = kind === 'video' ? referenceNodes.filter((node) => node.data.kind === 'image').slice(0, 2) : [];
+      const ratios = frames.map((node) => normalizeVideoAspectRatio(node.data.aspectRatio));
+      if (new Set(ratios).size > 1) throw new GenerationPreparationError('首帧和尾帧的比例需要保持一致');
+      if (frames.some((node) => !node.data.assetId || node.data.status !== 'ready')) throw new GenerationPreparationError('首尾帧图片尚未生成完成');
+      const combined = texts.length ? '参考内容：\n' + texts.join('\n') + '\n\n生成要求：' + nextPrompt : nextPrompt;
+      return api.generationTasks.create({ requestId, canvasId, nodeId, kind, count, prompt: kind === 'video' ? combined.slice(0, 512) : combined, userPrompt: nextPrompt, references, model,
+        ...(kind === 'image' ? { size: IMAGE_SIZE_BY_RATIO[aspectRatio] } : {}),
+        ...(kind === 'video' ? { size: VIDEO_SIZE_BY_RATIO[ratios[0] ?? aspectRatio], duration: videoDuration, withAudio: videoWithAudio, imageAssetIds: frames.map((node) => node.data.assetId!) } : {}),
       });
     },
-    onSuccess: ({ values, failedCount }, request) => {
-      const [result, ...additionalResults] = values;
-      if (!result) return;
-      if (result.type === 'text') {
-        updateNodeData(nodeId, {
-          content: result.value.text,
-          assetId: result.value.assetId,
-          model: result.value.model,
-          status: 'ready',
-          error: '',
-        });
-      } else {
-        updateNodeData(nodeId, {
-          assetId: result.value.id,
-          editorProjectId: undefined,
-          url: result.value.url,
-          status: result.value.status,
-          error: '',
-        });
-      }
-
-      const sourceNode = getNode(nodeId);
-      if (sourceNode && additionalResults.length > 0) {
-        const horizontalGap =
-          kind === 'video' || kind === 'image'
-            ? mediaNodeWidth(
-                aspectRatio,
-                kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO,
-              ) + 40
-            : 400;
-        const nextNodes = additionalResults.map(
-          (additionalResult, index): WorkflowNode => ({
-            id: uuid(),
-            type: 'workflow',
-            position: {
-              x: sourceNode.position.x + horizontalGap * (index + 1),
-              y: sourceNode.position.y,
-            },
-            data: {
-              ...data,
-              title: `${data.title} ${index + 2}`,
-              prompt: request.prompt,
-              model: additionalResult.type === 'text' ? additionalResult.value.model : model,
-              generationCount: request.count,
-              aspectRatio: kind === 'image' || kind === 'video' ? aspectRatio : undefined,
-              videoDuration: kind === 'video' ? videoDuration : undefined,
-              videoWithAudio: kind === 'video' ? videoWithAudio : undefined,
-              content: additionalResult.type === 'text' ? additionalResult.value.text : '',
-              assetId: additionalResult.type === 'media' ? additionalResult.value.id : additionalResult.value.assetId,
-              url: additionalResult.type === 'media' ? additionalResult.value.url : null,
-              status: additionalResult.type === 'text' ? 'ready' : additionalResult.value.status,
-              error: '',
-              editorProjectId: undefined,
-              referenceNodeIds: [...selectedReferenceIds],
-            },
-          }),
-        );
-        addNodes(nextNodes);
-
-        const incomingEdges = dependencySelection.edges.filter((edge) => edge.target === nodeId);
-        addEdges(
-          nextNodes.flatMap((nextNode) =>
-            incomingEdges.map((edge) => ({
-              ...edge,
-              id: uuid(),
-              target: nextNode.id,
-            })),
-          ),
-        );
-      }
-
-      if (failedCount > 0) {
-        setBatchNotice(`已生成 ${values.length} 个，另有 ${failedCount} 个请求失败`);
-      }
+    onMutate: ({ prompt: nextPrompt, count, requestId }) => {
+      updateNodeData(nodeId, { prompt: nextPrompt, model, generationCount: count, generationRequestId: requestId, generationTaskId: undefined, generationStatus: 'queued', generationCanResume: false, generationMessage: '', generationProgress: '', generationFailureVisible: true,
+        ...(kind !== 'text' ? { aspectRatio } : {}), ...(kind === 'video' ? { videoDuration, videoWithAudio } : {}), status: 'generating', error: '' });
     },
-    onError: (error) => {
-      updateNodeData(nodeId, { status: 'failed', error: generationErrorMessage(error) });
+    onSuccess: (task) => {
+      updateNodeData(nodeId, { generationTaskId: task.id, generationRequestId: task.requestId, generationStatus: task.status });
+      invalidateTasks();
     },
+    onError: (error, request) => {
+      if (error instanceof GenerationPreparationError || (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 409)) {
+        updateNodeData(nodeId, { status: 'failed', generationStatus: 'failed', generationMessage: '', error: generationErrorMessage(error) });
+        return;
+      }
+      // A lost HTTP response is not evidence that submission failed. Recover the server task first.
+      updateNodeData(nodeId, { status: 'generating', generationStatus: 'unknown', generationMessage: '正在确认提交结果，请勿重复生成' });
+      void (async () => {
+        try {
+          const tasks = await api.generationTasks.list(canvasId);
+          const existing = tasks.find((task) => task.nodeId === nodeId && (task.requestId === request.requestId || isGenerationActive(task.status)));
+          if (existing) updateNodeData(nodeId, { generationTaskId: existing.id, generationRequestId: existing.requestId, generationStatus: existing.status });
+          else if (error instanceof ApiError && error.status >= 400 && error.status < 500) updateNodeData(nodeId, { status: 'failed', generationStatus: 'failed', generationMessage: '', error: generationErrorMessage(error) });
+        } catch { /* Keep the node locked until the recovery query can confirm the result. */ }
+        finally { invalidateTasks(); }
+      })();
+    },
+    onSettled: () => { submissionRef.current = false; },
   });
-
+  const isGenerating = generation.isPending || data.status === 'generating' || (!!data.generationStatus && isGenerationActive(data.generationStatus));
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     const nextPrompt = prompt.trim();
-    if (!nextPrompt || generation.isPending) return;
-    generation.mutate({ prompt: nextPrompt, count: generationCount });
+    if (!nextPrompt || isGenerating || submissionRef.current) return;
+    submissionRef.current = true;
+    generation.mutate({ prompt: nextPrompt, count: generationCount, requestId: uuid() });
   };
 
   const referenceDependencies = dependencySelection.edges
@@ -855,18 +690,16 @@ function NodeGenerationPrompt({
     if (kind === 'video' && referenceNode?.data.kind === 'image') {
       const referenceAspectRatio = normalizeVideoAspectRatio(referenceNode.data.aspectRatio);
       if (lockedVideoAspectRatio && lockedVideoAspectRatio !== referenceAspectRatio) {
-        setBatchNotice('首帧和尾帧的比例需要保持一致');
+        toast.warning('首帧和尾帧的比例需要保持一致');
         return;
       }
       setAspectRatio(referenceAspectRatio);
-      setBatchNotice('');
       updateNodeData(nodeId, {
         referenceNodeIds: [...selectedReferenceIds, referenceNodeId],
         aspectRatio: referenceAspectRatio,
       });
       return;
     }
-    setBatchNotice('');
     updateNodeData(nodeId, {
       referenceNodeIds: [...selectedReferenceIds, referenceNodeId],
     });
@@ -879,7 +712,7 @@ function NodeGenerationPrompt({
   };
 
   const removeLastReferenceFromInput = () => {
-    const lastReferenceId = selectedReferenceIds.at(-1);
+    const lastReferenceId = selectedReferenceNodes.at(-1)?.id;
     if (lastReferenceId) removeReferenceFromInput(lastReferenceId);
   };
 
@@ -943,7 +776,7 @@ function NodeGenerationPrompt({
             });
             dependencySelection.start(nodeId);
           }}
-          disabled={generation.isPending}
+          disabled={isGenerating}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[#b8b8bd] hover:bg-white/[0.08] hover:text-white disabled:opacity-40"
           aria-label="添加参考节点"
           title="从画布选择参考节点"
@@ -959,6 +792,13 @@ function NodeGenerationPrompt({
             <ReferencePreview key={node.id} reference={{ kind: node.data.kind, name: node.data.title, content: node.data.content || node.data.prompt, url: node.data.url ?? undefined }}>
             <span
               tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === 'Backspace' || event.key === 'Delete') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  removeReferenceFromInput(node.id);
+                }
+              }}
               className="mt-0.5 flex h-7 max-w-36 shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.1] px-2 text-xs text-[#e0e0e2]"
             >
               <ReferenceIcon className="h-3.5 w-3.5 shrink-0" />
@@ -968,6 +808,18 @@ function NodeGenerationPrompt({
                 </span>
               )}
               <span className="truncate">{node.data.title}</span>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  removeReferenceFromInput(node.id);
+                }}
+                aria-label={`移除提示词引用 ${node.data.title}`}
+                title="移除引用"
+                className="-mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[#929297] hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/60"
+              >
+                <X className="h-3 w-3" />
+              </button>
             </span>
             </ReferencePreview>
           );
@@ -976,8 +828,16 @@ function NodeGenerationPrompt({
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Backspace' && !prompt && selectedReferenceIds.length > 0) {
+            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+            const input = event.currentTarget;
+            if (
+              event.key === 'Backspace' &&
+              !event.ctrlKey && !event.metaKey && !event.altKey &&
+              input.selectionStart === 0 && input.selectionEnd === 0 &&
+              selectedReferenceNodes.length > 0
+            ) {
               event.preventDefault();
+              event.stopPropagation();
               removeLastReferenceFromInput();
               return;
             }
@@ -986,7 +846,7 @@ function NodeGenerationPrompt({
               event.currentTarget.form?.requestSubmit();
             }
           }}
-          disabled={generation.isPending}
+          disabled={isGenerating}
           rows={selectedReferenceNodes.length > 0 ? 1 : 2}
           placeholder={
             kind === 'text'
@@ -1004,7 +864,7 @@ function NodeGenerationPrompt({
             kind={kind}
             value={model}
             onChange={setModel}
-            disabled={generation.isPending}
+            disabled={isGenerating}
           />
           {kind === 'image' && (
             <Select
@@ -1015,7 +875,7 @@ function NodeGenerationPrompt({
                 updateNodeData(nodeId, { aspectRatio: value });
               }}
               ariaLabel="选择图片比例"
-              disabled={generation.isPending}
+              disabled={isGenerating}
               size="compact"
               className="w-[108px]"
               triggerClassName="w-full"
@@ -1053,7 +913,7 @@ function NodeGenerationPrompt({
                           <button
                             key={option.label}
                             type="button"
-                            disabled={!option.value || isLockedByFrame || generation.isPending}
+                            disabled={!option.value || isLockedByFrame || isGenerating}
                             onClick={() => {
                               if (!option.value) return;
                               setAspectRatio(option.value);
@@ -1087,7 +947,7 @@ function NodeGenerationPrompt({
                         <button
                           key={duration}
                           type="button"
-                          disabled={generation.isPending}
+                          disabled={isGenerating}
                           onClick={() => {
                             setVideoDuration(duration);
                             updateNodeData(nodeId, { videoDuration: duration });
@@ -1111,7 +971,7 @@ function NodeGenerationPrompt({
                         <button
                           key={String(option.value)}
                           type="button"
-                          disabled={generation.isPending}
+                          disabled={isGenerating}
                           onClick={() => {
                             setVideoWithAudio(option.value);
                             updateNodeData(nodeId, { videoWithAudio: option.value });
@@ -1127,7 +987,7 @@ function NodeGenerationPrompt({
                 </div>
               }
               ariaLabel="选择视频生成设置"
-              disabled={generation.isPending}
+              disabled={isGenerating}
               size="compact"
               className="w-[140px]"
               triggerClassName="w-full"
@@ -1145,18 +1005,18 @@ function NodeGenerationPrompt({
               updateNodeData(nodeId, { generationCount: count });
             }}
             ariaLabel="选择生成数量"
-            disabled={generation.isPending}
+            disabled={isGenerating}
             size="compact"
             className="w-[72px]"
             triggerClassName="w-full"
           />
           <button
             type="submit"
-            disabled={!prompt.trim() || generation.isPending}
+            disabled={!prompt.trim() || isGenerating}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f3f3f0] text-[#151515] transition-transform hover:scale-105 disabled:cursor-not-allowed disabled:opacity-40"
             aria-label={`生成${kind === 'text' ? '脚本' : kind === 'image' ? '图片' : '视频'}`}
           >
-            {generation.isPending ? (
+            {isGenerating ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <ArrowUp className="h-4 w-4 stroke-[2.5]" />
@@ -1164,22 +1024,56 @@ function NodeGenerationPrompt({
           </button>
         </div>
       </div>
-      {(generation.isError || (data.status === 'failed' && data.error)) && (
-        <div className="px-2 pb-1 pt-2 text-xs text-red-400">
-          {generation.isError ? generationErrorMessage(generation.error) : data.error}
-        </div>
-      )}
-      {batchNotice && !generation.isError && (
-        <div className="px-2 pb-1 pt-2 text-xs text-amber-300">{batchNotice}</div>
-      )}
     </form>
   );
 }
 
 function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const canvasId = useContext(CanvasIdContext);
+  const toast = useToast();
+  const queryClient = useQueryClient();
   const dependencySelection = useContext(DependencySelectionContext);
   const { updateNodeData } = useReactFlow<WorkflowNode, Edge>();
+  const feedbackMessage = generationFeedbackMessage(data);
+  const lastNotification = useRef('');
+  const notificationId = useRef<number | null>(null);
+  useEffect(() => {
+    const key = feedbackMessage ? `${data.generationTaskId || data.generationRequestId || data.assetId || id}:${feedbackMessage}` : '';
+    if (key !== lastNotification.current) {
+      if (notificationId.current !== null) toast.dismiss(notificationId.current);
+      notificationId.current = key ? toast.show(feedbackMessage, data.generationStatus === 'unknown' ? 'warning' : 'error') : null;
+    }
+    lastNotification.current = key;
+  }, [feedbackMessage, data.generationTaskId, data.generationRequestId, data.generationStatus, data.assetId, id, toast]);
+  useEffect(() => () => {
+    if (notificationId.current !== null) toast.dismiss(notificationId.current);
+    notificationId.current = null;
+    lastNotification.current = '';
+  }, [toast]);
+  const resume = useMutation({
+    mutationFn: () => api.generationTasks.resume(data.generationTaskId!),
+    onSuccess: (task) => {
+      updateNodeData(id, { generationStatus: task.status, generationAppliedTaskId: undefined, generationCanResume: false, generationFailureVisible: true, status: 'generating', error: '', generationMessage: '' });
+      void queryClient.invalidateQueries({ queryKey: ['generation-tasks', canvasId] });
+    },
+    onError: (error) => toast.error(generationErrorMessage(error)),
+  });
+  const generationFeedback = (
+    <>
+      {data.status === 'generating' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-[inherit] bg-black/55 text-sm text-[#d0d0d2] backdrop-blur-[2px]">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span>生成中</span>
+        </div>
+      )}
+    </>
+  );
+  const generationError = (feedbackMessage || data.generationCanResume) && (
+    <div data-generation-error="" className="nodrag nopan nowheel relative z-10 flex max-h-[160px] w-full flex-col items-center gap-2 overflow-y-auto text-center text-xs text-red-300" onDoubleClick={(event) => event.stopPropagation()}>
+      {feedbackMessage && <span role="alert" className="whitespace-pre-wrap break-words">{feedbackMessage}</span>}
+      {data.generationCanResume && <button type="button" disabled={resume.isPending} onClick={() => resume.mutate()} className="cursor-pointer text-white disabled:opacity-40">{resume.isPending ? '处理中' : data.generationStatus === 'unknown' ? '继续查询' : '重试保存'}</button>}
+    </div>
+  );
   const Icon = nodeIcons[data.kind];
   const [isRenaming, setIsRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState(data.title);
@@ -1289,21 +1183,23 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const asset = useQuery<Asset>({
     queryKey: ['asset', data.assetId],
     queryFn: () => api.assets.get(data.assetId!) as Promise<Asset>,
-    enabled: data.kind !== 'text' && !!data.assetId,
+    enabled: data.kind !== 'text' && !!data.assetId && !data.generationTaskId && !data.generationRequestId,
     refetchInterval: (query) =>
       query.state.data?.status === 'generating' || data.status === 'generating' ? 3000 : false,
   });
 
   useEffect(() => {
-    if (!asset.data) return;
+    if (!asset.data || data.generationTaskId || data.generationRequestId || !asset.isFetchedAfterMount || asset.isError) return;
     const error = asset.data.status === 'failed' ? asset.data.error || '生成失败' : '';
-    if (asset.data.status === data.status && asset.data.url === data.url && error === data.error) return;
+    const generationFailureVisible = data.generationFailureVisible || asset.data.status === 'generating';
+    if (asset.data.status === data.status && asset.data.url === data.url && error === data.error && generationFailureVisible === data.generationFailureVisible) return;
     updateNodeData(id, {
       url: asset.data.url,
       status: asset.data.status,
       error,
+      generationFailureVisible,
     });
-  }, [asset.data, data.status, data.url, data.error, id, updateNodeData]);
+  }, [asset.data, asset.isFetchedAfterMount, asset.isError, data.status, data.url, data.error, data.generationTaskId, data.generationRequestId, data.generationFailureVisible, id, updateNodeData]);
 
   const isVideo = data.kind === 'video';
   const nodeWidth = isVideo
@@ -1392,7 +1288,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
       <MagneticConnectionHandle type="target" selected={selected} />
       {data.kind === 'text' ? (
         <div
-          className={`h-[360px] overflow-hidden rounded-[24px] border bg-[#202020] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
+          className={`relative h-[360px] overflow-hidden rounded-[24px] border bg-[#202020] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
           onDoubleClick={(event) => {
             event.stopPropagation();
             if (!isSelectingDependency) setIsEditing(true);
@@ -1403,6 +1299,8 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
               {contentDraft || '尚无文本内容'}
             </div>
           )}
+          {generationFeedback}
+          {generationError && <div className="absolute inset-x-5 bottom-5">{generationError}</div>}
         </div>
       ) : (
         <div
@@ -1419,19 +1317,13 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
               />
             )
           ) : (
-            <Icon className="h-16 w-16 stroke-[1.5] text-[#505054]" />
-          )}
-          {data.status === 'generating' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/55 text-sm text-[#d0d0d2] backdrop-blur-[2px]">
-              <Loader2 className="h-6 w-6 animate-spin" />
-              正在生成{data.kind === 'image' ? '图片' : '视频'}...
+            <div className="flex w-full flex-col items-center justify-center gap-4 px-6">
+              <Icon data-node-placeholder-icon="" className="h-16 w-16 shrink-0 stroke-[1.5] text-[#505054]" />
+              {generationError}
             </div>
           )}
-          {data.status === 'failed' && !data.url && (
-            <div className="absolute bottom-5 rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">
-              {data.error || '生成失败，请重新尝试'}
-            </div>
-          )}
+          {generationFeedback}
+          {data.url && generationError && <div className="absolute inset-x-5 bottom-5">{generationError}</div>}
         </div>
       )}
       <MagneticConnectionHandle type="source" selected={selected} />
@@ -1514,6 +1406,7 @@ function InfiniteCanvas({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const toast = useToast();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<Viewport>(canvas.graph.viewport);
   const initializedRef = useRef(false);
@@ -1524,6 +1417,23 @@ function InfiniteCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     canvas.graph.edges.map(normalizeEdge),
   );
+  const generationTasks = useQuery({
+    queryKey: ['generation-tasks', canvas.id],
+    queryFn: () => api.generationTasks.list(canvas.id),
+    refetchInterval: (query) => generationTasksPollingInterval(query.state.data),
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+  });
+  const taskRecoveryReady = useRef(false);
+  useEffect(() => {
+    if (!generationTasks.data) return;
+    // Do not treat stale query-cache statuses as tasks observed running in this visit.
+    if (!taskRecoveryReady.current && (!generationTasks.isFetchedAfterMount || generationTasks.isError)) return;
+    taskRecoveryReady.current = true;
+    const recovered = recoverGenerationTasks(nodes, edges, generationTasks.data, (node) => node.data.kind === 'text' ? 400 : mediaNodeWidth(node.data.aspectRatio, node.data.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO) + 40);
+    if (recovered.nodes !== nodes) setNodes(recovered.nodes as WorkflowNode[]);
+    if (recovered.edges !== edges) setEdges(recovered.edges);
+  }, [generationTasks.data, generationTasks.isFetchedAfterMount, generationTasks.isError, nodes, edges, setNodes, setEdges]);
   const [instance, setInstance] = useState<ReactFlowInstance<WorkflowNode, Edge> | null>(null);
   const [zoom, setZoom] = useState(Math.round(canvas.graph.viewport.zoom * 100));
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -1535,7 +1445,6 @@ function InfiniteCanvas({
     | { type: 'text'; title: string; content: string; prompt?: string; model?: string; sourceAssetId?: string }
     | null
   >(null);
-  const [toast, setToast] = useState<string | null>(null);
   const [nodeSearchQuery, setNodeSearchQuery] = useState('');
   const [nodeSearchKind, setNodeSearchKind] = useState<NodeSearchKind>('all');
   const nodeSearchInputRef = useRef<HTMLInputElement>(null);
@@ -1632,12 +1541,6 @@ function InfiniteCanvas({
   const saveGraphRef = useRef(saveGraph.mutate);
   saveGraphRef.current = saveGraph.mutate;
 
-  const toastTimerRef = useRef<number | null>(null);
-  const showToast = useCallback((message: string) => {
-    setToast(message);
-    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 2400);
-  }, []);
 
   const editVideo = useMutation<Project, Error, string>({
     mutationFn: async (nodeId) => {
@@ -2284,7 +2187,7 @@ function InfiniteCanvas({
       {showAssetLibrary && !dependencyTargetId && (
         <AssetLibraryDialog
           onClose={() => setShowAssetLibrary(false)}
-          onToast={showToast}
+          onToast={toast.show}
           onAddToCanvas={addAssetNode}
         />
       )}
@@ -2310,7 +2213,7 @@ function InfiniteCanvas({
           onClose={() => setSaveToLibraryTarget(null)}
           onSaved={(folderName) => {
             setSaveToLibraryTarget(null);
-            showToast(folderName ? `已保存到资产库「${folderName}」` : '已保存到资产库');
+            toast.success(folderName ? `已保存到资产库「${folderName}」` : '已保存到资产库');
           }}
         />
       )}
@@ -2323,14 +2226,6 @@ function InfiniteCanvas({
         />
       )}
 
-      {toast && !dependencyTargetId && (
-        <div
-          role="status"
-          className="pointer-events-none absolute bottom-20 left-1/2 z-[60] -translate-x-1/2 rounded-xl border border-white/[0.14] bg-[#2c2c2c] px-4 py-2.5 text-sm text-[#eeeeef] shadow-[0_16px_42px_rgba(0,0,0,0.52)]"
-        >
-          {toast}
-        </div>
-      )}
 
       {dependencyTargetId && (
         <div className="pointer-events-none absolute left-1/2 top-5 z-20 -translate-x-1/2 rounded-xl border border-white/[0.14] bg-[#292929] px-4 py-2 text-sm text-[#e1e1e3] shadow-xl">

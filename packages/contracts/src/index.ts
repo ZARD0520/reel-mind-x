@@ -86,6 +86,7 @@ export const AssetSchema = z.object({
   kind: AssetKindSchema,
   source: AssetSourceSchema,
   status: AssetStatusSchema,
+  generationTaskId: z.string().uuid().optional(),
   error: z.string().nullable().optional(),
   name: z.string().min(1).max(200),
   /** 媒体访问地址（上传后或 AI 生成完成后填充；generating 时可为空） */
@@ -604,6 +605,7 @@ export type ChatMessage = z.infer<typeof ChatMessageSchema>;
 /** AI 文本生成请求入参 */
 export const GenerateTextSchema = z
   .object({
+    requestId: z.string().uuid().optional(),
     projectId: z.string().uuid().optional(),
     canvasId: z.string().uuid().optional(),
     userPrompt: z.string().min(1).max(2000).optional(),
@@ -654,6 +656,7 @@ const VideoSizeSchema = z.enum(['1280x720', '720x1280', '1024x1024']);
 /** AI 图像生成请求 */
 export const GenerateImageSchema = z
   .object({
+    requestId: z.string().uuid().optional(),
     projectId: z.string().uuid().optional(),
     canvasId: z.string().uuid().optional(),
     prompt: z.string().min(1).max(2000),
@@ -673,6 +676,7 @@ export type VideoDuration = z.infer<typeof VideoDurationSchema>;
 
 export const GenerateVideoSchema = z
   .object({
+    requestId: z.string().uuid().optional(),
     projectId: z.string().uuid().optional(),
     canvasId: z.string().uuid().optional(),
     prompt: z.string().min(1).max(2000),
@@ -689,6 +693,45 @@ export const GenerateVideoSchema = z
     message: 'projectId 和 canvasId 必须且只能提供一个',
   });
 export type GenerateVideoInput = z.infer<typeof GenerateVideoSchema>;
+
+export const CreateGenerationTaskSchema = z.object({
+  requestId: z.string().uuid(),
+  canvasId: z.string().uuid().optional(),
+  projectId: z.string().uuid().optional(),
+  nodeId: z.string().min(1).max(200).optional(),
+  kind: z.enum(['text', 'image', 'video']),
+  count: z.union([z.literal(1), z.literal(2), z.literal(4)]).default(1),
+  prompt: z.string().min(1).max(12000),
+  userPrompt: z.string().min(1).max(2000).optional(),
+  references: z.array(AssetReferenceSchema).max(100).default([]),
+  model: z.string().min(1).max(100).optional(),
+  size: SizeSchema.optional(),
+  duration: VideoDurationSchema.optional(),
+  withAudio: z.boolean().optional(),
+  imageAssetIds: z.array(z.string().uuid()).max(2).default([]),
+  maxLength: z.number().int().min(1).max(50000).default(2000),
+  temperature: z.number().min(0).max(1).optional(),
+  messages: z.array(ChatMessageSchema).optional(),
+}).refine((input) => Number(!!input.canvasId) + Number(!!input.projectId) === 1, {
+  message: 'projectId 和 canvasId 必须且只能提供一个',
+}).refine((input) => !input.nodeId || !!input.canvasId, { message: '节点任务必须属于画布' })
+  .refine((input) => input.kind !== 'video' || !input.size || ['1280x720', '720x1280', '1024x1024'].includes(input.size), { message: '视频尺寸不受支持' });
+export type CreateGenerationTaskInput = z.infer<typeof CreateGenerationTaskSchema>;
+
+export const GenerationTaskStateSchema = z.enum(['queued', 'submitting', 'generating', 'saving', 'unknown', 'completed', 'failed']);
+export const GenerationTaskSchema = z.object({
+  id: z.string().uuid(), requestId: z.string().uuid(), nodeId: z.string().nullable(),
+  kind: z.enum(['text', 'image', 'video']), model: z.string(),
+  status: GenerationTaskStateSchema, error: z.string().nullable(), canResume: z.boolean(),
+  createdAt: z.coerce.date(),
+  items: z.array(z.object({
+    id: z.string().uuid(), index: z.number(), status: GenerationTaskStateSchema,
+    providerTaskId: z.string().nullable(), attemptCount: z.number(),
+    nextRunAt: z.coerce.date(), error: z.string().nullable(), canResume: z.boolean(),
+    asset: AssetSchema.nullable(),
+  })),
+});
+export type GenerationTask = z.infer<typeof GenerationTaskSchema>;
 
 /** AI 生成任务状态（复用 Asset 生成状态） */
 export const AiGenJobStatusSchema = z.enum(['queued', 'generating', 'completed', 'failed']);

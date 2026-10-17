@@ -5,7 +5,7 @@ import { downloadAssetFile } from '../../../lib/download-asset';
 import { MaterialReferenceChip } from './MaterialReferenceChip';
 import { materialGenerationInfo } from './material-generation-info';
 import { ConfirmDeleteDialog } from '../../../components/ui/ConfirmDeleteDialog';
-import { Toast } from '../../../components/ui/Toast';
+import { useToast } from '../../../components/ui/Toast';
 import { ApiError } from '../../../lib/api';
 
 const KIND_LABELS = { image: '图片', video: '视频', audio: '音频', text: '文本' };
@@ -26,9 +26,8 @@ export function MaterialDetailDialog({ asset, creatorName, onClose, onDelete, de
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState('');
   const [deleteConfirmation, setDeleteConfirmation] = useState(false);
-  const [toast, setToast] = useState('');
+  const toast = useToast();
   const generationInfo = materialGenerationInfo(asset);
   const Icon = { image: ImageIcon, video: Film, audio: AudioLines, text: AlignLeft }[asset.kind];
   const tags = [
@@ -46,22 +45,20 @@ export function MaterialDetailDialog({ asset, creatorName, onClose, onDelete, de
   const close = () => dialogRef.current?.close();
 
   const download = async () => {
-    setError('');
     setDownloading(true);
     try { await downloadAssetFile(asset); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '下载失败，请重试'); }
+    catch (cause) { toast.error(cause instanceof Error ? cause.message : '下载失败，请重试'); }
     finally { setDownloading(false); }
   };
 
   const deleteAsset = async () => {
     if (!onDelete || deleting) return;
-    setToast('');
     setDeleting(true);
     try {
       await onDelete(asset);
       close();
     } catch (cause) {
-      setToast(cause instanceof ApiError && cause.status === 401 ? '登录已过期，请重新登录' : deleteHistory ? '删除生成历史失败，请稍后重试' : '删除素材失败，请稍后重试');
+      toast.error(cause instanceof ApiError && cause.status === 401 ? '登录已过期，请重新登录' : deleteHistory ? '删除生成历史失败，请稍后重试' : '删除素材失败，请稍后重试');
     } finally {
       setDeleting(false);
     }
@@ -103,7 +100,6 @@ export function MaterialDetailDialog({ asset, creatorName, onClose, onDelete, de
             </dl>
           </div>
           <div className="shrink-0 p-6">
-            {error && <p role="alert" className="mb-3 text-xs text-red-400">{error}</p>}
             <div className="flex gap-3">
               <button type="button" onClick={() => { if (onDelete) setDeleteConfirmation(true); }} disabled={deleting || downloading} aria-disabled={!onDelete || deleting || downloading} title={onDelete ? undefined : '暂未开放'} className={`flex h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/[0.12] text-sm disabled:cursor-not-allowed disabled:opacity-50 ${onDelete ? 'text-[#ef9b9b] hover:border-red-400/30 hover:bg-red-500/10' : 'text-[#8e8e92]'}`}>{deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}{deleting ? '删除中' : '删除'}</button>
               <button type="button" onClick={() => void download()} disabled={deleting || downloading || (asset.kind !== 'text' && !asset.url)} className="flex h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#f7f7f2] text-sm font-medium text-[#151515] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}{downloading ? '下载中' : '下载'}</button>
@@ -113,7 +109,6 @@ export function MaterialDetailDialog({ asset, creatorName, onClose, onDelete, de
       </div>
     </dialog>
     {deleteConfirmation && <ConfirmDeleteDialog title={deleteHistory ? '删除生成历史？' : '删除素材？'} description={deleteHistory ? '确认删除这条生成历史？' : `确认删除「${asset.name}」？此操作无法撤销。`} onConfirm={deleteAsset} onClose={() => setDeleteConfirmation(false)} />}
-    {toast && <Toast message={toast} onDismiss={() => setToast('')} />}
     </>
   );
 }

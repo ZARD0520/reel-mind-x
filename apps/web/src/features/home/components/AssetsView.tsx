@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Asset } from '@reel/contracts';
 import { AlignLeft, AudioLines, Film, FolderOpen, Image as ImageIcon, Library, Loader2 } from 'lucide-react';
 import { api } from '../../../lib/api';
 import { MaterialDetailDialog } from './MaterialDetailDialog';
 import { AssetLibraryDialog } from '../../canvas/components/AssetLibraryDialog';
+import { useToast } from '../../../components/ui/Toast';
 
 const FILTERS = [
   { value: 'all', label: '全部' },
@@ -72,12 +73,7 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
   const [section, setSection] = useState<'materials' | 'assets'>('materials');
   const [filter, setFilter] = useState<MediaFilter>('all');
   const [detailAsset, setDetailAsset] = useState<Asset | null>(null);
-  const [libraryToast, setLibraryToast] = useState<string | null>(null);
-  useEffect(() => {
-    if (!libraryToast) return;
-    const timeout = window.setTimeout(() => setLibraryToast(null), 3000);
-    return () => window.clearTimeout(timeout);
-  }, [libraryToast]);
+  const toast = useToast();
   const history = useQuery<Asset[]>({
     queryKey: ['assetHistory', 'home', 'all'],
     queryFn: () => api.assets.history({ scope: 'all' }) as Promise<Asset[]>,
@@ -144,7 +140,7 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
             <button type="button" onClick={onLogin} className="h-10 rounded-lg border border-white/[0.16] px-5 text-sm text-[#f7f7f2] hover:bg-white/[0.08]">登录</button>
           </div>
         ) : section === 'assets' ? (
-          <AssetLibraryDialog embedded onClose={() => {}} onToast={setLibraryToast} onSelectAsset={setDetailAsset} />
+          <AssetLibraryDialog embedded onClose={() => {}} onToast={toast.show} onSelectAsset={setDetailAsset} />
         ) : history.isError ? (
           <div role="alert" className="flex flex-1 flex-col items-center justify-center gap-4 px-4 pb-16 text-center">
             <p className="text-sm text-[#9a9a9f]">素材加载失败，请重试</p>
@@ -169,7 +165,6 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
           </div>
         )}
       </section>
-      {libraryToast && <div role="status" className="fixed bottom-8 left-1/2 z-[80] -translate-x-1/2 rounded-xl border border-white/10 bg-[#292929] px-4 py-3 text-sm text-white shadow-xl">{libraryToast}</div>}
       {detailAsset && <MaterialDetailDialog key={detailAsset.id} asset={detailAsset} creatorName={creatorName} onClose={() => setDetailAsset(null)}
         deleteHistory={section === 'materials'}
         onDelete={async (asset) => {
@@ -179,7 +174,7 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
             queryClient.invalidateQueries({ queryKey: ['assetFolders'] }),
             queryClient.invalidateQueries({ queryKey: ['assetHistory'] }),
           ]);
-          setLibraryToast(section === 'materials' ? '生成历史已删除' : '资产已删除');
+          toast.success(section === 'materials' ? '生成历史已删除' : '资产已删除');
         }} />}
     </main>
   );

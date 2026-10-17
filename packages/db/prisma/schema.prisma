@@ -24,6 +24,7 @@ model User {
   renderJobs   RenderJob[]
   assetFolders AssetFolder[]
   conversations CanvasConversation[]
+  generationTasks GenerationTask[]
 
   @@map("users")
 }
@@ -39,6 +40,7 @@ model Canvas {
 
   assets Asset[]
   conversations CanvasConversation[]
+  generationTasks GenerationTask[]
 
   @@index([userId, updatedAt])
   @@map("canvases")
@@ -55,6 +57,7 @@ model Project {
   deletedAt DateTime?
 
   assets Asset[]
+  generationTasks GenerationTask[]
 
   @@index([userId, updatedAt])
   @@map("projects")
@@ -116,12 +119,68 @@ model Asset {
   model            String?
   references       Json         @default("[]")
   historyDeletedAt DateTime?
+  generationItem   GenerationTaskItem?
   createdAt        DateTime     @default(now())
 
   @@index([userId, projectId, createdAt])
   @@index([userId, canvasId, createdAt])
   @@index([userId, folderId, createdAt])
   @@map("assets")
+}
+
+model GenerationTask {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  canvasId      String?
+  canvas        Canvas?  @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  projectId     String?
+  project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  nodeId        String?
+  requestId     String
+  inputHash     String
+  activeNodeKey String?  @unique
+  kind          String
+  model         String
+  input         Json
+  status        String   @default("queued")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  items         GenerationTaskItem[]
+
+  @@unique([userId, requestId])
+  @@index([userId, canvasId, createdAt])
+  @@index([status, updatedAt])
+  @@map("generation_tasks")
+}
+
+model GenerationTaskItem {
+  id               String   @id @default(uuid())
+  taskId           String
+  task             GenerationTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  index            Int
+  assetId          String?  @unique
+  asset            Asset?   @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  status           String   @default("queued")
+  providerTaskId   String?
+  providerResult   Json?
+  attemptCount     Int      @default(0)
+  pollFailures     Int      @default(0)
+  saveAttempts     Int      @default(0)
+  error            String?
+  errorCode        String?
+  nextRunAt        DateTime @default(now())
+  leaseToken       String?
+  leaseExpiresAt   DateTime?
+  revision         Int      @default(0)
+  submittedAt      DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([taskId, index])
+  @@index([status, nextRunAt, leaseExpiresAt])
+  @@map("generation_task_items")
 }
 
 // 素材库文件夹；parentId 自关联支持嵌套，teamId 为团队归属预留列（团队表建立后再补外键）
