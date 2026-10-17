@@ -200,7 +200,7 @@ function LibraryAssetThumb({
           className="absolute inset-x-0 bottom-0 rounded-b-lg bg-black/80 px-1.5 py-0.5 text-[10px] text-white outline-none ring-1 ring-[#f3f3f0]/60"
         />
       ) : null}
-      {onOpenMenu && (
+      {onOpenMenu && !browseOnly && (
         <button
           type="button"
           onClick={(event) => {

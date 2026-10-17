@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Asset } from '@reel/contracts';
 import { AlignLeft, AudioLines, Film, FolderOpen, Image as ImageIcon, Library, Loader2 } from 'lucide-react';
 import { api } from '../../../lib/api';
@@ -68,6 +68,7 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
   creatorName?: string;
   onLogin: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [section, setSection] = useState<'materials' | 'assets'>('materials');
   const [filter, setFilter] = useState<MediaFilter>('all');
   const [detailAsset, setDetailAsset] = useState<Asset | null>(null);
@@ -165,7 +166,15 @@ export function AssetsView({ isAuthenticated, isAuthLoading, creatorName, onLogi
         )}
       </section>
       {libraryToast && <div role="status" className="fixed bottom-8 left-1/2 z-[80] -translate-x-1/2 rounded-xl border border-white/10 bg-[#292929] px-4 py-3 text-sm text-white shadow-xl">{libraryToast}</div>}
-      {detailAsset && <MaterialDetailDialog key={detailAsset.id} asset={detailAsset} creatorName={creatorName} onClose={() => setDetailAsset(null)} />}
+      {detailAsset && <MaterialDetailDialog key={detailAsset.id} asset={detailAsset} creatorName={creatorName} onClose={() => setDetailAsset(null)}
+        onDelete={section === 'assets' ? async (asset) => {
+          await api.assets.remove(asset.id);
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['assetFolders'] }),
+            queryClient.invalidateQueries({ queryKey: ['assetHistory'] }),
+          ]);
+          setLibraryToast('资产已删除');
+        } : undefined} />}
     </main>
   );
 }

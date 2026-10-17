@@ -13,13 +13,15 @@ function aspectRatio(width: number, height: number): string {
   return `${width / divisor}:${height / divisor}`;
 }
 
-export function MaterialDetailDialog({ asset, creatorName, onClose }: {
+export function MaterialDetailDialog({ asset, creatorName, onClose, onDelete }: {
   asset: Asset;
   creatorName?: string;
   onClose: () => void;
+  onDelete?: (asset: Asset) => Promise<void>;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [downloading, setDownloading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
   const generationInfo = materialGenerationInfo(asset);
   const Icon = { image: ImageIcon, video: Film, audio: AudioLines, text: AlignLeft }[asset.kind];
@@ -43,6 +45,20 @@ export function MaterialDetailDialog({ asset, creatorName, onClose }: {
     try { await downloadAssetFile(asset); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '下载失败，请重试'); }
     finally { setDownloading(false); }
+  };
+
+  const deleteAsset = async () => {
+    if (!onDelete || deleting) return;
+    setError('');
+    setDeleting(true);
+    try {
+      await onDelete(asset);
+      close();
+    } catch {
+      setError('删除素材失败，请稍后重试');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -83,8 +99,8 @@ export function MaterialDetailDialog({ asset, creatorName, onClose }: {
           <div className="shrink-0 p-6">
             {error && <p role="alert" className="mb-3 text-xs text-red-400">{error}</p>}
             <div className="flex gap-3">
-              <button type="button" aria-disabled="true" title="暂未开放" className="flex h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/[0.12] text-sm text-[#8e8e92]"><Trash2 className="h-4 w-4" />删除</button>
-              <button type="button" onClick={() => void download()} disabled={downloading || (asset.kind !== 'text' && !asset.url)} className="flex h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#f7f7f2] text-sm font-medium text-[#151515] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}{downloading ? '下载中' : '下载'}</button>
+              <button type="button" onClick={() => void deleteAsset()} disabled={deleting || downloading} aria-disabled={!onDelete || deleting || downloading} title={onDelete ? undefined : '暂未开放'} className={`flex h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border border-white/[0.12] text-sm disabled:cursor-not-allowed disabled:opacity-50 ${onDelete ? 'text-[#ef9b9b] hover:border-red-400/30 hover:bg-red-500/10' : 'text-[#8e8e92]'}`}>{deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}{deleting ? '删除中' : '删除'}</button>
+              <button type="button" onClick={() => void download()} disabled={deleting || downloading || (asset.kind !== 'text' && !asset.url)} className="flex h-10 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg bg-[#f7f7f2] text-sm font-medium text-[#151515] hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">{downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}{downloading ? '下载中' : '下载'}</button>
             </div>
           </div>
         </aside>
