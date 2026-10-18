@@ -95,6 +95,81 @@ test('historical failures are silent on entry while failures observed during the
   assert.equal(generationFeedbackMessage(liveFailure.nodes[0].data), '模型繁忙');
 });
 
+test('a failed batch sibling never shows retry-save while other images are still running', () => {
+  const nodes = [{ id: 'batch-node', position: { x: 0, y: 0 }, data: {
+    kind: 'image', title: '图片', content: '', generationFailureVisible: true,
+  } }];
+  const task = {
+    id: 'batch-task', nodeId: 'batch-node', requestId: 'batch-request',
+    status: 'saving', error: '素材已生成，正在重试保存', canResume: true,
+    model: 'model', items: [{ status: 'failed' }, { status: 'saving' }],
+  };
+  const running = recoverGenerationTasks(nodes, [], [task], () => 400);
+  assert.equal(running.nodes[0].data.generationCanResume, false);
+  assert.equal(generationFeedbackMessage(running.nodes[0].data), '');
+  const failed = recoverGenerationTasks(running.nodes, [], [{ ...task, status: 'failed' }], () => 400);
+  assert.equal(failed.nodes[0].data.generationCanResume, true);
+});
+
+test('mixed and all-failed batches retain all outputs; deleted nodes stay deleted after recovery', () => {
+  const nodes = [{ id: 'parent', type: 'workflow', position: { x: 0, y: 0 }, data: {
+    kind: 'image', title: '图片', content: '', prompt: '测试提示词',
+    generationFailureVisible: true, referenceNodeIds: ['upstream'],
+  } }];
+  const edges = [{ id: 'dependency', source: 'upstream', target: 'parent' }];
+  const task = {
+    id: 'batch', requestId: 'request', nodeId: 'parent', model: 'model',
+    status: 'failed', error: '模型繁忙', canResume: false,
+    items: Array.from({ length: 4 }, (_, index) => ({
+      id: `item-${index}`, index, status: index % 2 ? 'completed' : 'failed',
+      error: index % 2 ? null : '模型繁忙',
+      asset: { id: `asset-${index}`, url: index % 2 ? `/image-${index}.png` : null },
+    })),
+  };
+  const recovered = recoverGenerationTasks(nodes, edges, [task], () => 400);
+  assert.equal(recovered.nodes.length, 4);
+  assert.equal(recovered.nodes.filter((node) => node.data.status === 'ready').length, 2);
+  assert.equal(recovered.nodes.filter((node) => node.data.status === 'failed').length, 2);
+  assert.equal(recovered.nodes[0].data.error, '');
+  assert.equal(recovered.edges.length, 4);
+  const removedId = 'asset-2';
+  const remaining = recovered.nodes.filter((node) => node.id !== removedId);
+  const again = recoverGenerationTasks(remaining, recovered.edges, [task], () => 400);
+  assert.equal(again.nodes, remaining);
+  const reentered = recoverGenerationTasks(remaining.map((node) => ({ ...node, data: {
+    ...node.data, generationRequestId: undefined, generationFailureVisible: false,
+  } })), recovered.edges, [task], () => 400);
+  assert.equal(reentered.nodes.length, 3);
+  assert.ok(reentered.nodes.every((node) => generationFeedbackMessage(node.data) === ''));
+
+  const allFailed = recoverGenerationTasks(nodes, edges, [{ ...task,
+    items: task.items.map((item) => ({ ...item, status: 'failed', error: '模型繁忙' })),
+  }], () => 400);
+  assert.equal(allFailed.nodes.length, 4);
+  assert.ok(allFailed.nodes.every((node) => node.data.status === 'failed' && !node.data.url));
+
+  // Backfill an already-applied old graph, without recreating a deleted successful output.
+  const old = [{ ...recovered.nodes[0], data: {
+    ...recovered.nodes[0].data, generationBatchResultsTaskId: undefined, content: '保留用户编辑',
+  } }];
+  const migrated = recoverGenerationTasks(old, edges, [task], () => 400);
+  assert.equal(migrated.nodes.length, 3);
+  assert.equal(migrated.nodes[0].data.content, '保留用户编辑');
+  assert.equal(migrated.nodes.filter((node) => node.data.status === 'failed').length, 2);
+
+  // Resuming failed saves updates the matching output instead of adding duplicate successful nodes.
+  const resumed = recoverGenerationTasks(recovered.nodes, recovered.edges,
+    [{ ...task, status: 'saving' }], () => 400);
+  const finished = recoverGenerationTasks(resumed.nodes, resumed.edges, [{ ...task,
+    status: 'completed', error: null,
+    items: task.items.map((item) => ({ ...item, status: 'completed', error: null,
+      asset: { ...item.asset, url: `/saved-${item.index}.png` } })),
+  }], () => 400);
+  assert.equal(finished.nodes.length, 4);
+  assert.ok(finished.nodes.every((node) => node.data.status === 'ready'));
+  assert.equal(new Set(finished.nodes.map((node) => node.data.assetId)).size, 4);
+});
+
 test(
   'durable generation reliability (isolated local database)',
   { timeout: 120000 },
@@ -358,6 +433,52 @@ test(
             assert.deepEqual(fs.readdirSync(path.dirname(asset.localPath)), [`${item.id}.png`]);
           } finally {
             global.fetch = originalFetch;
+          }
+        },
+      );
+
+      await suite.test(
+        'four image outputs save independently without ffprobe, including WebP and GIF',
+        async () => {
+          const batch = await create({ kind: 'image', count: 4 });
+          let submissions = 0;
+          const worker = freshWorker({ generateImage: async () => {
+            return { url: `https://invalid.test/generated-image/${submissions++}`, model: 'cogview-3-flash' };
+          } });
+          worker.saveMedia = GenerationTasksProcessor.prototype.saveMedia;
+          await Promise.all(batch.items.map((item) => step(worker, item.id)));
+          const fixtures = [
+            ['png', 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6lLkAAAAASUVORK5CYII='],
+            ['webp', 'UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA'],
+            ['gif', 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'],
+            ['png', 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6lLkAAAAASUVORK5CYII='],
+          ];
+          const originalFetch = global.fetch;
+          const probe = require('../src/modules/assets/media-probe.ts');
+          const originalProbe = probe.probeMedia;
+          probe.probeMedia = async () => { throw new Error('ffprobe unavailable'); };
+          try {
+            global.fetch = async (url) => new Response(
+              Buffer.from(fixtures[Number(new URL(url).pathname.split('/').at(-1))][1], 'base64'),
+            );
+            const completed = await Promise.all(batch.items.map((item) => step(worker, item.id)));
+            assert.ok(completed.every((item) => item.status === 'completed'));
+            for (const item of batch.items) {
+              const asset = await prisma.asset.findUniqueOrThrow({ where: { id: item.asset.id } });
+              assert.equal(asset.width, 1);
+              assert.equal(asset.height, 1);
+              const source = completed.find((result) => result.id === item.id).providerResult.url;
+              const fixture = fixtures[Number(new URL(source).pathname.split('/').at(-1))];
+              assert.ok(asset.localPath.endsWith(`.${fixture[0]}`));
+              global.fetch = async () => { throw new Error('must reuse the saved file'); };
+              assert.equal((await worker.saveMedia(item.id, randomUUID(), user.id, 'image',
+                'https://invalid.test/expired', new AbortController().signal)).localPath, asset.localPath);
+            }
+            assert.equal((await service.get(user.id, batch.id)).status, 'completed');
+            assert.equal(submissions, 4);
+          } finally {
+            global.fetch = originalFetch;
+            probe.probeMedia = originalProbe;
           }
         },
       );
@@ -730,9 +851,16 @@ test(
           assert.equal(active.nodes.length, 1);
           assert.equal(active.nodes[0].data.status, 'generating');
           const recovered = recoverGenerationTasks(active.nodes, edges, [result], () => 400);
-          assert.equal(recovered.nodes.length, 3);
-          assert.equal(recovered.edges.length, 3);
+          assert.equal(recovered.nodes.length, 4);
+          assert.equal(recovered.edges.length, 4);
           assert.equal(recovered.nodes[0].data.content, '测试结果');
+          const failedNode = recovered.nodes.find((node) => node.data.status === 'failed');
+          assert.equal(failedNode.id, result.items[3].asset.id);
+          assert.equal(failedNode.data.error, 'one item failed');
+          assert.equal(failedNode.data.content, '');
+          assert.equal(failedNode.data.url, null);
+          assert.equal(failedNode.data.generationCount, 1);
+          assert.equal(generationFeedbackMessage(failedNode.data), 'one item failed');
           const again = recoverGenerationTasks(
             recovered.nodes,
             recovered.edges,
@@ -772,7 +900,7 @@ test(
           );
           assert.equal(finished.nodes[0].data.status, 'ready');
           assert.equal(finished.nodes[0].data.generationStatus, 'completed');
-          assert.equal(finished.nodes.length, 3);
+          assert.equal(finished.nodes.length, 4);
           assert.equal(
             generationFeedbackMessage({
               status: 'generating',

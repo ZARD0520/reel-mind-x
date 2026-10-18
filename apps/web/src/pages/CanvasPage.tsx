@@ -173,6 +173,8 @@ type WorkflowNodeData = {
   generationRequestId?: string;
   generationStatus?: GenerationTask['status'];
   generationAppliedTaskId?: string;
+  generationBatchResultsTaskId?: string;
+  generationBatchTaskId?: string;
   generationCanResume?: boolean;
   generationMessage?: string;
   generationProgress?: string;
@@ -467,6 +469,8 @@ function normalizeNode(node: CanvasGraph['nodes'][number]): WorkflowNode {
       generationRequestId: undefined,
       generationStatus: rawData.generationStatus,
       generationAppliedTaskId: rawData.generationAppliedTaskId,
+      generationBatchResultsTaskId: rawData.generationBatchResultsTaskId,
+      generationBatchTaskId: rawData.generationBatchTaskId,
       generationCanResume: rawData.generationCanResume,
       generationMessage: rawData.generationMessage,
       generationProgress: rawData.generationProgress,
@@ -574,7 +578,7 @@ function NodeGenerationPrompt({
   const toast = useToast();
   const submissionRef = useRef(false);
   const dependencySelection = useContext(DependencySelectionContext);
-  const [prompt, setPrompt] = useState(data.prompt ?? '');
+  const prompt = data.prompt ?? '';
   const [model, setModel] = useState<CanvasModelId>(normalizeCanvasModel(kind, data.model));
   const [generationCount, setGenerationCount] = useState<GenerationCount>(
     data.generationCount ?? 1,
@@ -826,7 +830,7 @@ function NodeGenerationPrompt({
         })}
         <textarea
           value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => updateNodeData(nodeId, { prompt: event.target.value })}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
             const input = event.currentTarget;
@@ -1068,10 +1072,14 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
       )}
     </>
   );
-  const generationError = (feedbackMessage || data.generationCanResume) && (
+  const showRecovery = data.generationCanResume && (
+    data.generationStatus === 'unknown' ||
+    (data.status !== 'generating' && data.generationFailureVisible !== false)
+  );
+  const generationError = (feedbackMessage || showRecovery) && (
     <div data-generation-error="" className="nodrag nopan nowheel relative z-10 flex max-h-[160px] w-full flex-col items-center gap-2 overflow-y-auto text-center text-xs text-red-300" onDoubleClick={(event) => event.stopPropagation()}>
       {feedbackMessage && <span role="alert" className="whitespace-pre-wrap break-words">{feedbackMessage}</span>}
-      {data.generationCanResume && <button type="button" disabled={resume.isPending} onClick={() => resume.mutate()} className="cursor-pointer text-white disabled:opacity-40">{resume.isPending ? '处理中' : data.generationStatus === 'unknown' ? '继续查询' : '重试保存'}</button>}
+      {showRecovery && <button type="button" disabled={resume.isPending} onClick={() => resume.mutate()} className="cursor-pointer text-white disabled:opacity-40">{resume.isPending ? '处理中' : data.generationStatus === 'unknown' ? '继续查询' : '重试保存'}</button>}
     </div>
   );
   const Icon = nodeIcons[data.kind];
@@ -1183,13 +1191,13 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const asset = useQuery<Asset>({
     queryKey: ['asset', data.assetId],
     queryFn: () => api.assets.get(data.assetId!) as Promise<Asset>,
-    enabled: data.kind !== 'text' && !!data.assetId && !data.generationTaskId && !data.generationRequestId,
+    enabled: data.kind !== 'text' && !!data.assetId && !data.generationTaskId && !data.generationRequestId && !data.generationBatchTaskId,
     refetchInterval: (query) =>
       query.state.data?.status === 'generating' || data.status === 'generating' ? 3000 : false,
   });
 
   useEffect(() => {
-    if (!asset.data || data.generationTaskId || data.generationRequestId || !asset.isFetchedAfterMount || asset.isError) return;
+    if (!asset.data || data.generationTaskId || data.generationRequestId || data.generationBatchTaskId || !asset.isFetchedAfterMount || asset.isError) return;
     const error = asset.data.status === 'failed' ? asset.data.error || '生成失败' : '';
     const generationFailureVisible = data.generationFailureVisible || asset.data.status === 'generating';
     if (asset.data.status === data.status && asset.data.url === data.url && error === data.error && generationFailureVisible === data.generationFailureVisible) return;
@@ -1199,7 +1207,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
       error,
       generationFailureVisible,
     });
-  }, [asset.data, asset.isFetchedAfterMount, asset.isError, data.status, data.url, data.error, data.generationTaskId, data.generationRequestId, data.generationFailureVisible, id, updateNodeData]);
+  }, [asset.data, asset.isFetchedAfterMount, asset.isError, data.status, data.url, data.error, data.generationTaskId, data.generationRequestId, data.generationBatchTaskId, data.generationFailureVisible, id, updateNodeData]);
 
   const isVideo = data.kind === 'video';
   const nodeWidth = isVideo

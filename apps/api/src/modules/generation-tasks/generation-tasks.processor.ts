@@ -13,6 +13,7 @@ import type { Job } from 'bullmq';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { imageSize } from 'image-size';
 import type { Env } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TextGenService } from '../text-gen/text-gen.service';
@@ -20,6 +21,7 @@ import { probeMedia } from '../assets/media-probe';
 import { GENERATION_QUEUE, GenerationTasksService } from './generation-tasks.service';
 
 class LeaseLost extends Error {}
+class MediaSaveError extends Error {}
 const MAX_BUSY_SUBMISSION_ATTEMPTS = 2; // Initial submission + one retry.
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 const retryDelay = (attempt: number, base = 15000) =>
@@ -256,7 +258,12 @@ export class GenerationTasksProcessor extends WorkerHost {
           });
       } else if (phase === 'saving') {
         if (item.saveAttempts + 1 >= 5)
-          await fail('素材已生成，保存失败，请重试保存', 'SAVE_FAILED');
+          await fail(
+            error instanceof MediaSaveError
+              ? error.message
+              : '素材已生成，但保存失败，请稍后重试保存',
+            'SAVE_FAILED',
+          );
         else
           await transition({
             error: '素材已生成，正在重试保存',
@@ -308,7 +315,7 @@ export class GenerationTasksProcessor extends WorkerHost {
       'uploads',
     );
     await fs.mkdir(directory, { recursive: true });
-    const candidates = kind === 'image' ? ['png', 'jpeg'] : ['mp4'];
+    const candidates = kind === 'image' ? ['png', 'jpeg', 'webp', 'gif', 'avif'] : ['mp4'];
     for (const extension of candidates) {
       const filename = `${id}.${extension}`;
       const file = path.join(directory, filename);
@@ -317,8 +324,10 @@ export class GenerationTasksProcessor extends WorkerHost {
       } catch {
         continue;
       }
-      const probe = await probeMedia(file, `${kind}/${extension}`, 30);
-      if (!probe.width || !probe.height) continue;
+      const probe = kind === 'image'
+        ? imageMetadata(await fs.readFile(file))
+        : await probeMedia(file, `${kind}/${extension}`, 30);
+      if (!probe?.width || !probe.height) continue;
       return {
         url: `/files/users/${userId}/uploads/${filename}`,
         localPath: file,
@@ -328,17 +337,25 @@ export class GenerationTasksProcessor extends WorkerHost {
       };
     }
     const response = await fetch(remoteUrl, { signal });
-    if (!response.ok) throw new Error(`Generated media download failed (${response.status})`);
+    if (!response.ok)
+      throw new MediaSaveError(
+        response.status === 403 || response.status === 404 || response.status === 410
+          ? `素材已生成，但结果链接暂不可用（${response.status}），请稍后重试保存`
+          : `素材已生成，但下载失败（${response.status}），请稍后重试保存`,
+      );
     const buffer = Buffer.from(await response.arrayBuffer());
     const extension = kind === 'image' ? imageFormat(buffer) : 'mp4';
-    if (!extension) throw new Error('Generated image format is invalid');
+    if (!extension) throw new MediaSaveError('模型返回的图片格式无效或不支持，无法保存');
     const filename = `${id}.${extension}`;
     const file = path.join(directory, filename);
     const temporary = path.join(directory, `${id}-${token}.${extension}`);
     await fs.writeFile(temporary, buffer);
     try {
-      const probe = await probeMedia(temporary, `${kind}/${extension}`, 30);
-      if (!probe.width || !probe.height) throw new Error('Generated media is empty or invalid');
+      // Images do not need an OS-specific ffprobe executable to read their dimensions.
+      const probe = kind === 'image'
+        ? imageMetadata(buffer)
+        : await probeMedia(temporary, `${kind}/${extension}`, 30);
+      if (!probe?.width || !probe.height) throw new MediaSaveError('模型返回的素材无效，无法保存');
       await fs.rename(temporary, file);
       return {
         url: `/files/users/${userId}/uploads/${filename}`,
@@ -353,13 +370,23 @@ export class GenerationTasksProcessor extends WorkerHost {
   }
 }
 
-function imageFormat(buffer: Buffer): 'jpeg' | 'png' | null {
-  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)
-    return 'jpeg';
-  if (
-    buffer.length >= 8 &&
-    buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-  )
-    return 'png';
-  return null;
+function imageMetadata(buffer: Buffer) {
+  try {
+    const dimensions = imageSize(buffer);
+    const type = dimensions.type;
+    if (!type || !['jpg', 'png', 'webp', 'gif', 'avif'].includes(type) ||
+        !dimensions.width || !dimensions.height) return null;
+    return {
+      extension: type === 'jpg' ? 'jpeg' : type,
+      width: dimensions.width,
+      height: dimensions.height,
+      durationInFrames: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function imageFormat(buffer: Buffer): string | null {
+  return imageMetadata(buffer)?.extension ?? null;
 }
