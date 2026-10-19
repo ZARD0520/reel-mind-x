@@ -734,6 +734,8 @@ function NodeGenerationPrompt({
       onSubmit={submit}
       className={`nodrag nopan nowheel rounded-2xl border border-white/[0.14] bg-[#242424] p-2.5 shadow-[0_18px_48px_rgba(0,0,0,0.48)] ${kind === 'video' ? 'w-[640px]' : kind === 'image' ? 'w-[460px]' : 'w-[360px]'}`}
       onPointerDown={(event) => event.stopPropagation()}
+      onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
+      onDoubleClick={(event) => event.stopPropagation()}
     >
       <div className="mb-1 flex min-h-8 items-center gap-1.5 px-2">
         <div className="reel-scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
@@ -1762,6 +1764,7 @@ function InfiniteCanvas({
 
   const openNodeActionMenu = useCallback(
     (event: React.MouseEvent, node: WorkflowNode) => {
+      if (event.target instanceof Element && event.target.closest('[data-node-prompt-input]')) return;
       event.preventDefault();
       event.stopPropagation();
       if (dependencyTargetId || !wrapperRef.current) return;

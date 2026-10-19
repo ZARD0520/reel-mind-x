@@ -7,6 +7,12 @@ const { randomUUID } = require('node:crypto');
     const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+        writeText: async (text) => { window.__testClipboard = text; },
+        readText: async () => window.__testClipboard ?? '',
+      } });
+    });
     const canvasId = randomUUID();
     let graph = { version: 1, nodes: [
       { id: 'target', position: { x: 400, y: 120 }, data: { kind: 'image', title: 'Target', prompt: '', status: 'idle' } },
@@ -43,6 +49,40 @@ const { randomUUID } = require('node:crypto');
     await page.goto(`${process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8899'}/canvas/${canvasId}`);
     await page.locator('.react-flow__node[data-id="target"]').click();
     const input = page.locator('.react-flow__node-toolbar [role="textbox"]');
+    await input.fill('editable prompt');
+    await input.press('End');
+    await input.click({ button: 'right' });
+    const editMenu = page.getByRole('menu', { name: '\u63d0\u793a\u8bcd\u7f16\u8f91\u83dc\u5355' });
+    await expect(editMenu.getByRole('menuitem')).toHaveCount(3);
+    await expect(editMenu.getByRole('menuitem', { name: '\u590d\u5236', exact: true })).toBeDisabled();
+    await expect(page.locator('[data-node-action-menu]')).toHaveCount(0);
+    await editMenu.getByRole('menuitem', { name: '\u5168\u9009', exact: true }).click();
+    expect(await page.evaluate(() => window.getSelection().toString())).toBe('editable prompt');
+    await input.click({ button: 'right', position: { x: 20, y: 15 } });
+    await expect(editMenu.getByRole('menuitem', { name: '\u590d\u5236', exact: true })).toBeEnabled();
+    await editMenu.getByRole('menuitem', { name: '\u590d\u5236', exact: true }).click();
+    expect(await page.evaluate(() => window.__testClipboard)).toBe('editable prompt');
+    await page.evaluate(() => { window.__testClipboard = 'pasted prompt'; });
+    await input.click({ button: 'right', position: { x: 20, y: 15 } });
+    await editMenu.getByRole('menuitem', { name: '\u7c98\u8d34', exact: true }).click();
+    await expect(input).toHaveText('pasted prompt');
+    await input.dblclick({ position: { x: 20, y: 15 } });
+    await expect(editMenu).toBeVisible();
+    await expect(editMenu.getByRole('menuitem', { name: '\u590d\u5236', exact: true })).toBeEnabled();
+    await expect(page.locator('[data-node-action-menu]')).toHaveCount(0);
+    await input.press('Escape');
+    await expect(editMenu).toHaveCount(0);
+    await page.locator('.react-flow__node[data-id="target"]').click({ button: 'right' });
+    await expect(page.locator('[data-node-action-menu]')).toBeVisible();
+    await input.click();
+    await expect(page.locator('[data-node-action-menu]')).toHaveCount(0);
+    const promptPanel = page.locator('.react-flow__node-toolbar form');
+    await promptPanel.click({ button: 'right', position: { x: 3, y: 3 } });
+    await expect(editMenu).toHaveCount(0);
+    await expect(page.locator('[data-node-action-menu]')).toHaveCount(0);
+    await promptPanel.dblclick({ position: { x: 3, y: 3 } });
+    await expect(editMenu).toHaveCount(0);
+    await expect(page.locator('[data-node-action-menu]')).toHaveCount(0);
     await input.fill('before after');
     await input.press('Home');
     for (let i = 0; i < 7; i++) await input.press('ArrowRight');
@@ -126,6 +166,6 @@ const { randomUUID } = require('node:crypto');
     await expect(chat.locator('[data-node-id="photo"]')).toHaveCount(0);
     await expect(chips).toHaveCount(2);
     expect(errors).toEqual([]);
-    console.log('PASS: inline editing, dependencies, persistence, chat, equal chip heights, text/image/video hover previews and pointer-driven list selection');
+    console.log('PASS: prompt edit menu, copy/paste/select-all, selection-aware copy, double-click isolation, node menu, inline references and hover previews');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

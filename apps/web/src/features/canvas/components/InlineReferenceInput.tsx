@@ -4,6 +4,7 @@ import type { CanvasChatReference } from '../chat-types';
 import { referenceIds, referenceToken, splitReferences } from '../inline-references';
 import { createReferenceIcon } from './reference-icon';
 import { useReferenceHoverPreview } from './ReferenceHoverPreview';
+import { usePromptEditMenu } from './usePromptEditMenu';
 
 export type InlineReferenceInputHandle = { insert: (reference: CanvasChatReference) => void };
 type Props = {
@@ -34,6 +35,7 @@ function serialize(node: Node): string {
 export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props>(function InlineReferenceInput({ value, candidates, onChange, onReference, onSubmit, placeholder, label, disabled, maxReferences, variant = 'node' }, ref) {
   const root = useRef<HTMLDivElement>(null);
   const iconTemplates = useRef<HTMLSpanElement>(null);
+  const editMenu = usePromptEditMenu(root, disabled);
   const cursor = useRef(value.length);
   const composing = useRef(false);
   const [mention, setMention] = useState<{ start: number; end: number; query: string } | null>(null);
@@ -153,6 +155,9 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
       {matches.length ? matches.map((item, index) => <button type="button" role="option" aria-selected={index === highlighted} key={item.id} onMouseEnter={() => setHighlighted(index)} onMouseMove={() => setHighlighted(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => insert(item)} className={`block w-full cursor-pointer truncate rounded-lg px-3 py-2 text-left text-sm text-[#dededb] transition-colors hover:bg-white/10 ${index === highlighted ? 'bg-white/10' : ''}`}>{item.title}<span className="ml-2 text-xs text-[#929296]">{item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}</span></button>) : <p className="px-3 py-2 text-xs text-[#929296]">{limited ? `最多引用 ${maxReferences} 个节点` : '没有匹配的节点'}</p>}
     </div>}
     <div ref={root} contentEditable={!disabled} suppressContentEditableWarning role="textbox" aria-multiline="true" aria-label={label} aria-disabled={disabled} data-placeholder={placeholder}
+      data-node-prompt-input={variant === 'node' ? '' : undefined}
+      onContextMenu={(event) => { event.stopPropagation(); if (variant === 'node') { event.preventDefault(); hover.close(); setMention(null); editMenu.open(event); } }}
+      onDoubleClick={(event) => { event.stopPropagation(); if (variant === 'node') { hover.close(); setMention(null); editMenu.open(event); } }}
       onMouseOver={(event) => {
         const chip = hoveredChip(event.target);
         if (!chip || chip.contains(event.relatedTarget as Node | null)) return;
@@ -190,5 +195,6 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
         else if (event.key === 'Enter') { event.preventDefault(); if (event.shiftKey) document.execCommand('insertText', false, '\n'); else onSubmit(); }
       }} />
     {hover.preview}
+    {editMenu.menu}
   </div>;
 });
