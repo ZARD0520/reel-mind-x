@@ -1,6 +1,6 @@
 export type CanvasChatReference = {
   id: string;
-  kind: 'text' | 'image' | 'video';
+  kind: 'text' | 'image' | 'video' | 'audio';
   title: string;
   content?: string;
   prompt?: string;

@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
-import { AlignLeft, FileText, Film, Image as ImageIcon, X } from 'lucide-react';
+import { AlignLeft, FileText, Film, Image as ImageIcon, Music, X } from 'lucide-react';
 import type { CanvasChatReference } from '../chat-types';
 import { referenceIds, referenceToken, splitReferences } from '../inline-references';
 import { createReferenceIcon } from './reference-icon';
@@ -149,6 +149,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
       <FileText data-reference-kind="text" className="h-3.5 w-3.5 shrink-0" />
       <ImageIcon data-reference-kind="image" className="h-3.5 w-3.5 shrink-0" />
       <Film data-reference-kind="video" className="h-3.5 w-3.5 shrink-0" />
+      <Music data-reference-kind="audio" className="h-3.5 w-3.5 shrink-0" />
       <X data-reference-kind="remove" className="h-3 w-3" />
     </span>
     {mention && !disabled && <div role="listbox" aria-label="引用画布节点" className="reel-scroll absolute bottom-full left-0 z-50 mb-2 max-h-60 w-full min-w-56 overflow-y-auto rounded-xl border border-white/15 bg-[#282828] p-1.5 shadow-2xl">

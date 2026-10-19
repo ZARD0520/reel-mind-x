@@ -103,6 +103,7 @@ import { ApiError, api } from '../lib/api';
 import { uuid } from '../lib/uuid';
 import { useToast } from '../components/ui/Toast';
 import { generationFeedbackMessage, generationTasksPollingInterval, recoverGenerationTasks } from '../features/canvas/generation-recovery';
+import { acceptsDependency, acceptsDependencyInput } from '../features/canvas/dependency-rules';
 
 type WorkflowNodeKind = CanvasNodeKind | 'audio';
 type GenerationCount = 1 | 2 | 4;
@@ -583,7 +584,7 @@ function NodeGenerationPrompt({
 }: {
   nodeId: string;
   canvasId: string;
-  kind: CanvasNodeKind;
+  kind: WorkflowNodeKind;
   data: WorkflowNodeData;
 }) {
   const { updateNodeData, setEdges } = useReactFlow<WorkflowNode, Edge>();
@@ -593,7 +594,7 @@ function NodeGenerationPrompt({
   const dependencySelection = useContext(DependencySelectionContext);
   const promptInputRef = useRef<InlineReferenceInputHandle>(null);
   const prompt = data.prompt ?? '';
-  const [model, setModel] = useState<CanvasModelId>(normalizeCanvasModel(kind, data.model));
+  const [model, setModel] = useState<CanvasModelId>(normalizeCanvasModel(kind === 'audio' ? 'text' : kind, data.model));
   const [generationCount, setGenerationCount] = useState<GenerationCount>(
     data.generationCount ?? 1,
   );
@@ -612,10 +613,12 @@ function NodeGenerationPrompt({
   const invalidateTasks = () => { void queryClient.invalidateQueries({ queryKey: ['generation-tasks', canvasId] }); };
   const generation = useMutation({
     mutationFn: async ({ prompt: nextPrompt, count, requestId }: { prompt: string; count: GenerationCount; requestId: string }) => {
+      if (kind === 'audio') throw new GenerationPreparationError('音频模型暂未接入，暂不支持生成');
       const referenceNodes = selectedReferenceIds
         .filter((source) => dependencySelection.edges.some((edge) => edge.target === nodeId && edge.source === source))
         .map((source) => dependencySelection.nodes.find((node) => node.id === source))
-        .filter((node): node is WorkflowNode => !!node && (kind === 'text' || node.data.kind === 'text' || (kind === 'video' && node.data.kind === 'image')));
+        .filter((node): node is WorkflowNode => !!node && acceptsDependency(node.data.kind, kind));
+      if (referenceNodes.some((node) => node.data.kind === 'audio')) throw new GenerationPreparationError('当前视频模型暂不支持音频参考，请移除音频引用后再试');
       const references: AssetReference[] = referenceNodes.map((node) => ({ kind: node.data.kind, name: node.data.title, content: node.data.kind === 'text' ? node.data.content || node.data.prompt || node.data.title : undefined, url: node.data.url ?? undefined, assetId: node.data.assetId }));
       const texts = referenceNodes.filter((node) => kind === 'text' || node.data.kind === 'text').map((node) => '【' + node.data.title + '】' + (node.data.content || node.data.prompt || node.data.title));
       const frames = kind === 'video' ? referenceNodes.filter((node) => node.data.kind === 'image').slice(0, 2) : [];
@@ -663,7 +666,7 @@ function NodeGenerationPrompt({
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     const nextPrompt = prompt.trim();
-    if (!nextPrompt || isGenerating || submissionRef.current) return;
+    if (kind === 'audio' || !nextPrompt || isGenerating || submissionRef.current) return;
     submissionRef.current = true;
     generation.mutate({ prompt: nextPrompt, count: generationCount, requestId: uuid() });
   };
@@ -677,10 +680,7 @@ function NodeGenerationPrompt({
     .filter(
       (dependency): dependency is { edge: Edge; node: WorkflowNode } =>
         !!dependency.node &&
-        (kind === 'text' ||
-          (kind === 'image' && dependency.node.data.kind === 'text') ||
-          (kind === 'video' &&
-            (dependency.node.data.kind === 'text' || dependency.node.data.kind === 'image'))),
+        acceptsDependency(dependency.node.data.kind, kind),
     );
 
   const selectedReferenceNodes = selectedReferenceIds
@@ -704,10 +704,9 @@ function NodeGenerationPrompt({
     updateNodeData(nodeId, { aspectRatio: lockedVideoAspectRatio });
   }, [aspectRatio, kind, lockedVideoAspectRatio, nodeId, updateNodeData]);
 
-  const candidates = dependencySelection.nodes.filter((node) => node.data.kind !== 'audio' && node.id !== nodeId &&
-    (kind === 'text' || node.data.kind === 'text' || (kind === 'video' && node.data.kind === 'image' &&
-      (referenceDependencies.some((item) => item.node.id === node.id) || referenceDependencies.filter((item) => item.node.data.kind === 'image').length < 2))))
-    .map((node): CanvasChatReference => ({ id: node.id, title: node.data.title, kind: node.data.kind as CanvasNodeKind, content: node.data.content, prompt: node.data.prompt, url: node.data.url ?? undefined, assetId: node.data.assetId }));
+  const candidates = dependencySelection.nodes.filter((node) => node.id !== nodeId && acceptsDependency(node.data.kind, kind) &&
+    (kind !== 'video' || node.data.kind !== 'image' || referenceDependencies.some((item) => item.node.id === node.id) || referenceDependencies.filter((item) => item.node.data.kind === 'image').length < 2))
+    .map((node): CanvasChatReference => ({ id: node.id, title: node.data.title, kind: node.data.kind, content: node.data.content, prompt: node.data.prompt, url: node.data.url ?? undefined, assetId: node.data.assetId }));
 
   // Preserve references in graphs saved before inline mentions were introduced.
   useEffect(() => {
@@ -797,7 +796,7 @@ function NodeGenerationPrompt({
           onClick={() => {
             updateNodeData(nodeId, {
               prompt,
-              model,
+              ...(kind !== 'audio' ? { model } : {}),
               ...(kind === 'video' ? { aspectRatio, videoDuration, videoWithAudio } : {}),
             });
             dependencySelection.start(nodeId);
@@ -814,17 +813,17 @@ function NodeGenerationPrompt({
         <InlineReferenceInput ref={promptInputRef} value={prompt} candidates={candidates}
           onReference={acceptReference}
           onChange={(value) => updateNodeData(nodeId, { prompt: value, referenceNodeIds: referenceIds(value) })}
-          onSubmit={() => { if (prompt.trim() && !isGenerating && !submissionRef.current) { submissionRef.current = true; generation.mutate({ prompt: prompt.trim(), count: generationCount, requestId: uuid() }); } }}
+          onSubmit={() => { if (kind !== 'audio' && prompt.trim() && !isGenerating && !submissionRef.current) { submissionRef.current = true; generation.mutate({ prompt: prompt.trim(), count: generationCount, requestId: uuid() }); } }}
           disabled={isGenerating} label="节点提示词" placeholder="描述生成要求，输入 @ 引用资产..." />
       </div>
       <div className="mt-1 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1">
-          <NodeModelSelect
+          {kind === 'audio' ? <span className="px-2 text-xs text-[#929297]">音频模型暂未接入</span> : <NodeModelSelect
             kind={kind}
             value={model}
             onChange={setModel}
             disabled={isGenerating}
-          />
+          />}
           {kind === 'image' && (
             <Select
               value={aspectRatio}
@@ -964,16 +963,17 @@ function NodeGenerationPrompt({
               updateNodeData(nodeId, { generationCount: count });
             }}
             ariaLabel="选择生成数量"
-            disabled={isGenerating}
+            disabled={isGenerating || kind === 'audio'}
             size="compact"
             className="w-[72px]"
             triggerClassName="w-full"
           />
           <button
             type="submit"
-            disabled={!prompt.trim() || isGenerating}
+            disabled={kind === 'audio' || !prompt.trim() || isGenerating}
+            title={kind === 'audio' ? '音频模型暂未接入，暂不支持生成' : undefined}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#f3f3f0] text-[#151515] transition-transform hover:scale-105 disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label={`生成${kind === 'text' ? '脚本' : kind === 'image' ? '图片' : '视频'}`}
+            aria-label={`生成${kind === 'text' ? '脚本' : kind === 'image' ? '图片' : kind === 'audio' ? '音频' : '视频'}`}
           >
             {isGenerating ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1201,10 +1201,8 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const isDependencyCandidate =
     isSelectingDependency &&
     id !== dependencySelection.targetId &&
-    (dependencyTarget?.data.kind !== 'image' || data.kind === 'text') &&
-    (dependencyTarget?.data.kind !== 'video' ||
-      data.kind === 'text' ||
-      (data.kind === 'image' && dependencyTargetImageCount < 2)) &&
+    !!dependencyTarget && acceptsDependencyInput(dependencyTarget.data) && acceptsDependency(data.kind, dependencyTarget.data.kind) &&
+    (dependencyTarget.data.kind !== 'video' || data.kind !== 'image' || dependencyTargetImageCount < 2) &&
     !dependencySelection.edges.some(
       (edge) => edge.source === id && edge.target === dependencySelection.targetId,
     );
@@ -1215,11 +1213,11 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
       onContextMenu={(event) => event.preventDefault()}
     >
       <NodeToolbar
-        isVisible={selected && !isSelectingDependency && !data.uploaded && data.kind !== 'audio'}
+        isVisible={selected && !isSelectingDependency && !data.uploaded}
         position={Position.Bottom}
         offset={12}
       >
-        {!data.uploaded && data.kind !== 'audio' && <NodeGenerationPrompt nodeId={id} canvasId={canvasId} kind={data.kind} data={data} />}
+        {!data.uploaded && <NodeGenerationPrompt nodeId={id} canvasId={canvasId} kind={data.kind} data={data} />}
       </NodeToolbar>
       <div className="workflow-node-title mb-2 flex h-7 min-w-0 items-center gap-2 px-2 text-base font-semibold">
         <Icon className="h-[18px] w-[18px]" />
@@ -1267,7 +1265,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           </div>
         )}
       </div>
-      {!data.uploaded && data.kind !== 'audio' && <MagneticConnectionHandle type="target" selected={selected} />}
+      {acceptsDependencyInput(data) && <MagneticConnectionHandle type="target" selected={selected} />}
       {data.kind === 'text' ? (
         <div
           className={`relative h-[360px] overflow-hidden rounded-[24px] border bg-[#202020] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
@@ -1417,7 +1415,7 @@ function InfiniteCanvas({
   );
   useEffect(() => onChatNodesChange(toChatReferences(nodes)), [nodes, onChatNodesChange]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
-    canvas.graph.edges.filter((edge) => !canvas.graph.nodes.some((node) => node.id === edge.target && (node.data.uploaded === true || node.data.kind === 'audio'))).map(normalizeEdge),
+    canvas.graph.edges.filter((edge) => !canvas.graph.nodes.some((node) => node.id === edge.target && node.data.uploaded === true)).map(normalizeEdge),
   );
   const generationTasks = useQuery({
     queryKey: ['generation-tasks', canvas.id],
@@ -1624,8 +1622,7 @@ function InfiniteCanvas({
       const sourceNode = nodes.find((node) => node.id === connection.source);
       const targetNode = nodes.find((node) => node.id === connection.target);
       if (!sourceNode || !targetNode) return false;
-      if (targetNode.data.uploaded || targetNode.data.kind === 'audio') return false;
-      if (targetNode.data.kind === 'image') return sourceNode.data.kind === 'text';
+      if (!acceptsDependencyInput(targetNode.data) || !acceptsDependency(sourceNode.data.kind, targetNode.data.kind)) return false;
       if (targetNode.data.kind === 'video') {
         const existingInputCount = edges.filter(
           (edge) =>
@@ -1635,6 +1632,7 @@ function InfiniteCanvas({
         ).length;
         return (
           sourceNode.data.kind === 'text' ||
+          sourceNode.data.kind === 'audio' ||
           (sourceNode.data.kind === 'image' && existingInputCount < 2)
         );
       }
@@ -1657,8 +1655,7 @@ function InfiniteCanvas({
       const sourceNode = nodes.find((node) => node.id === sourceId);
       const targetNode = nodes.find((node) => node.id === dependencyTargetId);
       if (!sourceNode || !targetNode) return;
-      if (targetNode.data.uploaded || targetNode.data.kind === 'audio') return;
-      if (targetNode.data.kind === 'image' && sourceNode.data.kind !== 'text') return;
+      if (!acceptsDependencyInput(targetNode.data) || !acceptsDependency(sourceNode.data.kind, targetNode.data.kind)) return;
       if (targetNode.data.kind === 'video') {
         const inputCount = edges.filter(
           (edge) =>
@@ -1667,6 +1664,7 @@ function InfiniteCanvas({
         ).length;
         if (
           sourceNode.data.kind !== 'text' &&
+          sourceNode.data.kind !== 'audio' &&
           (sourceNode.data.kind !== 'image' || inputCount >= 2)
         ) {
           return;
@@ -2341,7 +2339,7 @@ function InfiniteCanvas({
       {showAddMenu && !dependencyTargetId && (
         <div className="absolute left-[76px] top-1/2 z-20 w-52 -translate-y-[142px] rounded-2xl border border-white/[0.13] bg-[#252525] p-2 shadow-[0_20px_55px_rgba(0,0,0,0.55)]">
           <div className="px-3 pb-2 pt-1 text-xs text-[#77777b]">添加节点</div>
-          {(['text', 'image', 'video'] as const).map((kind) => {
+          {(['text', 'image', 'video', 'audio'] as const).map((kind) => {
             const Icon = nodeIcons[kind];
             return (
               <button
@@ -2360,6 +2358,8 @@ function InfiniteCanvas({
                       ? '编写文本内容'
                       : kind === 'image'
                         ? '添加图片素材'
+                        : kind === 'audio'
+                          ? '添加音频素材'
                         : '添加视频素材'}
                   </span>
                 </span>

@@ -39,6 +39,18 @@ const {
 const { AssetsService } = require('../src/modules/assets/assets.service.ts');
 const { AssetFoldersService } = require('../src/modules/asset-folders/asset-folders.service.ts');
 const repo = path.resolve(__dirname, '../../..');
+const { acceptsDependency, acceptsDependencyInput } = require('../../web/src/features/canvas/dependency-rules.ts');
+
+test('audio dependencies accept text input and feed video, including uploaded audio', () => {
+  assert.equal(acceptsDependency('text', 'audio'), true);
+  assert.equal(acceptsDependency('audio', 'video'), true);
+  for (const source of ['image', 'video', 'audio']) assert.equal(acceptsDependency(source, 'audio'), false);
+  for (const target of ['text', 'image']) assert.equal(acceptsDependency('audio', target), false);
+  assert.equal(acceptsDependencyInput({ kind: 'audio', uploaded: true }), false);
+  assert.equal(acceptsDependencyInput({ kind: 'audio' }), true);
+  for (const kind of ['image', 'video']) assert.equal(acceptsDependencyInput({ kind, uploaded: true }), false);
+  for (const source of ['text', 'image']) assert.equal(acceptsDependency(source, 'video'), true);
+});
 
 test('canvas polling only follows runnable tasks, not terminal or paused tasks', () => {
   assert.equal(generationTasksPollingInterval(), false);

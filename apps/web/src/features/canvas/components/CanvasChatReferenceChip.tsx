@@ -1,4 +1,4 @@
-import { FileText, Film, Image as ImageIcon, X } from 'lucide-react';
+import { FileText, Film, Image as ImageIcon, Music, X } from 'lucide-react';
 import type { CanvasChatReference } from '../chat-types';
 import { useReferenceHoverPreview } from './ReferenceHoverPreview';
 
@@ -9,7 +9,7 @@ export function CanvasChatReferenceChip({ reference, available, onFocusNode, onR
   onRemove?: () => void;
 }) {
   const hover = useReferenceHoverPreview('chat');
-  const Icon = { text: FileText, image: ImageIcon, video: Film }[reference.kind];
+  const Icon = { text: FileText, image: ImageIcon, video: Film, audio: Music }[reference.kind];
   return <>
     <span onMouseEnter={(event) => hover.show(reference, event.currentTarget, available)} onMouseLeave={hover.hide}
       onFocus={(event) => hover.show(reference, event.currentTarget, available)}

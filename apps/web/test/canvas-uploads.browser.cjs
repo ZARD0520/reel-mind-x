@@ -84,6 +84,6 @@ const { randomUUID } = require('node:crypto');
     await expect(page.getByText('文件大小不能超过 500MB', { exact: true })).toBeVisible();
     expect(assets.size).toBe(uploadCount);
     expect(errors).toEqual([]);
-    console.log('PASS: toolbar uploads image/video/audio, persists nodes, blocks oversized uploads; uploaded nodes have no input handle/prompt, right-click-only menus, and same-type replacement preserves node identity');
+    console.log('PASS: toolbar uploads image/video/audio, persists nodes, blocks oversized uploads; uploaded nodes have no input handles or prompts, right-click menus and same-type replacement work');
   } finally { await browser.close(); }
 })().catch((error) => { console.error(error); process.exitCode = 1; });

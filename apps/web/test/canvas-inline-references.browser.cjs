@@ -46,7 +46,7 @@ const { randomUUID } = require('node:crypto');
       }
       await route.fulfill({ json });
     });
-    await page.goto(`${process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8899'}/canvas/${canvasId}`);
+    await page.goto(`${process.env.E2E_BASE_URL ?? 'http://localhost:5173'}/canvas/${canvasId}`);
     await page.locator('.react-flow__node[data-id="target"]').click();
     const input = page.locator('.react-flow__node-toolbar [role="textbox"]');
     await input.fill('editable prompt');
@@ -67,8 +67,7 @@ const { randomUUID } = require('node:crypto');
     await editMenu.getByRole('menuitem', { name: '\u7c98\u8d34', exact: true }).click();
     await expect(input).toHaveText('pasted prompt');
     await input.dblclick({ position: { x: 20, y: 15 } });
-    await expect(editMenu).toBeVisible();
-    await expect(editMenu.getByRole('menuitem', { name: '\u590d\u5236', exact: true })).toBeEnabled();
+    await expect(editMenu).toHaveCount(0);
     await expect(page.locator('[data-node-action-menu]')).toHaveCount(0);
     await input.press('Escape');
     await expect(editMenu).toHaveCount(0);
