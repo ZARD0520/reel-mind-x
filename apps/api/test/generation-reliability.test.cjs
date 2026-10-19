@@ -170,6 +170,15 @@ test('mixed and all-failed batches retain all outputs; deleted nodes stay delete
   assert.equal(new Set(finished.nodes.map((node) => node.data.assetId)).size, 4);
 });
 
+test('imported node media is not overwritten by older generation tasks', () => {
+  const nodes = [{ id: 'node', position: { x: 0, y: 0 }, data: {
+    kind: 'image', title: 'Imported', content: '', assetId: 'uploaded', url: '/uploaded.png', status: 'ready', generationDetached: true,
+  } }];
+  const result = recoverGenerationTasks(nodes, [], [{ nodeId: 'node', requestId: 'old-request' }], () => 400);
+  assert.equal(result.nodes, nodes);
+  assert.equal(result.nodes[0].data.assetId, 'uploaded');
+});
+
 test(
   'durable generation reliability (isolated local database)',
   { timeout: 120000 },
@@ -249,8 +258,10 @@ test(
       return prisma.generationTaskItem.findUniqueOrThrow({ where: { id: itemId } });
     };
     try {
-      execFileSync('pnpm', ['--filter', '@reel/db', 'exec', 'prisma', 'migrate', 'deploy'], {
-        cwd: repo,
+      const prismaPackage = createRequire(path.join(repo, 'packages/db/package.json')).resolve('prisma/package.json');
+      const prismaCli = path.join(path.dirname(prismaPackage), 'build/index.js');
+      execFileSync(process.execPath, [prismaCli, 'migrate', 'deploy'], {
+        cwd: path.join(repo, 'packages/db'),
         env: { ...process.env, DATABASE_URL: url.toString() },
         stdio: 'pipe',
       });
@@ -356,6 +367,42 @@ test(
           assert.equal((await folders.listAssets(user.id, folder.id)).length, 4);
         },
       );
+
+      await suite.test('canvas image/video uploads enter searchable history and enforce ownership/type', async () => {
+        const assets = new AssetsService(prisma, config);
+        const uploadCanvas = await prisma.canvas.create({ data: { userId: user.id, name: 'Upload history' } });
+        const uploaded = [];
+        for (const kind of ['image', 'video']) {
+          const filename = `${randomUUID()}.${kind === 'image' ? 'png' : 'mp4'}`;
+          const filePath = path.join(storage, filename);
+          if (kind === 'image') fs.writeFileSync(filePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+          else execFileSync(apiRequire('@ffmpeg-installer/ffmpeg').path, ['-f', 'lavfi', '-i', 'color=c=blue:s=16x16:d=0.1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', filePath], { stdio: 'pipe' });
+          const asset = await assets.createFromCanvasUpload(user.id, uploadCanvas.id, kind, {
+            path: filePath, filename, originalname: `upload-history-${kind}`, mimetype: `${kind}/${kind === 'image' ? 'png' : 'mp4'}`,
+          });
+          assert.equal(asset.canvasId, uploadCanvas.id);
+          assert.equal(asset.projectId, null);
+          assert.equal(asset.source, 'upload');
+          assert.equal(asset.status, 'ready');
+          assert.equal(asset.kind, kind);
+          uploaded.push(asset);
+        }
+        assert.deepEqual((await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).map((asset) => asset.id).sort(), uploaded.map((asset) => asset.id).sort());
+        assert.equal((await assets.history(user.id, { scope: 'all', q: 'upload-history-image' })).length, 1);
+        const folder = await prisma.assetFolder.create({ data: { userId: user.id, name: 'Uploaded library copy' } });
+        const copy = await assets.saveToLibrary(user.id, uploaded[0].id, { folderId: folder.id });
+        assert.ok(!(await assets.history(user.id, { scope: 'all' })).some((asset) => asset.id === copy.id));
+        await assets.removeHistory(user.id, uploaded[0].id);
+        assert.equal((await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).length, 1);
+        assert.equal((await assets.findOne(user.id, uploaded[0].id)).status, 'ready');
+        for (const [owner, kind, code] of [[randomUUID(), 'image', 404], [user.id, 'video', 400]]) {
+          const filePath = path.join(storage, `${randomUUID()}.png`);
+          fs.writeFileSync(filePath, 'invalid');
+          await assert.rejects(() => assets.createFromCanvasUpload(owner, uploadCanvas.id, kind, { path: filePath, filename: path.basename(filePath), originalname: 'rejected', mimetype: 'image/png' }), (error) => error.getStatus() === code);
+          assert.ok(!fs.existsSync(filePath));
+        }
+        await assets.removeHistory(user.id, uploaded[1].id);
+      });
 
       await suite.test(
         'recovery lists the latest task per node and enforces ownership',

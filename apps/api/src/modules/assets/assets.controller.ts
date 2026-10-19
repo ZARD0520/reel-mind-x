@@ -23,8 +23,23 @@ import * as path from 'path';
 import { AuthGuard } from '../auth/auth.guard';
 import type { AuthenticatedRequest, AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
-import { AssetHistoryQueryDto, SaveAssetToLibraryDto, UpdateAssetDto } from './assets.dto';
+import { AssetHistoryQueryDto, CanvasAssetUploadQueryDto, SaveAssetToLibraryDto, UpdateAssetDto } from './assets.dto';
 import { AssetsService } from './assets.service';
+
+const AssetUploadInterceptor = FileInterceptor('file', {
+  storage: diskStorage({
+    destination: (req, _file, cb) => {
+      const userId = (req as unknown as AuthenticatedRequest).user.id;
+      const dir = path.resolve(process.env.STORAGE_DIR || 'storage', 'users', userId, 'uploads');
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    },
+    filename: (_req, file, cb) => {
+      cb(null, `${randomUUID()}${path.extname(file.originalname)}`);
+    },
+  }),
+  limits: { fileSize: 1024 * 1024 * 1024 },
+});
 
 @Controller('assets')
 @UseGuards(AuthGuard)
@@ -32,22 +47,7 @@ export class AssetsController {
   constructor(private readonly assets: AssetsService) {}
 
   @Post()
-  @UseInterceptors(
-    FileInterceptor('file', {
-      storage: diskStorage({
-        destination: (req, _file, cb) => {
-          const userId = (req as unknown as AuthenticatedRequest).user.id;
-          const dir = path.resolve(process.env.STORAGE_DIR || 'storage', 'users', userId, 'uploads');
-          fs.mkdirSync(dir, { recursive: true });
-          cb(null, dir);
-        },
-        filename: (_req, file, cb) => {
-          cb(null, `${randomUUID()}${path.extname(file.originalname)}`);
-        },
-      }),
-      limits: { fileSize: 1024 * 1024 * 1024 },
-    }),
-  )
+  @UseInterceptors(AssetUploadInterceptor)
   async upload(
     @CurrentUser() user: AuthUser,
     @Query('projectId', new ParseUUIDPipe()) projectId: string,
@@ -55,6 +55,17 @@ export class AssetsController {
   ): Promise<Asset> {
     if (!file) throw new BadRequestException('Missing upload field: file');
     return this.assets.createFromUpload(user.id, projectId, file);
+  }
+
+  @Post('canvas-upload')
+  @UseInterceptors(AssetUploadInterceptor)
+  async uploadToCanvas(
+    @CurrentUser() user: AuthUser,
+    @Query() query: CanvasAssetUploadQueryDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ): Promise<Asset> {
+    if (!file) throw new BadRequestException('Missing upload field: file');
+    return this.assets.createFromCanvasUpload(user.id, query.canvasId, query.kind, file);
   }
 
   @Get()

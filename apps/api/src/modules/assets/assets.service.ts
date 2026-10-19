@@ -58,8 +58,25 @@ export class AssetsService {
     name?: string,
   ): Promise<Asset> {
     await this.assertProjectOwned(userId, projectId);
+    return this.storeUpload(userId, { projectId }, file, name);
+  }
+
+  async createFromCanvasUpload(userId: string, canvasId: string, kind: 'image' | 'video', file: Express.Multer.File): Promise<Asset> {
+    try {
+      const canvas = await this.prisma.canvas.findFirst({ where: { id: canvasId, userId }, select: { id: true } });
+      if (!canvas) throw new NotFoundException('Canvas not found');
+      if (!file.mimetype.startsWith(`${kind}/`)) throw new BadRequestException('上传素材类型与节点不匹配');
+      return await this.storeUpload(userId, { canvasId }, file, undefined, kind);
+    } catch (error) {
+      await fs.promises.unlink(file.path).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async storeUpload(userId: string, scope: { projectId?: string; canvasId?: string }, file: Express.Multer.File, name?: string, expectedKind?: 'image' | 'video'): Promise<Asset> {
 
     const probe = await probeMedia(file.path, file.mimetype, REFERENCE_FPS);
+    if (expectedKind && probe.kind !== expectedKind) throw new BadRequestException('上传素材类型与节点不匹配');
     const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
 
     let storedFilename = file.filename;
@@ -81,7 +98,7 @@ export class AssetsService {
     const row = await this.prisma.asset.create({
       data: {
         userId,
-        projectId,
+        ...scope,
         kind: probe.kind,
         source: 'upload',
         status: 'ready',
@@ -119,17 +136,17 @@ export class AssetsService {
     return rows.map((row) => this.toAsset(row));
   }
 
-  /** 生成历史只包括原始生成素材，不包括保存到资产库的独立副本。 */
+  /** 历史包括原始生成、上传素材，不包括保存到资产库的独立副本。 */
   async history(userId: string, query: AssetHistoryQueryInput): Promise<Asset[]> {
     const rows = await this.prisma.asset.findMany({
       where: {
         userId,
-        source: 'ai',
+        source: { in: ['ai', 'upload'] },
         status: 'ready',
         folderId: null,
         historyDeletedAt: null,
         ...(query.scope === 'canvas' && query.canvasId ? { canvasId: query.canvasId } : {}),
-        ...(query.q ? { prompt: { contains: query.q, mode: 'insensitive' as const } } : {}),
+        ...(query.q ? { OR: [{ prompt: { contains: query.q, mode: 'insensitive' as const } }, { name: { contains: query.q, mode: 'insensitive' as const } }] } : {}),
       },
       orderBy: { createdAt: 'desc' },
       take: 200,
@@ -139,7 +156,7 @@ export class AssetsService {
 
   async removeHistory(userId: string, id: string): Promise<void> {
     const result = await this.prisma.asset.updateMany({
-      where: { id, userId, source: 'ai', status: 'ready', folderId: null },
+      where: { id, userId, source: { in: ['ai', 'upload'] }, status: 'ready', folderId: null },
       data: { historyDeletedAt: new Date() },
     });
     if (result.count === 0) throw new NotFoundException(`Asset history ${id} not found`);

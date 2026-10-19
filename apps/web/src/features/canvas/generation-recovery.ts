@@ -37,6 +37,7 @@ type GenerationNodeData = Record<string, unknown> & {
   generationAppliedTaskId?: string;
   generationBatchResultsTaskId?: string;
   generationBatchTaskId?: string;
+  generationDetached?: boolean;
 };
 
 /** Reconciliation is deterministic, so refresh and repeated polling cannot duplicate batch outputs. */
@@ -52,6 +53,7 @@ export function recoverGenerationTasks<D extends GenerationNodeData>(
     const node = nextNodes.find((candidate) => candidate.id === task.nodeId);
     if (
       !node ||
+      node.data.generationDetached ||
       (node.data.generationRequestId && node.data.generationRequestId !== task.requestId)
     )
       continue;

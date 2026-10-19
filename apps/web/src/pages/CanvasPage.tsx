@@ -84,6 +84,7 @@ import {
 import { AssetLibraryDialog } from '../features/canvas/components/AssetLibraryDialog';
 import { AssetFolderPickerDialog } from '../features/canvas/components/AssetFolderPickerDialog';
 import { AssetHistoryDialog } from '../features/canvas/components/AssetHistoryDialog';
+import { EmptyMediaNodeActions } from '../features/canvas/components/EmptyMediaNodeActions';
 import { CanvasChatDrawer } from '../features/canvas/components/CanvasChatDrawer';
 import { InlineReferenceInput, type InlineReferenceInputHandle } from '../features/canvas/components/InlineReferenceInput';
 import { readableReferences, referenceIds, referenceToken, splitReferences } from '../features/canvas/inline-references';
@@ -177,6 +178,7 @@ type WorkflowNodeData = {
   generationAppliedTaskId?: string;
   generationBatchResultsTaskId?: string;
   generationBatchTaskId?: string;
+  generationDetached?: boolean;
   generationCanResume?: boolean;
   generationMessage?: string;
   generationProgress?: string;
@@ -473,6 +475,7 @@ function normalizeNode(node: CanvasGraph['nodes'][number]): WorkflowNode {
       generationAppliedTaskId: rawData.generationAppliedTaskId,
       generationBatchResultsTaskId: rawData.generationBatchResultsTaskId,
       generationBatchTaskId: rawData.generationBatchTaskId,
+      generationDetached: rawData.generationDetached === true,
       generationCanResume: rawData.generationCanResume,
       generationMessage: rawData.generationMessage,
       generationProgress: rawData.generationProgress,
@@ -622,7 +625,7 @@ function NodeGenerationPrompt({
       });
     },
     onMutate: ({ prompt: nextPrompt, count, requestId }) => {
-      updateNodeData(nodeId, { prompt: nextPrompt, model, generationCount: count, generationRequestId: requestId, generationTaskId: undefined, generationStatus: 'queued', generationCanResume: false, generationMessage: '', generationProgress: '', generationFailureVisible: true,
+      updateNodeData(nodeId, { prompt: nextPrompt, model, generationCount: count, generationRequestId: requestId, generationTaskId: undefined, generationDetached: false, generationStatus: 'queued', generationCanResume: false, generationMessage: '', generationProgress: '', generationFailureVisible: true,
         ...(kind !== 'text' ? { aspectRatio } : {}), ...(kind === 'video' ? { videoDuration, videoWithAudio } : {}), status: 'generating', error: '' });
     },
     onSuccess: (task) => {
@@ -981,7 +984,25 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const dependencySelection = useContext(DependencySelectionContext);
-  const { updateNodeData } = useReactFlow<WorkflowNode, Edge>();
+  const { updateNodeData, getNode } = useReactFlow<WorkflowNode, Edge>();
+  const fillMediaNode = (asset: Asset) => {
+    const current = getNode(id);
+    if (!current) return;
+    if (current.data.kind !== asset.kind || !asset.url || asset.status !== 'ready') { toast.error('请选择对应类型的可用素材'); return; }
+    if (current.data.url || current.data.status === 'generating' || (current.data.generationStatus && isGenerationActive(current.data.generationStatus))) {
+      toast.warning('节点内容已更新，素材已保留，请从历史或资产库中选择');
+      return;
+    }
+    queryClient.setQueryData(['asset', asset.id], asset);
+    updateNodeData(id, {
+      assetId: asset.id, url: asset.url, status: 'ready', error: '', editorProjectId: undefined,
+      aspectRatio: closestAspectRatio(asset.width, asset.height, asset.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO),
+      ...(asset.kind === 'video' && asset.durationInFrames ? { videoDuration: (asset.durationInFrames / 30 < 7.5 ? 5 : 10) as VideoDuration } : {}),
+      generationTaskId: undefined, generationRequestId: undefined, generationStatus: undefined,
+      generationAppliedTaskId: undefined, generationBatchResultsTaskId: undefined, generationBatchTaskId: undefined,
+      generationDetached: true, generationCanResume: false, generationMessage: '', generationProgress: '', generationFailureVisible: false,
+    });
+  };
   const feedbackMessage = generationFeedbackMessage(data);
   const lastNotification = useRef('');
   const notificationId = useRef<number | null>(null);
@@ -1271,6 +1292,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           ) : (
             <div className="flex w-full flex-col items-center justify-center gap-4 px-6">
               <Icon data-node-placeholder-icon="" className="h-16 w-16 shrink-0 stroke-[1.5] text-[#505054]" />
+              <EmptyMediaNodeActions canvasId={canvasId} kind={data.kind} disabled={dependencySelection.targetId !== null || data.status === 'generating' || (!!data.generationStatus && isGenerationActive(data.generationStatus))} onFill={fillMediaNode} />
               {generationError}
             </div>
           )}

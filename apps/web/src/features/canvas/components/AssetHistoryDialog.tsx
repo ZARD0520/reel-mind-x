@@ -193,10 +193,10 @@ export function AssetHistoryDialog({
             <div className="flex min-h-40 flex-col items-center justify-center text-center">
               <Search className="h-6 w-6 text-[#55555a]" />
               <p className="mt-3 text-sm text-[#9a9a9f]">
-                {debouncedSearch ? '没有找到匹配的素材' : '暂无生成记录'}
+                {debouncedSearch ? '没有找到匹配的素材' : '暂无素材记录'}
               </p>
               <p className="mt-1 text-xs text-[#66666b]">
-                {debouncedSearch ? '试试其他关键词' : '在画布中生成素材后，这里会展示生成历史'}
+                {debouncedSearch ? '试试其他关键词' : '在画布中生成或上传素材后，这里会展示历史记录'}
               </p>
             </div>
           )}

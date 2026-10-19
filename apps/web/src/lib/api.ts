@@ -164,6 +164,11 @@ export const api = {
         body: form,
       });
     },
+    uploadToCanvas: (canvasId: string, kind: 'image' | 'video', file: File) => {
+      const form = new FormData();
+      form.append('file', file);
+      return request(`/assets/canvas-upload?${new URLSearchParams({ canvasId, kind })}`, { method: 'POST', body: form });
+    },
     remove: (id: string) => requestVoid(`/assets/${id}`, { method: 'DELETE' }),
     removeHistory: (id: string) => requestVoid(`/assets/${id}/history`, { method: 'DELETE' }),
     rename: (id: string, name: string) =>

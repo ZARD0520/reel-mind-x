@@ -299,6 +299,7 @@ export function AssetLibraryDialog({
   onAddToCanvas,
   embedded = false,
   onSelectAsset,
+  assetKind,
 }: {
   onClose: () => void;
   onToast: (message: string, type?: ToastType) => void;
@@ -306,6 +307,7 @@ export function AssetLibraryDialog({
   onAddToCanvas?: (asset: Asset) => void;
   embedded?: boolean;
   onSelectAsset?: (asset: Asset) => void;
+  assetKind?: 'image' | 'video';
 }) {
   const queryClient = useQueryClient();
   const gridClassName = embedded
@@ -380,7 +382,8 @@ export function AssetLibraryDialog({
     () => folders.filter((folder) => (folder.parentId ?? null) === currentFolderId),
     [folders, currentFolderId],
   );
-  const folderAssets = currentFolderId === null ? [] : (folderAssetsQuery.data ?? []);
+  const matchesKind = (asset: Asset) => !assetKind || (asset.kind === assetKind && asset.status === 'ready' && !!asset.url);
+  const folderAssets = currentFolderId === null ? [] : (folderAssetsQuery.data ?? []).filter(matchesKind);
 
   const searching = scope === 'personal' && debouncedSearch.length > 0;
   const searchQuery = useQuery<AssetLibrarySearchResult[]>({
@@ -389,7 +392,7 @@ export function AssetLibraryDialog({
       api.assetFolders.searchAssets(debouncedSearch) as Promise<AssetLibrarySearchResult[]>,
     enabled: searching,
   });
-  const searchResults = searching ? (searchQuery.data ?? []) : [];
+  const searchResults = searching ? (searchQuery.data ?? []).filter(matchesKind) : [];
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
