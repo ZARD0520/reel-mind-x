@@ -164,7 +164,7 @@ export const api = {
         body: form,
       });
     },
-    uploadToCanvas: (canvasId: string, kind: 'image' | 'video', file: File) => {
+    uploadToCanvas: (canvasId: string, kind: 'image' | 'video' | 'audio', file: File) => {
       const form = new FormData();
       form.append('file', file);
       return request(`/assets/canvas-upload?${new URLSearchParams({ canvasId, kind })}`, { method: 'POST', body: form });

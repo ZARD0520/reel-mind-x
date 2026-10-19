@@ -157,7 +157,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
     <div ref={root} contentEditable={!disabled} suppressContentEditableWarning role="textbox" aria-multiline="true" aria-label={label} aria-disabled={disabled} data-placeholder={placeholder}
       data-node-prompt-input={variant === 'node' ? '' : undefined}
       onContextMenu={(event) => { event.stopPropagation(); if (variant === 'node') { event.preventDefault(); hover.close(); setMention(null); editMenu.open(event); } }}
-      onDoubleClick={(event) => { event.stopPropagation(); if (variant === 'node') { hover.close(); setMention(null); editMenu.open(event); } }}
+      onDoubleClick={(event) => event.stopPropagation()}
       onMouseOver={(event) => {
         const chip = hoveredChip(event.target);
         if (!chip || chip.contains(event.relatedTarget as Node | null)) return;

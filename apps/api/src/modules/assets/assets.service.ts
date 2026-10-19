@@ -61,10 +61,11 @@ export class AssetsService {
     return this.storeUpload(userId, { projectId }, file, name);
   }
 
-  async createFromCanvasUpload(userId: string, canvasId: string, kind: 'image' | 'video', file: Express.Multer.File): Promise<Asset> {
+  async createFromCanvasUpload(userId: string, canvasId: string, kind: 'image' | 'video' | 'audio', file: Express.Multer.File): Promise<Asset> {
     try {
       const canvas = await this.prisma.canvas.findFirst({ where: { id: canvasId, userId }, select: { id: true } });
       if (!canvas) throw new NotFoundException('Canvas not found');
+      if (file.size > 500 * 1024 * 1024) throw new BadRequestException('文件大小不能超过 500MB');
       if (!file.mimetype.startsWith(`${kind}/`)) throw new BadRequestException('上传素材类型与节点不匹配');
       return await this.storeUpload(userId, { canvasId }, file, undefined, kind);
     } catch (error) {
@@ -73,7 +74,7 @@ export class AssetsService {
     }
   }
 
-  private async storeUpload(userId: string, scope: { projectId?: string; canvasId?: string }, file: Express.Multer.File, name?: string, expectedKind?: 'image' | 'video'): Promise<Asset> {
+  private async storeUpload(userId: string, scope: { projectId?: string; canvasId?: string }, file: Express.Multer.File, name?: string, expectedKind?: 'image' | 'video' | 'audio'): Promise<Asset> {
 
     const probe = await probeMedia(file.path, file.mimetype, REFERENCE_FPS);
     if (expectedKind && probe.kind !== expectedKind) throw new BadRequestException('上传素材类型与节点不匹配');
@@ -109,6 +110,8 @@ export class AssetsService {
         width: probe.width,
         height: probe.height,
         prompt: null,
+        // Canvas uploads are node content, not generation/material history.
+        ...(scope.canvasId ? { historyDeletedAt: new Date() } : {}),
       },
     });
     return this.toAsset(row);

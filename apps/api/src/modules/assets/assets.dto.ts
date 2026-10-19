@@ -11,5 +11,5 @@ export class UpdateAssetDto extends createZodDto(UpdateAssetSchema) {}
 export class AssetHistoryQueryDto extends createZodDto(AssetHistoryQuerySchema) {}
 export class CanvasAssetUploadQueryDto extends createZodDto(z.object({
   canvasId: z.string().uuid(),
-  kind: z.enum(['image', 'video']),
+  kind: z.enum(['image', 'video', 'audio']),
 })) {}

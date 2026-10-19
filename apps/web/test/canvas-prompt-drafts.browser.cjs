@@ -41,6 +41,12 @@ const { randomUUID } = require('node:crypto');
     for (const kind of kinds) {
       await node(kind).click();
       await expect(input(kind)).toHaveText(drafts[kind]);
+      await input(kind).dblclick();
+      await expect(page.getByRole('menu', { name: '提示词编辑菜单' })).toHaveCount(0);
+      await expect(page.locator('[data-node-action-menu]')).toHaveCount(0);
+      await input(kind).click({ button: 'right' });
+      await expect(page.getByRole('menu', { name: '提示词编辑菜单' })).toBeVisible();
+      await page.getByRole('menuitem', { name: '全选', exact: true }).click();
     }
     await expect.poll(() => graph.nodes.map((item) => item.data.prompt)).toEqual(kinds.map((kind) => drafts[kind]));
     await page.reload();

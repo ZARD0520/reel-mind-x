@@ -67,10 +67,13 @@ import {
   MessageCircle,
   Minus,
   Minimize2,
+  Music,
+  RefreshCw,
   Plus,
   Search,
   Scissors,
   Trash2,
+  Upload,
   Workflow,
   X,
 } from 'lucide-react';
@@ -81,10 +84,9 @@ import {
   type CanvasModelId,
   type CanvasNodeKind,
 } from '../features/canvas/components/NodeModelSelect';
-import { AssetLibraryDialog } from '../features/canvas/components/AssetLibraryDialog';
+import { AssetLibraryDialog, apiErrorMessage } from '../features/canvas/components/AssetLibraryDialog';
 import { AssetFolderPickerDialog } from '../features/canvas/components/AssetFolderPickerDialog';
 import { AssetHistoryDialog } from '../features/canvas/components/AssetHistoryDialog';
-import { EmptyMediaNodeActions } from '../features/canvas/components/EmptyMediaNodeActions';
 import { CanvasChatDrawer } from '../features/canvas/components/CanvasChatDrawer';
 import { InlineReferenceInput, type InlineReferenceInputHandle } from '../features/canvas/components/InlineReferenceInput';
 import { readableReferences, referenceIds, referenceToken, splitReferences } from '../features/canvas/inline-references';
@@ -102,7 +104,7 @@ import { uuid } from '../lib/uuid';
 import { useToast } from '../components/ui/Toast';
 import { generationFeedbackMessage, generationTasksPollingInterval, recoverGenerationTasks } from '../features/canvas/generation-recovery';
 
-type WorkflowNodeKind = CanvasNodeKind;
+type WorkflowNodeKind = CanvasNodeKind | 'audio';
 type GenerationCount = 1 | 2 | 4;
 type GenerationCountValue = `${GenerationCount}`;
 type VideoGenerationPresetValue = `${AspectRatioKey}|${VideoDuration}`;
@@ -154,6 +156,7 @@ const NODE_SEARCH_FILTERS: { value: NodeSearchKind; label: string }[] = [
   { value: 'text', label: '文本' },
   { value: 'image', label: '图片' },
   { value: 'video', label: '视频' },
+  { value: 'audio', label: '音频' },
 ];
 
 type WorkflowNodeData = {
@@ -164,6 +167,7 @@ type WorkflowNodeData = {
   model?: string;
   assetId?: string;
   url?: string | null;
+  uploaded?: boolean;
   status?: 'idle' | 'generating' | 'ready' | 'failed';
   error?: string;
   referenceNodeIds?: string[];
@@ -191,6 +195,7 @@ type WorkflowNode = Node<WorkflowNodeData, 'workflow'>;
 const nodeTemplates: Record<WorkflowNodeKind, Omit<WorkflowNodeData, 'title'>> = {
   text: { kind: 'text', content: '' },
   image: { kind: 'image', content: '', aspectRatio: DEFAULT_IMAGE_ASPECT_RATIO },
+  audio: { kind: 'audio', content: '' },
   video: {
     kind: 'video',
     content: '',
@@ -204,12 +209,14 @@ const nodeLabels: Record<WorkflowNodeKind, string> = {
   text: '文本',
   image: '图片',
   video: '视频',
+  audio: '音频',
 };
 
 const nodeIcons = {
   text: AlignLeft,
   image: ImageIcon,
   video: Film,
+  audio: Music,
 };
 
 const edgeDefaults = {
@@ -450,7 +457,7 @@ const DependencySelectionContext = createContext<DependencySelectionContextValue
 function normalizeNode(node: CanvasGraph['nodes'][number]): WorkflowNode {
   const rawData = node.data as Partial<WorkflowNodeData>;
   const kind: WorkflowNodeKind =
-    rawData.kind === 'image' || rawData.kind === 'video' ? rawData.kind : 'text';
+    rawData.kind === 'image' || rawData.kind === 'video' || rawData.kind === 'audio' ? rawData.kind : 'text';
   return {
     id: node.id,
     type: 'workflow',
@@ -463,6 +470,7 @@ function normalizeNode(node: CanvasGraph['nodes'][number]): WorkflowNode {
       model: typeof rawData.model === 'string' ? rawData.model : undefined,
       assetId: typeof rawData.assetId === 'string' ? rawData.assetId : undefined,
       url: typeof rawData.url === 'string' ? rawData.url : null,
+      uploaded: rawData.uploaded === true,
       status:
         rawData.status === 'generating' || rawData.status === 'ready' || rawData.status === 'failed'
           ? rawData.status
@@ -540,9 +548,9 @@ function serializeCanvasGraph(
 }
 
 function toChatReferences(nodes: WorkflowNode[]): CanvasChatReference[] {
-  return nodes.map((node) => ({
+  return nodes.filter((node) => node.data.kind !== 'audio').map((node) => ({
     id: node.id,
-    kind: node.data.kind,
+    kind: node.data.kind as CanvasNodeKind,
     title: node.data.title.trim().slice(0, 200) || nodeLabels[node.data.kind],
     content: node.data.content.slice(0, 12000),
     prompt: node.data.prompt ? readableReferences(node.data.prompt).slice(0, 2000) : undefined,
@@ -575,7 +583,7 @@ function NodeGenerationPrompt({
 }: {
   nodeId: string;
   canvasId: string;
-  kind: WorkflowNodeKind;
+  kind: CanvasNodeKind;
   data: WorkflowNodeData;
 }) {
   const { updateNodeData, setEdges } = useReactFlow<WorkflowNode, Edge>();
@@ -696,10 +704,10 @@ function NodeGenerationPrompt({
     updateNodeData(nodeId, { aspectRatio: lockedVideoAspectRatio });
   }, [aspectRatio, kind, lockedVideoAspectRatio, nodeId, updateNodeData]);
 
-  const candidates = dependencySelection.nodes.filter((node) => node.id !== nodeId &&
+  const candidates = dependencySelection.nodes.filter((node) => node.data.kind !== 'audio' && node.id !== nodeId &&
     (kind === 'text' || node.data.kind === 'text' || (kind === 'video' && node.data.kind === 'image' &&
       (referenceDependencies.some((item) => item.node.id === node.id) || referenceDependencies.filter((item) => item.node.data.kind === 'image').length < 2))))
-    .map((node): CanvasChatReference => ({ id: node.id, title: node.data.title, kind: node.data.kind, content: node.data.content, prompt: node.data.prompt, url: node.data.url ?? undefined, assetId: node.data.assetId }));
+    .map((node): CanvasChatReference => ({ id: node.id, title: node.data.title, kind: node.data.kind as CanvasNodeKind, content: node.data.content, prompt: node.data.prompt, url: node.data.url ?? undefined, assetId: node.data.assetId }));
 
   // Preserve references in graphs saved before inline mentions were introduced.
   useEffect(() => {
@@ -985,24 +993,25 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const queryClient = useQueryClient();
   const dependencySelection = useContext(DependencySelectionContext);
   const { updateNodeData, getNode } = useReactFlow<WorkflowNode, Edge>();
-  const fillMediaNode = (asset: Asset) => {
-    const current = getNode(id);
-    if (!current) return;
-    if (current.data.kind !== asset.kind || !asset.url || asset.status !== 'ready') { toast.error('请选择对应类型的可用素材'); return; }
-    if (current.data.url || current.data.status === 'generating' || (current.data.generationStatus && isGenerationActive(current.data.generationStatus))) {
-      toast.warning('节点内容已更新，素材已保留，请从历史或资产库中选择');
-      return;
-    }
-    queryClient.setQueryData(['asset', asset.id], asset);
-    updateNodeData(id, {
-      assetId: asset.id, url: asset.url, status: 'ready', error: '', editorProjectId: undefined,
-      aspectRatio: closestAspectRatio(asset.width, asset.height, asset.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO),
-      ...(asset.kind === 'video' && asset.durationInFrames ? { videoDuration: (asset.durationInFrames / 30 < 7.5 ? 5 : 10) as VideoDuration } : {}),
-      generationTaskId: undefined, generationRequestId: undefined, generationStatus: undefined,
-      generationAppliedTaskId: undefined, generationBatchResultsTaskId: undefined, generationBatchTaskId: undefined,
-      generationDetached: true, generationCanResume: false, generationMessage: '', generationProgress: '', generationFailureVisible: false,
-    });
-  };
+  const replacementInputRef = useRef<HTMLInputElement>(null);
+  const replacement = useMutation({
+    mutationFn: (file: File) => {
+      if (data.kind === 'text') throw new Error('请选择对应类型的素材');
+      return api.assets.uploadToCanvas(canvasId, data.kind, file) as Promise<Asset>;
+    },
+    onSuccess: (asset) => {
+      const current = getNode(id);
+      if (!current?.data.uploaded || current.data.kind !== asset.kind) return;
+      queryClient.setQueryData(['asset', asset.id], asset);
+      updateNodeData(id, {
+        title: asset.name, assetId: asset.id, url: asset.url, status: 'ready', error: '',
+        aspectRatio: closestAspectRatio(asset.width, asset.height, asset.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO),
+        ...(asset.kind === 'video' && asset.durationInFrames ? { videoDuration: (asset.durationInFrames / 30 < 7.5 ? 5 : 10) as VideoDuration } : {}),
+        editorProjectId: undefined,
+      });
+    },
+    onError: (error) => toast.error(apiErrorMessage(error, '替换失败，请重试')),
+  });
   const feedbackMessage = generationFeedbackMessage(data);
   const lastNotification = useRef('');
   const notificationId = useRef<number | null>(null);
@@ -1206,11 +1215,11 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
       onContextMenu={(event) => event.preventDefault()}
     >
       <NodeToolbar
-        isVisible={selected && !isSelectingDependency}
+        isVisible={selected && !isSelectingDependency && !data.uploaded && data.kind !== 'audio'}
         position={Position.Bottom}
         offset={12}
       >
-        <NodeGenerationPrompt nodeId={id} canvasId={canvasId} kind={data.kind} data={data} />
+        {!data.uploaded && data.kind !== 'audio' && <NodeGenerationPrompt nodeId={id} canvasId={canvasId} kind={data.kind} data={data} />}
       </NodeToolbar>
       <div className="workflow-node-title mb-2 flex h-7 min-w-0 items-center gap-2 px-2 text-base font-semibold">
         <Icon className="h-[18px] w-[18px]" />
@@ -1258,7 +1267,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           </div>
         )}
       </div>
-      <MagneticConnectionHandle type="target" selected={selected} />
+      {!data.uploaded && data.kind !== 'audio' && <MagneticConnectionHandle type="target" selected={selected} />}
       {data.kind === 'text' ? (
         <div
           className={`relative h-[360px] overflow-hidden rounded-[24px] border bg-[#202020] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
@@ -1279,9 +1288,28 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         <div
           className={`relative flex h-[360px] items-center justify-center overflow-hidden rounded-[24px] border bg-[#202020] shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
         >
+          {data.uploaded && <>
+            <input ref={replacementInputRef} type="file" accept={`${data.kind}/*`} aria-label="替换节点素材" className="hidden" disabled={replacement.isPending} onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (!file || replacement.isPending) return;
+              if (file.size > 500 * 1024 * 1024) { toast.error('文件大小不能超过 500MB'); return; }
+              if (!file.type.startsWith(`${data.kind}/`)) { toast.error(`请选择${nodeLabels[data.kind]}文件，替换素材必须为同一类型`); return; }
+              replacement.mutate(file);
+            }} />
+            <button type="button" aria-label="替换素材" disabled={replacement.isPending} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); replacementInputRef.current?.click(); }}
+              className={`nodrag nopan nowheel absolute right-3 top-3 z-10 flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-white/15 bg-black/65 px-2.5 text-xs text-white transition-opacity focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-default ${replacement.isPending ? 'opacity-100' : 'opacity-0'}`}>
+              {replacement.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{replacement.isPending ? '替换中' : '替换'}
+            </button>
+          </>}
           {data.url ? (
             data.kind === 'image' ? (
               <img src={data.url} alt={data.title} className="h-full w-full object-contain" />
+            ) : data.kind === 'audio' ? (
+              <div className="flex w-full flex-col items-center gap-6 px-6">
+                <Music className="h-16 w-16 text-[#77777b]" />
+                <audio src={data.url} controls aria-label={data.title} className="nodrag nopan nowheel w-full" />
+              </div>
             ) : (
               <video
                 src={data.url}
@@ -1292,7 +1320,6 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
           ) : (
             <div className="flex w-full flex-col items-center justify-center gap-4 px-6">
               <Icon data-node-placeholder-icon="" className="h-16 w-16 shrink-0 stroke-[1.5] text-[#505054]" />
-              <EmptyMediaNodeActions canvasId={canvasId} kind={data.kind} disabled={dependencySelection.targetId !== null || data.status === 'generating' || (!!data.generationStatus && isGenerationActive(data.generationStatus))} onFill={fillMediaNode} />
               {generationError}
             </div>
           )}
@@ -1382,6 +1409,7 @@ function InfiniteCanvas({
   const queryClient = useQueryClient();
   const toast = useToast();
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
   const viewportRef = useRef<Viewport>(canvas.graph.viewport);
   const initializedRef = useRef(false);
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>(
@@ -1389,7 +1417,7 @@ function InfiniteCanvas({
   );
   useEffect(() => onChatNodesChange(toChatReferences(nodes)), [nodes, onChatNodesChange]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
-    canvas.graph.edges.map(normalizeEdge),
+    canvas.graph.edges.filter((edge) => !canvas.graph.nodes.some((node) => node.id === edge.target && (node.data.uploaded === true || node.data.kind === 'audio'))).map(normalizeEdge),
   );
   const generationTasks = useQuery({
     queryKey: ['generation-tasks', canvas.id],
@@ -1596,6 +1624,7 @@ function InfiniteCanvas({
       const sourceNode = nodes.find((node) => node.id === connection.source);
       const targetNode = nodes.find((node) => node.id === connection.target);
       if (!sourceNode || !targetNode) return false;
+      if (targetNode.data.uploaded || targetNode.data.kind === 'audio') return false;
       if (targetNode.data.kind === 'image') return sourceNode.data.kind === 'text';
       if (targetNode.data.kind === 'video') {
         const existingInputCount = edges.filter(
@@ -1628,6 +1657,7 @@ function InfiniteCanvas({
       const sourceNode = nodes.find((node) => node.id === sourceId);
       const targetNode = nodes.find((node) => node.id === dependencyTargetId);
       if (!sourceNode || !targetNode) return;
+      if (targetNode.data.uploaded || targetNode.data.kind === 'audio') return;
       if (targetNode.data.kind === 'image' && sourceNode.data.kind !== 'text') return;
       if (targetNode.data.kind === 'video') {
         const inputCount = edges.filter(
@@ -1696,9 +1726,9 @@ function InfiniteCanvas({
 
   // 把资产库中的素材作为就绪节点加到画布视口中心
   const addAssetNode = useCallback(
-    (asset: Asset) => {
+    (asset: Asset, uploaded = false) => {
       if (!instance || !wrapperRef.current) return;
-      if (asset.kind !== 'image' && asset.kind !== 'video' && asset.kind !== 'text') return;
+      if (asset.kind !== 'image' && asset.kind !== 'video' && asset.kind !== 'text' && asset.kind !== 'audio') return;
       const bounds = wrapperRef.current.getBoundingClientRect();
       const center = instance.screenToFlowPosition({
         x: bounds.left + bounds.width / 2,
@@ -1730,6 +1760,7 @@ function InfiniteCanvas({
                 prompt: asset.prompt ?? '',
                 model: asset.model ?? undefined,
                 status: 'ready',
+                uploaded: uploaded || asset.source === 'upload',
                 aspectRatio: closestAspectRatio(
                   asset.width,
                   asset.height,
@@ -1747,6 +1778,19 @@ function InfiniteCanvas({
     },
     [instance, setNodes],
   );
+
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const kind = file.type.split('/')[0];
+      if (kind !== 'image' && kind !== 'video' && kind !== 'audio') throw new Error('请选择图片、视频或音频文件');
+      return await api.assets.uploadToCanvas(canvas.id, kind, file) as Asset;
+    },
+    onSuccess: (asset) => {
+      queryClient.setQueryData(['asset', asset.id], asset);
+      addAssetNode(asset, true);
+    },
+    onError: (error) => toast.error(apiErrorMessage(error, '上传失败，请重试')),
+  });
 
   const duplicateNode = useCallback(
     (nodeId: string) => {
@@ -1855,6 +1899,15 @@ function InfiniteCanvas({
         }
       }}
     >
+      <input ref={uploadInputRef} type="file" accept="image/*,video/*,audio/*" aria-label="上传画布素材" className="hidden" disabled={upload.isPending} onChange={(event) => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file || upload.isPending) return;
+        if (file.size > 500 * 1024 * 1024) { toast.error('文件大小不能超过 500MB'); return; }
+        if (!/^(image|video|audio)\//.test(file.type)) { toast.error('请选择图片、视频或音频文件'); return; }
+        setShowAddMenu(false);
+        upload.mutate(file);
+      }} />
       <CanvasIdContext.Provider value={canvas.id}>
         <DependencySelectionContext.Provider
           value={{
@@ -1890,7 +1943,6 @@ function InfiniteCanvas({
             onNodeDragStart={(event) => {
               if (event.target instanceof HTMLTextAreaElement) event.target.blur();
             }}
-            onNodeDoubleClick={openNodeActionMenu}
             onNodeContextMenu={openNodeActionMenu}
             onInit={setInstance}
             onMove={(_, viewport) => {
@@ -2163,7 +2215,7 @@ function InfiniteCanvas({
         <AssetLibraryDialog
           onClose={() => setShowAssetLibrary(false)}
           onToast={toast.show}
-          onAddToCanvas={addAssetNode}
+          onAddToCanvas={(asset) => addAssetNode(asset)}
         />
       )}
 
@@ -2197,7 +2249,7 @@ function InfiniteCanvas({
         <AssetHistoryDialog
           canvasId={canvas.id}
           onClose={() => setShowAssetHistory(false)}
-          onAddToCanvas={addAssetNode}
+          onAddToCanvas={(asset) => addAssetNode(asset)}
         />
       )}
 
@@ -2314,6 +2366,10 @@ function InfiniteCanvas({
               </button>
             );
           })}
+          <button type="button" disabled={upload.isPending} onClick={() => uploadInputRef.current?.click()} className="flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-white/[0.07] disabled:cursor-default disabled:opacity-40">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.07] text-[#c8c8ca]">{upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}</span>
+            <span><span className="block text-sm text-[#efefec]">{upload.isPending ? '上传中' : '上传'}</span><span className="mt-0.5 block text-[11px] text-[#77777b]">支持图片、视频和音频</span></span>
+          </button>
         </div>
       )}
 

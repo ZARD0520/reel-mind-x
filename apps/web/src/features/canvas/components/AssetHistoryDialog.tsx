@@ -196,7 +196,7 @@ export function AssetHistoryDialog({
                 {debouncedSearch ? '没有找到匹配的素材' : '暂无素材记录'}
               </p>
               <p className="mt-1 text-xs text-[#66666b]">
-                {debouncedSearch ? '试试其他关键词' : '在画布中生成或上传素材后，这里会展示历史记录'}
+                {debouncedSearch ? '试试其他关键词' : '在画布中生成素材后，这里会展示历史记录'}
               </p>
             </div>
           )}

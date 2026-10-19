@@ -368,32 +368,35 @@ test(
         },
       );
 
-      await suite.test('canvas image/video uploads enter searchable history and enforce ownership/type', async () => {
+      await suite.test('canvas image/video/audio uploads stay outside history and enforce ownership/type/size', async () => {
         const assets = new AssetsService(prisma, config);
         const uploadCanvas = await prisma.canvas.create({ data: { userId: user.id, name: 'Upload history' } });
         const uploaded = [];
-        for (const kind of ['image', 'video']) {
-          const filename = `${randomUUID()}.${kind === 'image' ? 'png' : 'mp4'}`;
+        for (const kind of ['image', 'video', 'audio']) {
+          const extension = kind === 'image' ? 'png' : kind === 'audio' ? 'wav' : 'mp4';
+          const filename = `${randomUUID()}.${extension}`;
           const filePath = path.join(storage, filename);
           if (kind === 'image') fs.writeFileSync(filePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
+          else if (kind === 'audio') execFileSync(apiRequire('@ffmpeg-installer/ffmpeg').path, ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.1', '-y', filePath], { stdio: 'pipe' });
           else execFileSync(apiRequire('@ffmpeg-installer/ffmpeg').path, ['-f', 'lavfi', '-i', 'color=c=blue:s=16x16:d=0.1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', filePath], { stdio: 'pipe' });
           const asset = await assets.createFromCanvasUpload(user.id, uploadCanvas.id, kind, {
-            path: filePath, filename, originalname: `upload-history-${kind}`, mimetype: `${kind}/${kind === 'image' ? 'png' : 'mp4'}`,
+            path: filePath, filename, originalname: `upload-history-${kind}.${extension}`, mimetype: `${kind}/${extension}`, size: fs.statSync(filePath).size,
           });
           assert.equal(asset.canvasId, uploadCanvas.id);
           assert.equal(asset.projectId, null);
           assert.equal(asset.source, 'upload');
           assert.equal(asset.status, 'ready');
           assert.equal(asset.kind, kind);
+          assert.equal(asset.name, `upload-history-${kind}.${extension}`);
           uploaded.push(asset);
         }
-        assert.deepEqual((await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).map((asset) => asset.id).sort(), uploaded.map((asset) => asset.id).sort());
-        assert.equal((await assets.history(user.id, { scope: 'all', q: 'upload-history-image' })).length, 1);
+        assert.equal((await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).length, 0);
+        assert.equal((await assets.history(user.id, { scope: 'all', q: 'upload-history' })).length, 0);
         const folder = await prisma.assetFolder.create({ data: { userId: user.id, name: 'Uploaded library copy' } });
         const copy = await assets.saveToLibrary(user.id, uploaded[0].id, { folderId: folder.id });
         assert.ok(!(await assets.history(user.id, { scope: 'all' })).some((asset) => asset.id === copy.id));
         await assets.removeHistory(user.id, uploaded[0].id);
-        assert.equal((await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).length, 1);
+        assert.equal((await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).length, 0);
         assert.equal((await assets.findOne(user.id, uploaded[0].id)).status, 'ready');
         for (const [owner, kind, code] of [[randomUUID(), 'image', 404], [user.id, 'video', 400]]) {
           const filePath = path.join(storage, `${randomUUID()}.png`);
@@ -402,6 +405,10 @@ test(
           assert.ok(!fs.existsSync(filePath));
         }
         await assets.removeHistory(user.id, uploaded[1].id);
+        const oversizedPath = path.join(storage, `${randomUUID()}.png`);
+        fs.writeFileSync(oversizedPath, 'oversized placeholder');
+        await assert.rejects(() => assets.createFromCanvasUpload(user.id, uploadCanvas.id, 'image', { path: oversizedPath, mimetype: 'image/png', size: 500 * 1024 * 1024 + 1 }), /500MB/);
+        assert.ok(!fs.existsSync(oversizedPath));
       });
 
       await suite.test(
