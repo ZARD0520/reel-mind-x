@@ -85,6 +85,8 @@ import { AssetLibraryDialog } from '../features/canvas/components/AssetLibraryDi
 import { AssetFolderPickerDialog } from '../features/canvas/components/AssetFolderPickerDialog';
 import { AssetHistoryDialog } from '../features/canvas/components/AssetHistoryDialog';
 import { CanvasChatDrawer } from '../features/canvas/components/CanvasChatDrawer';
+import { InlineReferenceInput, type InlineReferenceInputHandle } from '../features/canvas/components/InlineReferenceInput';
+import { readableReferences, referenceIds, referenceToken, splitReferences } from '../features/canvas/inline-references';
 import type { CanvasChatReference } from '../features/canvas/chat-types';
 import { Select, type SelectOption } from '../components/ui/Select';
 import { ReferencePreview } from '../components/ui/ReferencePreview';
@@ -540,7 +542,7 @@ function toChatReferences(nodes: WorkflowNode[]): CanvasChatReference[] {
     kind: node.data.kind,
     title: node.data.title.trim().slice(0, 200) || nodeLabels[node.data.kind],
     content: node.data.content.slice(0, 12000),
-    prompt: node.data.prompt?.slice(0, 2000),
+    prompt: node.data.prompt ? readableReferences(node.data.prompt).slice(0, 2000) : undefined,
     assetId: node.data.assetId,
     url: node.data.url ?? undefined,
   }));
@@ -573,11 +575,12 @@ function NodeGenerationPrompt({
   kind: WorkflowNodeKind;
   data: WorkflowNodeData;
 }) {
-  const { updateNodeData } = useReactFlow<WorkflowNode, Edge>();
+  const { updateNodeData, setEdges } = useReactFlow<WorkflowNode, Edge>();
   const queryClient = useQueryClient();
   const toast = useToast();
   const submissionRef = useRef(false);
   const dependencySelection = useContext(DependencySelectionContext);
+  const promptInputRef = useRef<InlineReferenceInputHandle>(null);
   const prompt = data.prompt ?? '';
   const [model, setModel] = useState<CanvasModelId>(normalizeCanvasModel(kind, data.model));
   const [generationCount, setGenerationCount] = useState<GenerationCount>(
@@ -608,8 +611,12 @@ function NodeGenerationPrompt({
       const ratios = frames.map((node) => normalizeVideoAspectRatio(node.data.aspectRatio));
       if (new Set(ratios).size > 1) throw new GenerationPreparationError('首帧和尾帧的比例需要保持一致');
       if (frames.some((node) => !node.data.assetId || node.data.status !== 'ready')) throw new GenerationPreparationError('首尾帧图片尚未生成完成');
-      const combined = texts.length ? '参考内容：\n' + texts.join('\n') + '\n\n生成要求：' + nextPrompt : nextPrompt;
-      return api.generationTasks.create({ requestId, canvasId, nodeId, kind, count, prompt: kind === 'video' ? combined.slice(0, 512) : combined, userPrompt: nextPrompt, references, model,
+      const inlinePrompt = splitReferences(nextPrompt).map((part) => {
+        const node = referenceNodes.find((item) => item.id === part.id);
+        return node ? '【' + node.data.title + '】' + (node.data.kind === 'text' ? (node.data.content || readableReferences(node.data.prompt || '')) : '') : part.id ? '【' + part.title + '】' : part.text;
+      }).join('');
+      const combined = referenceIds(nextPrompt).length ? inlinePrompt : texts.length ? '参考内容：\n' + texts.join('\n') + '\n\n生成要求：' + nextPrompt : nextPrompt;
+      return api.generationTasks.create({ requestId, canvasId, nodeId, kind, count, prompt: kind === 'video' ? combined.slice(0, 512) : combined, userPrompt: readableReferences(nextPrompt), references, model,
         ...(kind === 'image' ? { size: IMAGE_SIZE_BY_RATIO[aspectRatio] } : {}),
         ...(kind === 'video' ? { size: VIDEO_SIZE_BY_RATIO[ratios[0] ?? aspectRatio], duration: videoDuration, withAudio: videoWithAudio, imageAssetIds: frames.map((node) => node.data.assetId!) } : {}),
       });
@@ -686,38 +693,40 @@ function NodeGenerationPrompt({
     updateNodeData(nodeId, { aspectRatio: lockedVideoAspectRatio });
   }, [aspectRatio, kind, lockedVideoAspectRatio, nodeId, updateNodeData]);
 
-  const addReferenceToInput = (referenceNodeId: string) => {
-    if (selectedReferenceIds.includes(referenceNodeId)) return;
-    const referenceNode = referenceDependencies.find(
-      ({ node }) => node.id === referenceNodeId,
-    )?.node;
-    if (kind === 'video' && referenceNode?.data.kind === 'image') {
-      const referenceAspectRatio = normalizeVideoAspectRatio(referenceNode.data.aspectRatio);
-      if (lockedVideoAspectRatio && lockedVideoAspectRatio !== referenceAspectRatio) {
+  const candidates = dependencySelection.nodes.filter((node) => node.id !== nodeId &&
+    (kind === 'text' || node.data.kind === 'text' || (kind === 'video' && node.data.kind === 'image' &&
+      (referenceDependencies.some((item) => item.node.id === node.id) || referenceDependencies.filter((item) => item.node.data.kind === 'image').length < 2))))
+    .map((node): CanvasChatReference => ({ id: node.id, title: node.data.title, kind: node.data.kind, content: node.data.content, prompt: node.data.prompt, url: node.data.url ?? undefined, assetId: node.data.assetId }));
+
+  // Preserve references in graphs saved before inline mentions were introduced.
+  useEffect(() => {
+    const missing = selectedReferenceNodes.filter((node) => !referenceIds(prompt).includes(node.id));
+    if (missing.length) updateNodeData(nodeId, { prompt: prompt + (prompt ? ' ' : '') + missing.map((node) => referenceToken({ id: node.id, title: node.data.title })).join(' ') });
+  }, [nodeId]);
+
+  const acceptReference = (reference: CanvasChatReference) => {
+    const node = dependencySelection.nodes.find((item) => item.id === reference.id);
+    if (!node || !candidates.some((item) => item.id === node.id)) return false;
+    if (kind === 'video' && node.data.kind === 'image') {
+      const ratio = normalizeVideoAspectRatio(node.data.aspectRatio);
+      if (lockedVideoAspectRatio && lockedVideoAspectRatio !== ratio) {
         toast.warning('首帧和尾帧的比例需要保持一致');
-        return;
+        return false;
       }
-      setAspectRatio(referenceAspectRatio);
-      updateNodeData(nodeId, {
-        referenceNodeIds: [...selectedReferenceIds, referenceNodeId],
-        aspectRatio: referenceAspectRatio,
-      });
-      return;
+      setAspectRatio(ratio);
+      updateNodeData(nodeId, { aspectRatio: ratio });
     }
-    updateNodeData(nodeId, {
-      referenceNodeIds: [...selectedReferenceIds, referenceNodeId],
-    });
+    setEdges((edges) => edges.some((edge) => edge.source === node.id && edge.target === nodeId) ? edges :
+      addEdge({ id: uuid(), source: node.id, target: nodeId, ...edgeDefaults }, edges));
+    return true;
   };
-
-  const removeReferenceFromInput = (referenceNodeId: string) => {
-    updateNodeData(nodeId, {
-      referenceNodeIds: selectedReferenceIds.filter((id) => id !== referenceNodeId),
-    });
+  const addReferenceToInput = (id: string) => {
+    const reference = candidates.find((item) => item.id === id);
+    if (reference) promptInputRef.current?.insert(reference);
   };
-
-  const removeLastReferenceFromInput = () => {
-    const lastReferenceId = selectedReferenceNodes.at(-1)?.id;
-    if (lastReferenceId) removeReferenceFromInput(lastReferenceId);
+  const removeReferenceFromInput = (id: string) => {
+    const next = splitReferences(prompt).filter((part) => part.id !== id).map((part) => part.text).join('');
+    updateNodeData(nodeId, { prompt: next, referenceNodeIds: referenceIds(next) });
   };
 
   return (
@@ -788,79 +797,12 @@ function NodeGenerationPrompt({
           <Plus className="h-4 w-4" />
         </button>
       </div>
-      <div className="flex min-h-14 w-full flex-wrap content-start items-start gap-1.5 px-2 py-1">
-        {selectedReferenceNodes.map((node) => {
-          const ReferenceIcon = nodeIcons[node.data.kind];
-          const frameIndex = videoImageReferenceIds.indexOf(node.id);
-          return (
-            <ReferencePreview key={node.id} reference={{ kind: node.data.kind, name: node.data.title, content: node.data.content || node.data.prompt, url: node.data.url ?? undefined }}>
-            <span
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === 'Backspace' || event.key === 'Delete') {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  removeReferenceFromInput(node.id);
-                }
-              }}
-              className="mt-0.5 flex h-7 max-w-36 shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.09] bg-white/[0.1] px-2 text-xs text-[#e0e0e2]"
-            >
-              <ReferenceIcon className="h-3.5 w-3.5 shrink-0" />
-              {kind === 'video' && frameIndex >= 0 && (
-                <span className="shrink-0 text-[10px] text-[#a4a4a9]">
-                  {frameIndex === 0 ? '首帧' : '尾帧'}
-                </span>
-              )}
-              <span className="truncate">{node.data.title}</span>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  removeReferenceFromInput(node.id);
-                }}
-                aria-label={`移除提示词引用 ${node.data.title}`}
-                title="移除引用"
-                className="-mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[#929297] hover:bg-white/[0.08] hover:text-white focus-visible:outline focus-visible:outline-1 focus-visible:outline-white/60"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </span>
-            </ReferencePreview>
-          );
-        })}
-        <textarea
-          value={prompt}
-          onChange={(event) => updateNodeData(nodeId, { prompt: event.target.value })}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-            const input = event.currentTarget;
-            if (
-              event.key === 'Backspace' &&
-              !event.ctrlKey && !event.metaKey && !event.altKey &&
-              input.selectionStart === 0 && input.selectionEnd === 0 &&
-              selectedReferenceNodes.length > 0
-            ) {
-              event.preventDefault();
-              event.stopPropagation();
-              removeLastReferenceFromInput();
-              return;
-            }
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }
-          }}
-          disabled={isGenerating}
-          rows={selectedReferenceNodes.length > 0 ? 1 : 2}
-          placeholder={
-            kind === 'text'
-              ? '描述你想生成的脚本...'
-              : kind === 'image'
-                ? '描述你想生成的图片...'
-                : '描述你想生成的视频...'
-          }
-          className="reel-scroll min-h-7 min-w-32 flex-1 resize-none bg-transparent font-[inherit] text-sm leading-7 text-white outline-none placeholder:text-[#8f8f94] disabled:opacity-60"
-        />
+      <div className="flex min-h-14 w-full px-2 py-1">
+        <InlineReferenceInput ref={promptInputRef} value={prompt} candidates={candidates}
+          onReference={acceptReference}
+          onChange={(value) => updateNodeData(nodeId, { prompt: value, referenceNodeIds: referenceIds(value) })}
+          onSubmit={() => { if (prompt.trim() && !isGenerating && !submissionRef.current) { submissionRef.current = true; generation.mutate({ prompt: prompt.trim(), count: generationCount, requestId: uuid() }); } }}
+          disabled={isGenerating} label="节点提示词" placeholder="描述生成要求，输入 @ 引用资产..." />
       </div>
       <div className="mt-1 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1">

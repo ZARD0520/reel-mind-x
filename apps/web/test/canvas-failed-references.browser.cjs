@@ -129,73 +129,34 @@ const { randomUUID } = require('node:crypto');
     const form = page.locator('.react-flow__node-toolbar form');
     await expect(form).toBeVisible();
     await expect(form.getByRole('button', { name: '生成视频', exact: true })).toBeEnabled();
-    const promptInput = form.getByPlaceholder('描述你想生成的视频...');
-    const imageReference = form.getByRole('button', {
-      name: '移除提示词引用 参考图片',
-      exact: true,
-    });
+    const promptInput = form.getByRole('textbox');
+    const imageReference = promptInput.locator('[data-node-id="image"]');
+    await expect(imageReference).toBeVisible();
+    await expect(promptInput.locator('[data-node-id="text"]')).toBeVisible();
+    // Existing references migrate into the prompt, and IME key events do not remove them.
+    await promptInput.dispatchEvent('keydown', { key: 'Backspace', code: 'Backspace', isComposing: true });
+    await expect(imageReference).toBeVisible();
     await promptInput.focus();
-    await promptInput.evaluate((element) => element.setSelectionRange(0, 0));
+    await imageReference.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNode(element);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    });
     await promptInput.press('Backspace');
     await expect(imageReference).toHaveCount(0);
-    await expect(promptInput).toHaveValue('测试视频');
-    await expect(
-      form.getByRole('button', { name: '移除提示词引用 参考文字', exact: true }),
-    ).toBeVisible();
-    await form.locator('[role="button"]').filter({ hasText: '参考图片' }).click();
-    await promptInput.focus();
-    await promptInput.evaluate((element) =>
-      element.setSelectionRange(element.value.length, element.value.length),
-    );
-    await promptInput.press('Backspace');
-    await expect(promptInput).toHaveValue('测试视');
-    await expect(imageReference).toBeVisible();
-    await promptInput.evaluate((element) => element.setSelectionRange(0, 2));
-    await promptInput.press('Backspace');
-    await expect(promptInput).toHaveValue('视');
-    await expect(imageReference).toBeVisible();
-    await promptInput.fill('测试视频');
-    await promptInput.evaluate((element) => element.setSelectionRange(0, 0));
-    await promptInput.dispatchEvent('keydown', {
-      key: 'Backspace',
-      code: 'Backspace',
-      isComposing: true,
-    });
-    await expect(imageReference).toBeVisible();
-    console.log(
-      'PASS: failed node Backspace removes a reference at the text boundary, preserves text/selection editing and ignores IME composition',
-    );
+    await expect.poll(() => graph.nodes.find((node) => node.id === 'video').data.referenceNodeIds).toEqual(['text']);
+    if (!graph.edges.some((edge) => edge.id === 'image-edge')) throw new Error('Removing an inline reference deleted its dependency');
     await form.getByRole('button', { name: '删除依赖 参考文字', exact: true }).click();
-    await expect(form.locator('span.truncate').filter({ hasText: /^参考文字$/ })).toHaveCount(0);
-    await expect
-      .poll(() => graph.nodes.find((node) => node.id === 'video').data.referenceNodeIds)
-      .toEqual(['image']);
-    console.log('PASS: failed node can delete a graph dependency');
-    await form.getByRole('button', { name: '移除提示词引用 参考图片', exact: true }).click();
-    await expect(form.locator('span.truncate').filter({ hasText: /^参考图片$/ })).toHaveCount(1);
-    await expect
-      .poll(() => graph.nodes.find((node) => node.id === 'video').data.referenceNodeIds)
-      .toEqual([]);
-    if (!graph.edges.some((edge) => edge.id === 'image-edge'))
-      throw new Error('Removing an input reference deleted its graph dependency');
+    await expect(promptInput.locator('[data-node-id="text"]')).toHaveCount(0);
     await form.locator('[role="button"]').filter({ hasText: '参考图片' }).click();
-    const inlineRemoval = form.getByRole('button', {
-      name: '移除提示词引用 参考图片',
-      exact: true,
-    });
-    await expect(inlineRemoval).toBeVisible();
-    await inlineRemoval.press('Delete');
-    await expect(inlineRemoval).toHaveCount(0);
-    await expect(video).toBeVisible();
-    await form.locator('[role="button"]').filter({ hasText: '参考图片' }).click();
+    await expect(imageReference).toBeVisible();
     await promptInput.fill('');
     await promptInput.press('Backspace');
-    await expect(inlineRemoval).toHaveCount(0);
+    await expect(imageReference).toHaveCount(0);
     await expect(video).toBeVisible();
     await promptInput.fill('测试视频');
-    await expect
-      .poll(() => graph.nodes.find((node) => node.id === 'video').data.referenceNodeIds)
-      .toEqual([]);
+    await expect.poll(() => graph.nodes.find((node) => node.id === 'video').data.referenceNodeIds).toEqual([]);
     await page.reload();
     await video.click();
     await expect(form.locator('span.truncate').filter({ hasText: /^参考图片$/ })).toHaveCount(1);

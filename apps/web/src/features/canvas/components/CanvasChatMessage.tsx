@@ -7,6 +7,7 @@ import { useTypewriterText } from '../useTypewriterText';
 import { rehypeChatCaret } from '../rehypeChatCaret';
 import type { CanvasChatReference } from '../chat-types';
 import { CanvasChatReferenceChip } from './CanvasChatReferenceChip';
+import { referenceIds, splitReferences } from '../inline-references';
 
 const markdownPlugins = [remarkGfm];
 const htmlPlugins = [rehypeRaw, rehypeSanitize];
@@ -39,8 +40,11 @@ export function CanvasChatMessage({ role, content, references = [], availableNod
 
   if (role === 'user') {
     return <div className="max-w-[90%] self-end whitespace-pre-wrap break-words rounded-2xl bg-[#303030] px-4 py-2 text-sm leading-6 text-[#f3f3f0]">
-      {!!references.length && <div className="mb-1.5 flex flex-wrap gap-1">{references.map((reference) => <CanvasChatReferenceChip key={reference.id} reference={reference} available={availableNodeIds.has(reference.id)} onFocusNode={onFocusNode} />)}</div>}
-      {content}
+      {splitReferences(content).map((part, index) => {
+        const reference = references.find((item) => item.id === part.id);
+        return part.id ? <CanvasChatReferenceChip key={index} reference={reference ?? { id: part.id, title: part.title ?? '', kind: 'text' }} available={!!reference && availableNodeIds.has(part.id)} onFocusNode={onFocusNode} /> : part.text;
+      })}
+      {references.filter((item) => !referenceIds(content).includes(item.id)).map((reference) => <CanvasChatReferenceChip key={reference.id} reference={reference} available={availableNodeIds.has(reference.id)} onFocusNode={onFocusNode} />)}
     </div>;
   }
 

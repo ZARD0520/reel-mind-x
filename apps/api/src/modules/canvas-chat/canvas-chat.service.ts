@@ -7,6 +7,12 @@ import { CanvasChatReferenceSchema, type CanvasChatReference } from './canvas-ch
 
 const CHAT_MODEL = 'glm-4-flash';
 
+function readablePrompt(content: string): string {
+  return content.replace(/@\[([^\]]*)\]\(node:([^)]*)\)/g, (token, title: string) => {
+    try { return `【${decodeURIComponent(title)}】`; } catch { return token; }
+  });
+}
+
 function referenceContext(references: CanvasChatReference[]): string {
   if (!references.length) return '';
   const items = references.map((item, index) => [
@@ -120,9 +126,9 @@ export class CanvasChatService {
       { role: 'system', content: '你是一个协助用户进行创意构思和内容创作的助手。根据用户的问题自然、清晰地回答。引用的文本节点可直接阅读；图片和视频节点只能依据节点标题、文字内容或生成提示词回答，不要声称看到了画面。' },
       ...history.map((message) => ({
         role: message.role as 'user' | 'assistant',
-        content: message.content + referenceContext(CanvasChatReferenceSchema.array().catch([]).parse(message.references)),
+        content: readablePrompt(message.content) + referenceContext(CanvasChatReferenceSchema.array().catch([]).parse(message.references)),
       })),
-      { role: 'user', content: prompt + referenceContext(resolvedReferences) },
+      { role: 'user', content: readablePrompt(prompt) + referenceContext(resolvedReferences) },
     ];
     let answer = '';
     for await (const text of this.llm.chatStream(messages, { model: CHAT_MODEL, signal })) {
@@ -132,7 +138,7 @@ export class CanvasChatService {
     answer = answer.trim();
     if (!answer || signal.aborted) throw new Error('Generation was interrupted');
     const firstMessage = history.length === 0;
-    const title = firstMessage ? await this.makeTitle(prompt, answer) : conversation.title;
+    const title = firstMessage ? await this.makeTitle(readablePrompt(prompt), answer) : conversation.title;
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.canvasChatMessage.create({ data: { conversationId, role: 'user', content: prompt, references: resolvedReferences as Prisma.InputJsonValue } });
       await tx.canvasChatMessage.create({ data: { conversationId, role: 'assistant', content: answer } });
