@@ -89,6 +89,7 @@ import { AssetLibraryDialog, apiErrorMessage } from '../features/canvas/componen
 import { AssetFolderPickerDialog } from '../features/canvas/components/AssetFolderPickerDialog';
 import { AssetHistoryDialog } from '../features/canvas/components/AssetHistoryDialog';
 import { AudioNodePlayer } from '../features/canvas/components/AudioNodePlayer';
+import { CreditWallet, GenerationCreditCost } from '../components/CreditWallet';
 import { CanvasChatDrawer } from '../features/canvas/components/CanvasChatDrawer';
 import { InlineReferenceInput, type InlineReferenceInputHandle } from '../features/canvas/components/InlineReferenceInput';
 import { readableReferences, referenceIds, referenceToken, splitReferences } from '../features/canvas/inline-references';
@@ -666,7 +667,7 @@ function NodeGenerationPrompt({
         finally { invalidateTasks(); }
       })();
     },
-    onSettled: () => { submissionRef.current = false; },
+    onSettled: () => { submissionRef.current = false; void queryClient.invalidateQueries({ queryKey: ['credits'] }); },
   });
   const isGenerating = generation.isPending || data.status === 'generating' || (!!data.generationStatus && isGenerationActive(data.generationStatus));
   const submit = (event: React.FormEvent) => {
@@ -960,6 +961,7 @@ function NodeGenerationPrompt({
           )}
         </div>
         <div className="flex items-center gap-1">
+          <GenerationCreditCost kind={kind} model={model} count={generationCount} duration={videoDuration} />
           <Select
             value={String(generationCount) as GenerationCountValue}
             options={GENERATION_COUNT_OPTIONS}
@@ -2658,6 +2660,7 @@ export function CanvasPage() {
               <Loader2 className="absolute right-3 top-3 h-4 w-4 animate-spin text-[#7b7b80]" />
             )}
           </div>
+          <CreditWallet />
         </div>
 
         <button

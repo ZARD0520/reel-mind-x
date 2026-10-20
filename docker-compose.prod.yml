@@ -66,6 +66,16 @@ services:
     depends_on:
       - api
 
+  admin:
+    build:
+      context: .
+      dockerfile: apps/admin/Dockerfile
+    restart: unless-stopped
+    ports:
+      - '${ADMIN_PORT:-8081}:80'
+    depends_on:
+      - api
+
 volumes:
   postgres-data-prod:
   redis-data-prod:

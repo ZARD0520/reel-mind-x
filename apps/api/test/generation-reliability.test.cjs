@@ -37,18 +37,35 @@ const {
   recoverGenerationTasks,
 } = require('../../web/src/features/canvas/generation-recovery.ts');
 const { AssetsService } = require('../src/modules/assets/assets.service.ts');
+const { CreditsService } = require('../src/modules/credits/credits.service.ts');
+const { AdminService } = require('../src/modules/admin/admin.service.ts');
+const { AdminGuard } = require('../src/modules/admin/admin.guard.ts');
+const { AdminController } = require('../src/modules/admin/admin.controller.ts');
+const { CreditsController } = require('../src/modules/credits/credits.controller.ts');
+const { AuthController } = require('../src/modules/auth/auth.controller.ts');
+const { AuthService } = require('../src/modules/auth/auth.service.ts');
+const { AuthGuard } = require('../src/modules/auth/auth.guard.ts');
+const { ZodExceptionFilter } = require('../src/filters/zod-exception.filter.ts');
+const { CanvasChatService } = require('../src/modules/canvas-chat/canvas-chat.service.ts');
+const { CanvasesService } = require('../src/modules/canvases/canvases.service.ts');
+const { PrismaService } = require('../src/prisma/prisma.service.ts');
 const { AssetFoldersService } = require('../src/modules/asset-folders/asset-folders.service.ts');
 const repo = path.resolve(__dirname, '../../..');
-const { acceptsDependency, acceptsDependencyInput } = require('../../web/src/features/canvas/dependency-rules.ts');
+const {
+  acceptsDependency,
+  acceptsDependencyInput,
+} = require('../../web/src/features/canvas/dependency-rules.ts');
 
 test('audio dependencies accept text input and feed video, including uploaded audio', () => {
   assert.equal(acceptsDependency('text', 'audio'), true);
   assert.equal(acceptsDependency('audio', 'video'), true);
-  for (const source of ['image', 'video', 'audio']) assert.equal(acceptsDependency(source, 'audio'), false);
+  for (const source of ['image', 'video', 'audio'])
+    assert.equal(acceptsDependency(source, 'audio'), false);
   for (const target of ['text', 'image']) assert.equal(acceptsDependency('audio', target), false);
   assert.equal(acceptsDependencyInput({ kind: 'audio', uploaded: true }), false);
   assert.equal(acceptsDependencyInput({ kind: 'audio' }), true);
-  for (const kind of ['image', 'video']) assert.equal(acceptsDependencyInput({ kind, uploaded: true }), false);
+  for (const kind of ['image', 'video'])
+    assert.equal(acceptsDependencyInput({ kind, uploaded: true }), false);
   for (const source of ['text', 'image']) assert.equal(acceptsDependency(source, 'video'), true);
 });
 
@@ -108,32 +125,69 @@ test('historical failures are silent on entry while failures observed during the
 });
 
 test('a failed batch sibling never shows retry-save while other images are still running', () => {
-  const nodes = [{ id: 'batch-node', position: { x: 0, y: 0 }, data: {
-    kind: 'image', title: '图片', content: '', generationFailureVisible: true,
-  } }];
+  const nodes = [
+    {
+      id: 'batch-node',
+      position: { x: 0, y: 0 },
+      data: {
+        kind: 'image',
+        title: '图片',
+        content: '',
+        generationFailureVisible: true,
+      },
+    },
+  ];
   const task = {
-    id: 'batch-task', nodeId: 'batch-node', requestId: 'batch-request',
-    status: 'saving', error: '素材已生成，正在重试保存', canResume: true,
-    model: 'model', items: [{ status: 'failed' }, { status: 'saving' }],
+    id: 'batch-task',
+    nodeId: 'batch-node',
+    requestId: 'batch-request',
+    status: 'saving',
+    error: '素材已生成，正在重试保存',
+    canResume: true,
+    model: 'model',
+    items: [{ status: 'failed' }, { status: 'saving' }],
   };
   const running = recoverGenerationTasks(nodes, [], [task], () => 400);
   assert.equal(running.nodes[0].data.generationCanResume, false);
   assert.equal(generationFeedbackMessage(running.nodes[0].data), '');
-  const failed = recoverGenerationTasks(running.nodes, [], [{ ...task, status: 'failed' }], () => 400);
+  const failed = recoverGenerationTasks(
+    running.nodes,
+    [],
+    [{ ...task, status: 'failed' }],
+    () => 400,
+  );
   assert.equal(failed.nodes[0].data.generationCanResume, true);
 });
 
 test('mixed and all-failed batches retain all outputs; deleted nodes stay deleted after recovery', () => {
-  const nodes = [{ id: 'parent', type: 'workflow', position: { x: 0, y: 0 }, data: {
-    kind: 'image', title: '图片', content: '', prompt: '测试提示词',
-    generationFailureVisible: true, referenceNodeIds: ['upstream'],
-  } }];
+  const nodes = [
+    {
+      id: 'parent',
+      type: 'workflow',
+      position: { x: 0, y: 0 },
+      data: {
+        kind: 'image',
+        title: '图片',
+        content: '',
+        prompt: '测试提示词',
+        generationFailureVisible: true,
+        referenceNodeIds: ['upstream'],
+      },
+    },
+  ];
   const edges = [{ id: 'dependency', source: 'upstream', target: 'parent' }];
   const task = {
-    id: 'batch', requestId: 'request', nodeId: 'parent', model: 'model',
-    status: 'failed', error: '模型繁忙', canResume: false,
+    id: 'batch',
+    requestId: 'request',
+    nodeId: 'parent',
+    model: 'model',
+    status: 'failed',
+    error: '模型繁忙',
+    canResume: false,
     items: Array.from({ length: 4 }, (_, index) => ({
-      id: `item-${index}`, index, status: index % 2 ? 'completed' : 'failed',
+      id: `item-${index}`,
+      index,
+      status: index % 2 ? 'completed' : 'failed',
       error: index % 2 ? null : '模型繁忙',
       asset: { id: `asset-${index}`, url: index % 2 ? `/image-${index}.png` : null },
     })),
@@ -148,45 +202,104 @@ test('mixed and all-failed batches retain all outputs; deleted nodes stay delete
   const remaining = recovered.nodes.filter((node) => node.id !== removedId);
   const again = recoverGenerationTasks(remaining, recovered.edges, [task], () => 400);
   assert.equal(again.nodes, remaining);
-  const reentered = recoverGenerationTasks(remaining.map((node) => ({ ...node, data: {
-    ...node.data, generationRequestId: undefined, generationFailureVisible: false,
-  } })), recovered.edges, [task], () => 400);
+  const reentered = recoverGenerationTasks(
+    remaining.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        generationRequestId: undefined,
+        generationFailureVisible: false,
+      },
+    })),
+    recovered.edges,
+    [task],
+    () => 400,
+  );
   assert.equal(reentered.nodes.length, 3);
   assert.ok(reentered.nodes.every((node) => generationFeedbackMessage(node.data) === ''));
 
-  const allFailed = recoverGenerationTasks(nodes, edges, [{ ...task,
-    items: task.items.map((item) => ({ ...item, status: 'failed', error: '模型繁忙' })),
-  }], () => 400);
+  const allFailed = recoverGenerationTasks(
+    nodes,
+    edges,
+    [
+      {
+        ...task,
+        items: task.items.map((item) => ({ ...item, status: 'failed', error: '模型繁忙' })),
+      },
+    ],
+    () => 400,
+  );
   assert.equal(allFailed.nodes.length, 4);
   assert.ok(allFailed.nodes.every((node) => node.data.status === 'failed' && !node.data.url));
 
   // Backfill an already-applied old graph, without recreating a deleted successful output.
-  const old = [{ ...recovered.nodes[0], data: {
-    ...recovered.nodes[0].data, generationBatchResultsTaskId: undefined, content: '保留用户编辑',
-  } }];
+  const old = [
+    {
+      ...recovered.nodes[0],
+      data: {
+        ...recovered.nodes[0].data,
+        generationBatchResultsTaskId: undefined,
+        content: '保留用户编辑',
+      },
+    },
+  ];
   const migrated = recoverGenerationTasks(old, edges, [task], () => 400);
   assert.equal(migrated.nodes.length, 3);
   assert.equal(migrated.nodes[0].data.content, '保留用户编辑');
   assert.equal(migrated.nodes.filter((node) => node.data.status === 'failed').length, 2);
 
   // Resuming failed saves updates the matching output instead of adding duplicate successful nodes.
-  const resumed = recoverGenerationTasks(recovered.nodes, recovered.edges,
-    [{ ...task, status: 'saving' }], () => 400);
-  const finished = recoverGenerationTasks(resumed.nodes, resumed.edges, [{ ...task,
-    status: 'completed', error: null,
-    items: task.items.map((item) => ({ ...item, status: 'completed', error: null,
-      asset: { ...item.asset, url: `/saved-${item.index}.png` } })),
-  }], () => 400);
+  const resumed = recoverGenerationTasks(
+    recovered.nodes,
+    recovered.edges,
+    [{ ...task, status: 'saving' }],
+    () => 400,
+  );
+  const finished = recoverGenerationTasks(
+    resumed.nodes,
+    resumed.edges,
+    [
+      {
+        ...task,
+        status: 'completed',
+        error: null,
+        items: task.items.map((item) => ({
+          ...item,
+          status: 'completed',
+          error: null,
+          asset: { ...item.asset, url: `/saved-${item.index}.png` },
+        })),
+      },
+    ],
+    () => 400,
+  );
   assert.equal(finished.nodes.length, 4);
   assert.ok(finished.nodes.every((node) => node.data.status === 'ready'));
   assert.equal(new Set(finished.nodes.map((node) => node.data.assetId)).size, 4);
 });
 
 test('imported node media is not overwritten by older generation tasks', () => {
-  const nodes = [{ id: 'node', position: { x: 0, y: 0 }, data: {
-    kind: 'image', title: 'Imported', content: '', assetId: 'uploaded', url: '/uploaded.png', status: 'ready', generationDetached: true,
-  } }];
-  const result = recoverGenerationTasks(nodes, [], [{ nodeId: 'node', requestId: 'old-request' }], () => 400);
+  const nodes = [
+    {
+      id: 'node',
+      position: { x: 0, y: 0 },
+      data: {
+        kind: 'image',
+        title: 'Imported',
+        content: '',
+        assetId: 'uploaded',
+        url: '/uploaded.png',
+        status: 'ready',
+        generationDetached: true,
+      },
+    },
+  ];
+  const result = recoverGenerationTasks(
+    nodes,
+    [],
+    [{ nodeId: 'node', requestId: 'old-request' }],
+    () => 400,
+  );
   assert.equal(result.nodes, nodes);
   assert.equal(result.nodes[0].data.assetId, 'uploaded');
 });
@@ -216,10 +329,15 @@ test(
           GLM_MODEL: 'glm-4-flash',
           GLM_IMAGE_MODEL: 'cogview-3-flash',
           GLM_VIDEO_MODEL: 'cogvideox-flash',
+          SESSION_SECRET: 'isolated-test-session-secret',
+          AUTH_COOKIE_NAME: 'test_session',
+          AUTH_SESSION_DAYS: 1,
           STORAGE_DIR: storage,
         })[key],
     };
     let service;
+    const credits = new CreditsService(prisma, config);
+    const admin = new AdminService(prisma, credits);
     let user;
     let canvas;
     const enqueued = [];
@@ -270,7 +388,9 @@ test(
       return prisma.generationTaskItem.findUniqueOrThrow({ where: { id: itemId } });
     };
     try {
-      const prismaPackage = createRequire(path.join(repo, 'packages/db/package.json')).resolve('prisma/package.json');
+      const prismaPackage = createRequire(path.join(repo, 'packages/db/package.json')).resolve(
+        'prisma/package.json',
+      );
       const prismaCli = path.join(path.dirname(prismaPackage), 'build/index.js');
       execFileSync(process.execPath, [prismaCli, 'migrate', 'deploy'], {
         cwd: path.join(repo, 'packages/db'),
@@ -283,7 +403,496 @@ test(
       canvas = await prisma.canvas.create({
         data: { userId: user.id, name: 'Generation reliability fixture' },
       });
-      service = new GenerationTasksService(prisma, config, queue);
+      // Existing reliability scenarios intentionally exercise many paid tasks.
+      await prisma.platformSetting.update({
+        where: { key: 'signupCredits' },
+        data: { value: 100000 },
+      });
+      await prisma.platformSetting.upsert({
+        where: { key: 'maxConcurrent' },
+        create: { key: 'maxConcurrent', value: 100 },
+        update: { value: 100 },
+      });
+      service = new GenerationTasksService(prisma, config, queue, credits);
+
+      await suite.test(
+        'deleting a canvas retains billing history and atomically settles all outputs, including concurrent submission',
+        async () => {
+          const fixture = await prisma.user.create({
+            data: { name: 'Deletion fixture', email: `${randomUUID()}@invalid.test` },
+          });
+          const canvases = new CanvasesService(prisma, credits);
+          const scope = await canvases.create(fixture.id, { name: 'Delete billing' });
+          const task = await service.create(fixture.id, {
+            requestId: randomUUID(),
+            canvasId: scope.id,
+            kind: 'image',
+            count: 4,
+            prompt: '删除结算测试',
+          });
+          await prisma.generationTaskItem.update({
+            where: { id: task.items[0].id },
+            data: { status: 'completed' },
+          });
+          await prisma.generationTaskItem.update({
+            where: { id: task.items[1].id },
+            data: { status: 'unknown', providerTaskId: 'unknown-before-deletion' },
+          });
+          await canvases.remove(fixture.id, scope.id);
+          const saved = await prisma.generationTask.findUniqueOrThrow({
+            where: { id: task.id },
+            include: { items: true },
+          });
+          assert.equal(saved.canvasId, null);
+          assert.equal(saved.status, 'failed');
+          assert.equal(saved.items.filter((item) => item.status === 'completed').length, 1);
+          assert.ok(saved.items.every((item) => item.assetId === null));
+          let account = await credits.balance(fixture.id);
+          assert.deepEqual([account.available, account.frozen, account.spent], [99990, 0, 10]);
+          assert.equal((await service.get(fixture.id, task.id)).items.length, 4);
+          const concurrent = await canvases.create(fixture.id, {
+            name: 'Delete racing submission',
+          });
+          await Promise.allSettled([
+            service.create(fixture.id, {
+              requestId: randomUUID(),
+              canvasId: concurrent.id,
+              kind: 'image',
+              prompt: '并发删除',
+            }),
+            canvases.remove(fixture.id, concurrent.id),
+          ]);
+          assert.equal(await prisma.canvas.count({ where: { id: concurrent.id } }), 0);
+          account = await credits.balance(fixture.id);
+          assert.equal(account.frozen, 0);
+          assert.equal(
+            await prisma.creditHold.count({ where: { userId: fixture.id, status: 'held' } }),
+            0,
+          );
+        },
+      );
+
+      await suite.test(
+        'chat success commits messages and credits together; stream failures and disconnects refund',
+        async () => {
+          const fixture = await prisma.user.create({
+            data: { name: 'Chat billing fixture', email: `${randomUUID()}@invalid.test` },
+          });
+          const scope = await prisma.canvas.create({
+            data: { userId: fixture.id, name: 'Chat billing' },
+          });
+          const llm = {
+            chat: async () => ({ text: '测试标题' }),
+            chatStream: async function* () {
+              yield '测试回答';
+            },
+          };
+          const chat = new CanvasChatService(prisma, llm, credits);
+          const conversation = await chat.create(fixture.id, scope.id);
+          const signal = new AbortController().signal;
+          const events = [];
+          for await (const event of chat.sendStream(
+            fixture.id,
+            scope.id,
+            conversation.id,
+            '测试问题',
+            [],
+            signal,
+          ))
+            events.push(event);
+          assert.equal(events.at(-1).event, 'done');
+          let account = await credits.balance(fixture.id);
+          assert.deepEqual([account.available, account.frozen, account.spent], [99999, 0, 1]);
+          assert.equal(
+            await prisma.canvasChatMessage.count({ where: { conversationId: conversation.id } }),
+            2,
+          );
+          llm.chatStream = async function* () {
+            yield '部分回答';
+            throw new Error('provider disconnected');
+          };
+          await assert.rejects(async () => {
+            for await (const event of chat.sendStream(
+              fixture.id,
+              scope.id,
+              conversation.id,
+              '失败问题',
+              [],
+              signal,
+            ))
+              void event;
+          }, /provider disconnected/);
+          llm.chatStream = async function* () {
+            yield '部分回答';
+            yield '剩余回答';
+          };
+          const interrupted = chat.sendStream(
+            fixture.id,
+            scope.id,
+            conversation.id,
+            '断开连接',
+            [],
+            signal,
+          );
+          await interrupted.next();
+          await interrupted.return();
+          account = await credits.balance(fixture.id);
+          assert.deepEqual([account.available, account.frozen, account.spent], [99999, 0, 1]);
+          assert.equal(
+            await prisma.canvasChatMessage.count({ where: { conversationId: conversation.id } }),
+            2,
+          );
+          assert.equal(
+            await prisma.creditEntry.count({ where: { userId: fixture.id, type: 'refund' } }),
+            2,
+          );
+        },
+      );
+
+      await suite.test(
+        'daily and concurrent limits include chat; expired synchronous operations refund after restart',
+        async () => {
+          const fixture = await prisma.user.create({
+            data: { name: 'Limits fixture', email: `${randomUUID()}@invalid.test` },
+          });
+          const before = await admin.settings();
+          try {
+            await admin.saveSettings(user.id, {
+              signupCredits: 100000,
+              dailyCredits: 3,
+              maxConcurrent: 2,
+            });
+            const first = await credits.beginOperation(fixture.id, { kind: 'chat' });
+            const second = await credits.beginOperation(fixture.id, { kind: 'text' });
+            await assert.rejects(
+              credits.beginOperation(fixture.id, { kind: 'chat' }),
+              (error) => error.getStatus() === 429 && /同时最多/.test(error.message),
+            );
+            await credits.finishOperation(first.id, false);
+            await credits.finishOperation(second.id, true);
+            const expiring = await credits.beginOperation(fixture.id, { kind: 'chat' });
+            await assert.rejects(
+              prisma.$transaction((tx) =>
+                credits.reserve(tx, fixture.id, 2, `daily:${fixture.id}`, '超过日额度'),
+              ),
+              (error) => error.getStatus() === 429 && /每日/.test(error.message),
+            );
+            await prisma.creditHold.update({
+              where: { id: expiring.id },
+              data: { expiresAt: new Date(0) },
+            });
+            const restarted = new CreditsService(prisma, config);
+            await restarted.expireHolds();
+            const account = await credits.balance(fixture.id);
+            assert.deepEqual([account.available, account.frozen, account.spent], [99999, 0, 1]);
+            assert.equal(
+              (await prisma.creditHold.findUniqueOrThrow({ where: { id: expiring.id } })).status,
+              'refunded',
+            );
+          } finally {
+            await admin.saveSettings(user.id, before);
+          }
+        },
+      );
+
+      await suite.test(
+        'HTTP admin permissions, validation, private balances and account disable take effect',
+        async () => {
+          const { Module } = apiRequire('@nestjs/common');
+          const { NestFactory } = apiRequire('@nestjs/core');
+          const { ConfigService } = apiRequire('@nestjs/config');
+          const { ZodValidationPipe } = apiRequire('nestjs-zod');
+          class HttpFixture {}
+          Module({
+            controllers: [AuthController, CreditsController, AdminController],
+            providers: [
+              AuthGuard,
+              AdminGuard,
+              { provide: PrismaService, useValue: prisma },
+              { provide: ConfigService, useValue: config },
+              { provide: AuthService, useValue: new AuthService(prisma, config) },
+              { provide: CreditsService, useValue: credits },
+              { provide: AdminService, useValue: admin },
+            ],
+          })(HttpFixture);
+          const app = await NestFactory.create(HttpFixture, { logger: false });
+          app.useGlobalPipes(new ZodValidationPipe());
+          app.useGlobalFilters(new ZodExceptionFilter());
+          await app.listen(0, '127.0.0.1');
+          const base = await app.getUrl();
+          const call = (endpoint, cookie, body, method = 'POST') =>
+            fetch(`${base}${endpoint}`, {
+              method: body === undefined ? 'GET' : method,
+              headers: {
+                ...(cookie ? { Cookie: cookie } : {}),
+                ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+              },
+              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            });
+          try {
+            assert.equal((await call('/admin/overview')).status, 401);
+            const email = `${randomUUID()}@invalid.test`;
+            let response = await call('/auth/register', null, {
+              email,
+              name: 'HTTP fixture',
+              password: 'isolated-password123',
+            });
+            assert.equal(response.status, 201);
+            const registered = (await response.json()).user;
+            const cookie = response.headers.get('set-cookie').split(';')[0];
+            assert.equal((await call('/admin/users', cookie)).status, 403);
+            response = await call('/credits/balance', cookie);
+            assert.equal(response.status, 200);
+            assert.equal((await response.json()).userId, registered.id);
+            await prisma.user.update({ where: { id: registered.id }, data: { role: 'admin' } });
+            assert.equal((await call('/admin/overview', cookie)).status, 200);
+            response = await call('/admin/prices', cookie, {
+              kind: 'image',
+              model: '*',
+              unit: 'second',
+              credits: -1,
+              enabled: true,
+            });
+            assert.equal(response.status, 400);
+            response = await call('/admin/ledger?page=-1', cookie);
+            assert.equal(response.status, 400);
+            assert.equal((await call('/admin/tasks', cookie)).status, 200);
+            assert.equal((await call('/admin/audits', cookie)).status, 200);
+            await prisma.user.update({
+              where: { id: registered.id },
+              data: { status: 'disabled' },
+            });
+            assert.equal((await call('/credits/balance', cookie)).status, 401);
+            assert.equal((await call('/admin/overview', cookie)).status, 401);
+          } finally {
+            await app.close();
+          }
+        },
+      );
+
+      await suite.test('admin guard rejects ordinary users even when authenticated', () => {
+        const guard = new AdminGuard();
+        const context = (role) => ({
+          switchToHttp: () => ({ getRequest: () => ({ user: { role } }) }),
+        });
+        assert.throws(() => guard.canActivate(context('user')), /管理员权限/);
+        assert.equal(guard.canActivate(context('admin')), true);
+      });
+
+      await suite.test(
+        'credits serialize concurrent first-use grants, debits and idempotent settlements',
+        async () => {
+          const fixture = await prisma.user.create({
+            data: { name: 'Credits fixture', email: `${randomUUID()}@invalid.test` },
+          });
+          const balances = await Promise.all(
+            Array.from({ length: 5 }, () => credits.balance(fixture.id)),
+          );
+          assert.ok(balances.every((value) => value.available === 100000));
+          assert.equal(
+            await prisma.creditEntry.count({ where: { userId: fixture.id, type: 'grant' } }),
+            1,
+          );
+          await admin.adjust(user.id, fixture.id, {
+            requestId: randomUUID(),
+            amount: -99900,
+            reason: '设置测试额度',
+          });
+          const attempts = await Promise.allSettled(
+            Array.from({ length: 4 }, (_, index) =>
+              prisma.$transaction((tx) =>
+                credits.reserve(tx, fixture.id, 40, `race-${index}-${fixture.id}`, '并发生成'),
+              ),
+            ),
+          );
+          assert.equal(attempts.filter((value) => value.status === 'fulfilled').length, 2);
+          assert.ok(
+            attempts
+              .filter((value) => value.status === 'rejected')
+              .every((value) => value.reason.getStatus() === 402),
+          );
+          let account = await credits.balance(fixture.id);
+          assert.deepEqual([account.available, account.frozen], [20, 80]);
+          const holds = attempts
+            .filter((value) => value.status === 'fulfilled')
+            .map((value) => value.value);
+          await Promise.all(
+            Array.from({ length: 3 }, () => credits.finishOperation(holds[0].id, true)),
+          );
+          await Promise.all(
+            Array.from({ length: 3 }, () => credits.finishOperation(holds[1].id, false)),
+          );
+          account = await credits.balance(fixture.id);
+          assert.deepEqual([account.available, account.frozen, account.spent], [60, 0, 40]);
+          assert.equal(
+            await prisma.creditEntry.count({ where: { userId: fixture.id, type: 'capture' } }),
+            1,
+          );
+          assert.equal(
+            await prisma.creditEntry.count({ where: { userId: fixture.id, type: 'refund' } }),
+            1,
+          );
+          const adjustment = { requestId: randomUUID(), amount: 10, reason: '测试重复发放' };
+          await Promise.all([
+            admin.adjust(user.id, fixture.id, adjustment),
+            admin.adjust(user.id, fixture.id, adjustment),
+          ]);
+          assert.equal((await credits.balance(fixture.id)).available, 70);
+          await assert.rejects(
+            admin.adjust(user.id, fixture.id, { ...adjustment, amount: 11 }),
+            /同一请求/,
+          );
+          await assert.rejects(
+            admin.adjust(user.id, fixture.id, {
+              ...adjustment,
+              requestId: randomUUID(),
+              amount: -71,
+            }),
+            /超过可用积分/,
+          );
+          assert.equal(await prisma.adminAudit.count({ where: { targetId: fixture.id } }), 2);
+        },
+      );
+
+      await suite.test(
+        'batch pricing snapshots survive price changes; partial failure refunds only failed outputs',
+        async () => {
+          const fixture = await prisma.user.create({
+            data: { name: 'Billing batch fixture', email: `${randomUUID()}@invalid.test` },
+          });
+          const scope = await prisma.canvas.create({
+            data: { userId: fixture.id, name: 'Credits batch' },
+          });
+          const input = {
+            requestId: randomUUID(),
+            canvasId: scope.id,
+            nodeId: randomUUID(),
+            kind: 'image',
+            model: 'billing-test-model',
+            count: 4,
+            prompt: '收费测试',
+          };
+          const batch = await service.create(fixture.id, input);
+          await service.create(fixture.id, input);
+          assert.equal((await credits.balance(fixture.id)).frozen, 40);
+          await admin.savePrice(user.id, {
+            kind: 'image',
+            model: 'billing-test-model',
+            unit: 'request',
+            credits: 99,
+            enabled: true,
+          });
+          await prisma.generationTaskItem.updateMany({
+            where: { taskId: batch.id },
+            data: { status: 'completed' },
+          });
+          await prisma.generationTaskItem.update({
+            where: { id: batch.items[3].id },
+            data: { status: 'failed', providerResult: { url: 'https://invalid.test/media' } },
+          });
+          await Promise.all([service.refresh(batch.id), service.refresh(batch.id)]);
+          let account = await credits.balance(fixture.id);
+          assert.deepEqual([account.available, account.frozen, account.spent], [99970, 0, 30]);
+          const saved = await prisma.generationTask.findUniqueOrThrow({ where: { id: batch.id } });
+          assert.equal(saved.creditQuote.total, 40);
+          await service.resume(fixture.id, batch.id);
+          assert.equal((await credits.balance(fixture.id)).frozen, 10);
+          await prisma.generationTaskItem.update({
+            where: { id: batch.items[3].id },
+            data: { status: 'completed' },
+          });
+          await service.refresh(batch.id);
+          account = await credits.balance(fixture.id);
+          assert.deepEqual([account.available, account.frozen, account.spent], [99960, 0, 40]);
+          assert.equal(
+            (await credits.quote({ kind: 'image', model: 'billing-test-model', count: 4 })).total,
+            396,
+          );
+          await admin.savePrice(user.id, {
+            kind: 'image',
+            model: 'billing-test-model',
+            unit: 'request',
+            credits: 99,
+            enabled: false,
+          });
+          await assert.rejects(
+            credits.quote({ kind: 'image', model: 'billing-test-model' }),
+            /暂未开放/,
+          );
+        },
+      );
+
+      await suite.test(
+        'insufficient credits roll back the entire task, items and assets',
+        async () => {
+          const fixture = await prisma.user.create({
+            data: { name: 'Insufficient fixture', email: `${randomUUID()}@invalid.test` },
+          });
+          const scope = await prisma.canvas.create({
+            data: { userId: fixture.id, name: 'Insufficient' },
+          });
+          await credits.balance(fixture.id);
+          await admin.adjust(user.id, fixture.id, {
+            requestId: randomUUID(),
+            amount: -99995,
+            reason: '不足余额测试',
+          });
+          await assert.rejects(
+            service.create(fixture.id, {
+              requestId: randomUUID(),
+              canvasId: scope.id,
+              kind: 'image',
+              prompt: '测试',
+            }),
+            (error) => error.getStatus() === 402,
+          );
+          assert.equal(await prisma.generationTask.count({ where: { userId: fixture.id } }), 0);
+          assert.equal(await prisma.asset.count({ where: { userId: fixture.id } }), 0);
+          assert.deepEqual(
+            [
+              (await credits.balance(fixture.id)).available,
+              (await credits.balance(fixture.id)).frozen,
+            ],
+            [5, 0],
+          );
+        },
+      );
+
+      await suite.test(
+        'unknown results retain frozen credits and restart recovery settles a committed result once',
+        async () => {
+          const batch = await create({ kind: 'text' });
+          const holdId = (
+            await prisma.generationTaskItem.findUniqueOrThrow({ where: { id: batch.items[0].id } })
+          ).creditHoldId;
+          await prisma.generationTaskItem.update({
+            where: { id: batch.items[0].id },
+            data: { status: 'unknown', providerTaskId: 'pending-provider' },
+          });
+          await service.refresh(batch.id);
+          assert.equal(
+            (await prisma.creditHold.findUniqueOrThrow({ where: { id: holdId } })).status,
+            'held',
+          );
+          await prisma.generationTaskItem.update({
+            where: { id: batch.items[0].id },
+            data: { status: 'completed' },
+          });
+          const restarted = new GenerationTasksService(
+            prisma,
+            config,
+            queue,
+            new CreditsService(prisma, config),
+          );
+          await restarted.dispatchDue();
+          await restarted.refresh(batch.id);
+          assert.equal(
+            (await prisma.creditHold.findUniqueOrThrow({ where: { id: holdId } })).status,
+            'captured',
+          );
+          assert.equal(await prisma.creditEntry.count({ where: { key: `${holdId}:captured` } }), 1);
+        },
+      );
 
       await suite.test(
         'saving media or text to the asset library never adds generation history',
@@ -380,48 +989,120 @@ test(
         },
       );
 
-      await suite.test('canvas image/video/audio uploads stay outside history and enforce ownership/type/size', async () => {
-        const assets = new AssetsService(prisma, config);
-        const uploadCanvas = await prisma.canvas.create({ data: { userId: user.id, name: 'Upload history' } });
-        const uploaded = [];
-        for (const kind of ['image', 'video', 'audio']) {
-          const extension = kind === 'image' ? 'png' : kind === 'audio' ? 'wav' : 'mp4';
-          const filename = `${randomUUID()}.${extension}`;
-          const filePath = path.join(storage, filename);
-          if (kind === 'image') fs.writeFileSync(filePath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'));
-          else if (kind === 'audio') execFileSync(apiRequire('@ffmpeg-installer/ffmpeg').path, ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.1', '-y', filePath], { stdio: 'pipe' });
-          else execFileSync(apiRequire('@ffmpeg-installer/ffmpeg').path, ['-f', 'lavfi', '-i', 'color=c=blue:s=16x16:d=0.1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', filePath], { stdio: 'pipe' });
-          const asset = await assets.createFromCanvasUpload(user.id, uploadCanvas.id, kind, {
-            path: filePath, filename, originalname: `upload-history-${kind}.${extension}`, mimetype: `${kind}/${extension}`, size: fs.statSync(filePath).size,
+      await suite.test(
+        'canvas image/video/audio uploads stay outside history and enforce ownership/type/size',
+        async () => {
+          const assets = new AssetsService(prisma, config);
+          const uploadCanvas = await prisma.canvas.create({
+            data: { userId: user.id, name: 'Upload history' },
           });
-          assert.equal(asset.canvasId, uploadCanvas.id);
-          assert.equal(asset.projectId, null);
-          assert.equal(asset.source, 'upload');
-          assert.equal(asset.status, 'ready');
-          assert.equal(asset.kind, kind);
-          assert.equal(asset.name, `upload-history-${kind}.${extension}`);
-          uploaded.push(asset);
-        }
-        assert.equal((await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).length, 0);
-        assert.equal((await assets.history(user.id, { scope: 'all', q: 'upload-history' })).length, 0);
-        const folder = await prisma.assetFolder.create({ data: { userId: user.id, name: 'Uploaded library copy' } });
-        const copy = await assets.saveToLibrary(user.id, uploaded[0].id, { folderId: folder.id });
-        assert.ok(!(await assets.history(user.id, { scope: 'all' })).some((asset) => asset.id === copy.id));
-        await assets.removeHistory(user.id, uploaded[0].id);
-        assert.equal((await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).length, 0);
-        assert.equal((await assets.findOne(user.id, uploaded[0].id)).status, 'ready');
-        for (const [owner, kind, code] of [[randomUUID(), 'image', 404], [user.id, 'video', 400]]) {
-          const filePath = path.join(storage, `${randomUUID()}.png`);
-          fs.writeFileSync(filePath, 'invalid');
-          await assert.rejects(() => assets.createFromCanvasUpload(owner, uploadCanvas.id, kind, { path: filePath, filename: path.basename(filePath), originalname: 'rejected', mimetype: 'image/png' }), (error) => error.getStatus() === code);
-          assert.ok(!fs.existsSync(filePath));
-        }
-        await assets.removeHistory(user.id, uploaded[1].id);
-        const oversizedPath = path.join(storage, `${randomUUID()}.png`);
-        fs.writeFileSync(oversizedPath, 'oversized placeholder');
-        await assert.rejects(() => assets.createFromCanvasUpload(user.id, uploadCanvas.id, 'image', { path: oversizedPath, mimetype: 'image/png', size: 500 * 1024 * 1024 + 1 }), /500MB/);
-        assert.ok(!fs.existsSync(oversizedPath));
-      });
+          const uploaded = [];
+          for (const kind of ['image', 'video', 'audio']) {
+            const extension = kind === 'image' ? 'png' : kind === 'audio' ? 'wav' : 'mp4';
+            const filename = `${randomUUID()}.${extension}`;
+            const filePath = path.join(storage, filename);
+            if (kind === 'image')
+              fs.writeFileSync(
+                filePath,
+                Buffer.from(
+                  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+                  'base64',
+                ),
+              );
+            else if (kind === 'audio')
+              execFileSync(
+                apiRequire('@ffmpeg-installer/ffmpeg').path,
+                ['-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.1', '-y', filePath],
+                { stdio: 'pipe' },
+              );
+            else
+              execFileSync(
+                apiRequire('@ffmpeg-installer/ffmpeg').path,
+                [
+                  '-f',
+                  'lavfi',
+                  '-i',
+                  'color=c=blue:s=16x16:d=0.1',
+                  '-c:v',
+                  'libx264',
+                  '-pix_fmt',
+                  'yuv420p',
+                  '-y',
+                  filePath,
+                ],
+                { stdio: 'pipe' },
+              );
+            const asset = await assets.createFromCanvasUpload(user.id, uploadCanvas.id, kind, {
+              path: filePath,
+              filename,
+              originalname: `upload-history-${kind}.${extension}`,
+              mimetype: `${kind}/${extension}`,
+              size: fs.statSync(filePath).size,
+            });
+            assert.equal(asset.canvasId, uploadCanvas.id);
+            assert.equal(asset.projectId, null);
+            assert.equal(asset.source, 'upload');
+            assert.equal(asset.status, 'ready');
+            assert.equal(asset.kind, kind);
+            assert.equal(asset.name, `upload-history-${kind}.${extension}`);
+            uploaded.push(asset);
+          }
+          assert.equal(
+            (await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).length,
+            0,
+          );
+          assert.equal(
+            (await assets.history(user.id, { scope: 'all', q: 'upload-history' })).length,
+            0,
+          );
+          const folder = await prisma.assetFolder.create({
+            data: { userId: user.id, name: 'Uploaded library copy' },
+          });
+          const copy = await assets.saveToLibrary(user.id, uploaded[0].id, { folderId: folder.id });
+          assert.ok(
+            !(await assets.history(user.id, { scope: 'all' })).some(
+              (asset) => asset.id === copy.id,
+            ),
+          );
+          await assets.removeHistory(user.id, uploaded[0].id);
+          assert.equal(
+            (await assets.history(user.id, { scope: 'canvas', canvasId: uploadCanvas.id })).length,
+            0,
+          );
+          assert.equal((await assets.findOne(user.id, uploaded[0].id)).status, 'ready');
+          for (const [owner, kind, code] of [
+            [randomUUID(), 'image', 404],
+            [user.id, 'video', 400],
+          ]) {
+            const filePath = path.join(storage, `${randomUUID()}.png`);
+            fs.writeFileSync(filePath, 'invalid');
+            await assert.rejects(
+              () =>
+                assets.createFromCanvasUpload(owner, uploadCanvas.id, kind, {
+                  path: filePath,
+                  filename: path.basename(filePath),
+                  originalname: 'rejected',
+                  mimetype: 'image/png',
+                }),
+              (error) => error.getStatus() === code,
+            );
+            assert.ok(!fs.existsSync(filePath));
+          }
+          await assets.removeHistory(user.id, uploaded[1].id);
+          const oversizedPath = path.join(storage, `${randomUUID()}.png`);
+          fs.writeFileSync(oversizedPath, 'oversized placeholder');
+          await assert.rejects(
+            () =>
+              assets.createFromCanvasUpload(user.id, uploadCanvas.id, 'image', {
+                path: oversizedPath,
+                mimetype: 'image/png',
+                size: 500 * 1024 * 1024 + 1,
+              }),
+            /500MB/,
+          );
+          assert.ok(!fs.existsSync(oversizedPath));
+        },
+      );
 
       await suite.test(
         'recovery lists the latest task per node and enforces ownership',
@@ -508,25 +1189,39 @@ test(
         async () => {
           const batch = await create({ kind: 'image', count: 4 });
           let submissions = 0;
-          const worker = freshWorker({ generateImage: async () => {
-            return { url: `https://invalid.test/generated-image/${submissions++}`, model: 'cogview-3-flash' };
-          } });
+          const worker = freshWorker({
+            generateImage: async () => {
+              return {
+                url: `https://invalid.test/generated-image/${submissions++}`,
+                model: 'cogview-3-flash',
+              };
+            },
+          });
           worker.saveMedia = GenerationTasksProcessor.prototype.saveMedia;
           await Promise.all(batch.items.map((item) => step(worker, item.id)));
           const fixtures = [
-            ['png', 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6lLkAAAAASUVORK5CYII='],
+            [
+              'png',
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6lLkAAAAASUVORK5CYII=',
+            ],
             ['webp', 'UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA'],
             ['gif', 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'],
-            ['png', 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6lLkAAAAASUVORK5CYII='],
+            [
+              'png',
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6lLkAAAAASUVORK5CYII=',
+            ],
           ];
           const originalFetch = global.fetch;
           const probe = require('../src/modules/assets/media-probe.ts');
           const originalProbe = probe.probeMedia;
-          probe.probeMedia = async () => { throw new Error('ffprobe unavailable'); };
+          probe.probeMedia = async () => {
+            throw new Error('ffprobe unavailable');
+          };
           try {
-            global.fetch = async (url) => new Response(
-              Buffer.from(fixtures[Number(new URL(url).pathname.split('/').at(-1))][1], 'base64'),
-            );
+            global.fetch = async (url) =>
+              new Response(
+                Buffer.from(fixtures[Number(new URL(url).pathname.split('/').at(-1))][1], 'base64'),
+              );
             const completed = await Promise.all(batch.items.map((item) => step(worker, item.id)));
             assert.ok(completed.every((item) => item.status === 'completed'));
             for (const item of batch.items) {
@@ -536,9 +1231,22 @@ test(
               const source = completed.find((result) => result.id === item.id).providerResult.url;
               const fixture = fixtures[Number(new URL(source).pathname.split('/').at(-1))];
               assert.ok(asset.localPath.endsWith(`.${fixture[0]}`));
-              global.fetch = async () => { throw new Error('must reuse the saved file'); };
-              assert.equal((await worker.saveMedia(item.id, randomUUID(), user.id, 'image',
-                'https://invalid.test/expired', new AbortController().signal)).localPath, asset.localPath);
+              global.fetch = async () => {
+                throw new Error('must reuse the saved file');
+              };
+              assert.equal(
+                (
+                  await worker.saveMedia(
+                    item.id,
+                    randomUUID(),
+                    user.id,
+                    'image',
+                    'https://invalid.test/expired',
+                    new AbortController().signal,
+                  )
+                ).localPath,
+                asset.localPath,
+              );
             }
             assert.equal((await service.get(user.id, batch.id)).status, 'completed');
             assert.equal(submissions, 4);
@@ -609,7 +1317,7 @@ test(
           let item = await prisma.generationTaskItem.findUniqueOrThrow({ where: { id } });
           assert.equal(item.providerTaskId, 'provider-original-id');
           assert.equal(item.status, 'generating');
-          service = new GenerationTasksService(prisma, config, queue); // new process, same durable storage
+          service = new GenerationTasksService(prisma, config, queue, credits); // new process, same durable storage
           const worker = freshWorker({
             getVideoResult: async (providerId) => {
               assert.equal(providerId, 'provider-original-id');
@@ -864,11 +1572,16 @@ test(
       await suite.test(
         'Redis outage leaves a durable task; a fresh dispatcher recovers it',
         async () => {
-          const offline = new GenerationTasksService(prisma, config, {
-            add: async () => {
-              throw new Error('Redis offline');
+          const offline = new GenerationTasksService(
+            prisma,
+            config,
+            {
+              add: async () => {
+                throw new Error('Redis offline');
+              },
             },
-          });
+            credits,
+          );
           const task = await offline.create(user.id, {
             requestId: randomUUID(),
             canvasId: canvas.id,
@@ -877,7 +1590,7 @@ test(
             prompt: '排队',
           });
           await offline.dispatchDue();
-          const recovery = new GenerationTasksService(prisma, config, queue);
+          const recovery = new GenerationTasksService(prisma, config, queue, credits);
           await recovery.dispatchDue();
           assert.ok(enqueued.some((job) => job.data.id === task.items[0].id));
           assert.equal((await recovery.get(user.id, task.id)).status, 'queued');

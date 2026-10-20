@@ -14,6 +14,11 @@
       "browser": "./src/generation.ts",
       "default": "./dist/generation.js"
     },
+    "./credits": {
+      "types": "./src/credits.ts",
+      "browser": "./src/credits.ts",
+      "default": "./dist/credits.js"
+    },
     "./sse": {
       "types": "./src/sse.ts",
       "browser": "./src/sse.ts",

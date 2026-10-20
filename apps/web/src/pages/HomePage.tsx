@@ -7,6 +7,7 @@ import { ApiError, api } from '../lib/api';
 import { useToast } from '../components/ui/Toast';
 import { ModelSelect, type ModelId } from '../features/home/components/ModelSelect';
 import { AssetsView } from '../features/home/components/AssetsView';
+import { CreditWallet } from '../components/CreditWallet';
 
 type AuthMode = 'login' | 'register';
 type FieldErrors = Partial<Record<'name' | 'email' | 'password', string>>;
@@ -387,7 +388,8 @@ export function HomePage() {
             </button>
           </nav>
         {me.data ? (
-          <div className="relative ml-auto">
+          <div className="relative ml-auto flex items-center gap-3">
+            <CreditWallet />
             <button
               type="button"
               onClick={() => setIsUserMenuOpen((open) => !open)}

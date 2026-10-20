@@ -15,6 +15,7 @@ model User {
   name         String
   avatarUrl    String?
   status       String   @default("active")
+  role         String   @default("user")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -25,6 +26,9 @@ model User {
   assetFolders AssetFolder[]
   conversations CanvasConversation[]
   generationTasks GenerationTask[]
+  creditAccount CreditAccount?
+  creditEntries CreditEntry[]
+  creditHolds CreditHold[]
 
   @@map("users")
 }
@@ -133,9 +137,9 @@ model GenerationTask {
   userId        String
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   canvasId      String?
-  canvas        Canvas?  @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  canvas        Canvas?  @relation(fields: [canvasId], references: [id], onDelete: SetNull)
   projectId     String?
-  project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project       Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
   nodeId        String?
   requestId     String
   inputHash     String
@@ -143,6 +147,7 @@ model GenerationTask {
   kind          String
   model         String
   input         Json
+  creditQuote   Json?
   status        String   @default("queued")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -173,6 +178,8 @@ model GenerationTaskItem {
   leaseToken       String?
   leaseExpiresAt   DateTime?
   revision         Int      @default(0)
+  creditCost       Int      @default(0)
+  creditHoldId     String?
   submittedAt      DateTime?
   completedAt      DateTime?
   createdAt        DateTime @default(now())
@@ -181,6 +188,84 @@ model GenerationTaskItem {
   @@unique([taskId, index])
   @@index([status, nextRunAt, leaseExpiresAt])
   @@map("generation_task_items")
+}
+
+model CreditAccount {
+  userId    String @id
+  user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  available Int @default(0)
+  frozen    Int @default(0)
+  spent     Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@map("credit_accounts")
+}
+
+model CreditHold {
+  id          String @id @default(uuid())
+  userId      String
+  user        User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  key         String @unique
+  amount      Int
+  status      String @default("held")
+  reason      String
+  referenceId String?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([status, expiresAt])
+  @@index([userId, createdAt])
+  @@map("credit_holds")
+}
+
+model CreditEntry {
+  id             String @id @default(uuid())
+  userId         String
+  user           User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  key            String @unique
+  type           String
+  amount         Int
+  availableDelta Int
+  frozenDelta    Int
+  availableAfter Int
+  frozenAfter    Int
+  reason         String
+  referenceId    String?
+  actorId        String?
+  createdAt      DateTime @default(now())
+  @@index([userId, createdAt])
+  @@index([referenceId])
+  @@map("credit_entries")
+}
+
+model CreditPrice {
+  id          String @id @default(uuid())
+  kind        String
+  model       String
+  unit        String @default("request")
+  credits     Int
+  enabled     Boolean @default(true)
+  version     Int @default(1)
+  updatedAt   DateTime @updatedAt
+  @@unique([kind, model])
+  @@map("credit_prices")
+}
+
+model PlatformSetting {
+  key   String @id
+  value Int
+  @@map("platform_settings")
+}
+
+model AdminAudit {
+  id        String @id @default(uuid())
+  actorId   String
+  action    String
+  targetId  String
+  detail    Json
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+  @@map("admin_audits")
 }
 
 // 素材库文件夹；parentId 自关联支持嵌套，teamId 为团队归属预留列（团队表建立后再补外键）

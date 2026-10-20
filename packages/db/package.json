@@ -17,6 +17,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
+    "admin:grant": "node --env-file=.env scripts/grant-admin.cjs",
     "typecheck": "echo \"no typecheck (generated client)\" ",
     "lint": "echo \"no lint configured\" "
   },

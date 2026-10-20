@@ -1,0 +1,31 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: Inter, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: ui-monospace, Consolas, monospace;
+  --color-base: #101014;
+  --color-surface: #1a1a21;
+  --color-input: #131318;
+  --color-accent: #b3a5fb;
+  --color-accent-hover: #c6bbff;
+  --color-fg: #e8e8ed;
+  --color-fg-muted: #91919f;
+  --color-positive: #79d9b2;
+  --color-border: #303039;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: normal;
+    font-synthesis: none;
+    color-scheme: dark;
+    color: var(--color-fg);
+    background: var(--color-base);
+  }
+
+  :where(button, a, input, select, textarea) {
+    outline-offset: 4px;
+  }
+}

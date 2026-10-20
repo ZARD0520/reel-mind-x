@@ -3,6 +3,7 @@ export interface AuthUser {
   email: string;
   name: string;
   status: string;
+  role: string;
 }
 
 export interface AuthenticatedRequest {

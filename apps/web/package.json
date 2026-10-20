@@ -12,6 +12,7 @@
     "test": "echo \"no tests yet\" "
   },
   "dependencies": {
+    "@reel/api-client": "workspace:*",
     "@reel/contracts": "workspace:*",
     "@tanstack/react-query": "^5.62.11",
     "@xyflow/react": "^12.11.3",

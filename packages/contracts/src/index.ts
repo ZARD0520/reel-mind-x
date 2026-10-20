@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export * from './credits';
 export { MODEL_BUSY_MESSAGE } from './generation';
 
 /**
@@ -14,6 +15,7 @@ export const UserSchema = z.object({
   name: z.string().min(1).max(120),
   avatarUrl: z.string().url().nullable().optional(),
   status: z.string().default('active'),
+  role: z.enum(['user', 'admin']).default('user'),
   createdAt: z.coerce.date(),
 });
 export type User = z.infer<typeof UserSchema>;

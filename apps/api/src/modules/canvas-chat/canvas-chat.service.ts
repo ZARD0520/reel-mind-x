@@ -4,23 +4,32 @@ import type { Prisma } from '@reel/db';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
 import { CanvasChatReferenceSchema, type CanvasChatReference } from './canvas-chat.dto';
+import { CreditsService } from '../credits/credits.service';
 
 const CHAT_MODEL = 'glm-4-flash';
 
 function readablePrompt(content: string): string {
   return content.replace(/@\[([^\]]*)\]\(node:([^)]*)\)/g, (token, title: string) => {
-    try { return `【${decodeURIComponent(title)}】`; } catch { return token; }
+    try {
+      return `【${decodeURIComponent(title)}】`;
+    } catch {
+      return token;
+    }
   });
 }
 
 function referenceContext(references: CanvasChatReference[]): string {
   if (!references.length) return '';
-  const items = references.map((item, index) => [
-    `${index + 1}. ${item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}节点「${item.title}」`,
-    item.content ? `内容：${item.content.slice(0, 4000)}` : '',
-    item.prompt ? `生成提示词：${item.prompt}` : '',
-    item.description ? `素材信息：${item.description}` : '',
-  ].filter(Boolean).join('\n'));
+  const items = references.map((item, index) =>
+    [
+      `${index + 1}. ${item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}节点「${item.title}」`,
+      item.content ? `内容：${item.content.slice(0, 4000)}` : '',
+      item.prompt ? `生成提示词：${item.prompt}` : '',
+      item.description ? `素材信息：${item.description}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  );
   return `\n\n用户引用的当前画布节点：\n${items.join('\n\n')}`;
 }
 
@@ -29,6 +38,7 @@ export class CanvasChatService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
+    private readonly credits: CreditsService,
   ) {}
 
   private async requireCanvas(userId: string, canvasId: string) {
@@ -44,7 +54,11 @@ export class CanvasChatService {
     return conversation;
   }
 
-  async assertConversation(userId: string, canvasId: string, conversationId: string): Promise<void> {
+  async assertConversation(
+    userId: string,
+    canvasId: string,
+    conversationId: string,
+  ): Promise<void> {
     await this.requireConversation(userId, canvasId, conversationId);
   }
 
@@ -72,10 +86,13 @@ export class CanvasChatService {
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: { id: true, role: true, content: true, references: true, createdAt: true },
     });
-    return { ...conversation, messages: messages.map((message) => ({
-      ...message,
-      references: CanvasChatReferenceSchema.array().catch([]).parse(message.references),
-    })) };
+    return {
+      ...conversation,
+      messages: messages.map((message) => ({
+        ...message,
+        references: CanvasChatReferenceSchema.array().catch([]).parse(message.references),
+      })),
+    };
   }
 
   async rename(userId: string, canvasId: string, conversationId: string, title: string) {
@@ -92,19 +109,35 @@ export class CanvasChatService {
     await this.prisma.canvasConversation.delete({ where: { id: conversationId } });
   }
 
-  async *sendStream(userId: string, canvasId: string, conversationId: string, content: string, references: CanvasChatReference[], signal: AbortSignal) {
+  async *sendStream(
+    userId: string,
+    canvasId: string,
+    conversationId: string,
+    content: string,
+    references: CanvasChatReference[],
+    signal: AbortSignal,
+  ) {
     const conversation = await this.requireConversation(userId, canvasId, conversationId);
     const history = await this.prisma.canvasChatMessage.findMany({
       where: { conversationId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: { role: true, content: true, references: true },
     });
-    const assetIds = references.flatMap((item) => item.assetId ? [item.assetId] : []);
+    const assetIds = references.flatMap((item) => (item.assetId ? [item.assetId] : []));
     let resolvedReferences = references;
     if (assetIds.length) {
       const ownedAssets = await this.prisma.asset.findMany({
         where: { id: { in: assetIds }, userId },
-        select: { id: true, name: true, kind: true, prompt: true, width: true, height: true, durationInFrames: true, url: true },
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          prompt: true,
+          width: true,
+          height: true,
+          durationInFrames: true,
+          url: true,
+        },
       });
       if (new Set(ownedAssets.map((asset) => asset.id)).size !== new Set(assetIds).size) {
         throw new BadRequestException('引用的素材不存在');
@@ -117,47 +150,97 @@ export class CanvasChatService {
         return {
           ...reference,
           url: asset.url ?? undefined,
-          description: [asset.name, asset.kind, asset.width && asset.height ? `${asset.width}×${asset.height}` : '', asset.durationInFrames ? `${asset.durationInFrames} 帧` : '', asset.prompt ? `素材提示词：${asset.prompt}` : ''].filter(Boolean).join('；').slice(0, 2000),
+          description: [
+            asset.name,
+            asset.kind,
+            asset.width && asset.height ? `${asset.width}×${asset.height}` : '',
+            asset.durationInFrames ? `${asset.durationInFrames} 帧` : '',
+            asset.prompt ? `素材提示词：${asset.prompt}` : '',
+          ]
+            .filter(Boolean)
+            .join('；')
+            .slice(0, 2000),
         };
       });
     }
     const prompt = content.trim();
     const messages: ChatMessage[] = [
-      { role: 'system', content: '你是一个协助用户进行创意构思和内容创作的助手。根据用户的问题自然、清晰地回答。引用的文本节点可直接阅读；图片和视频节点只能依据节点标题、文字内容或生成提示词回答，不要声称看到了画面。' },
+      {
+        role: 'system',
+        content:
+          '你是一个协助用户进行创意构思和内容创作的助手。根据用户的问题自然、清晰地回答。引用的文本节点可直接阅读；图片和视频节点只能依据节点标题、文字内容或生成提示词回答，不要声称看到了画面。',
+      },
       ...history.map((message) => ({
         role: message.role as 'user' | 'assistant',
-        content: readablePrompt(message.content) + referenceContext(CanvasChatReferenceSchema.array().catch([]).parse(message.references)),
+        content:
+          readablePrompt(message.content) +
+          referenceContext(CanvasChatReferenceSchema.array().catch([]).parse(message.references)),
       })),
       { role: 'user', content: readablePrompt(prompt) + referenceContext(resolvedReferences) },
     ];
     let answer = '';
-    for await (const text of this.llm.chatStream(messages, { model: CHAT_MODEL, signal })) {
-      answer += text;
-      yield { event: 'delta', data: { text } };
-    }
-    answer = answer.trim();
-    if (!answer || signal.aborted) throw new Error('Generation was interrupted');
-    const firstMessage = history.length === 0;
-    const title = firstMessage ? await this.makeTitle(readablePrompt(prompt), answer) : conversation.title;
-    const updated = await this.prisma.$transaction(async (tx) => {
-      await tx.canvasChatMessage.create({ data: { conversationId, role: 'user', content: prompt, references: resolvedReferences as Prisma.InputJsonValue } });
-      await tx.canvasChatMessage.create({ data: { conversationId, role: 'assistant', content: answer } });
-      return tx.canvasConversation.update({
-        where: { id: conversationId },
-        data: { title },
+    const hold = await this.credits.beginOperation(
+      userId,
+      { kind: 'chat', model: CHAT_MODEL },
+      conversationId,
+    );
+    let settled = false;
+    try {
+      for await (const text of this.llm.chatStream(messages, { model: CHAT_MODEL, signal })) {
+        answer += text;
+        yield { event: 'delta', data: { text } };
+      }
+      answer = answer.trim();
+      if (!answer || signal.aborted) throw new Error('Generation was interrupted');
+      const firstMessage = history.length === 0;
+      const title = firstMessage
+        ? await this.makeTitle(readablePrompt(prompt), answer)
+        : conversation.title;
+      const updated = await this.prisma.$transaction(async (tx) => {
+        await tx.canvasChatMessage.create({
+          data: {
+            conversationId,
+            role: 'user',
+            content: prompt,
+            references: resolvedReferences as Prisma.InputJsonValue,
+          },
+        });
+        await tx.canvasChatMessage.create({
+          data: { conversationId, role: 'assistant', content: answer },
+        });
+        const billing = await this.credits.settle(tx, hold.id, true);
+        if (billing.status !== 'captured')
+          throw new BadRequestException('对话已超时，积分已退还，请重新发送');
+        return tx.canvasConversation.update({
+          where: { id: conversationId },
+          data: { title },
+        });
       });
-    });
-    yield { event: 'done', data: await this.get(userId, canvasId, updated.id) };
+      settled = true;
+      yield { event: 'done', data: await this.get(userId, canvasId, updated.id) };
+    } finally {
+      if (!settled) await this.credits.finishOperation(hold.id, false);
+    }
   }
 
   private async makeTitle(prompt: string, answer: string): Promise<string> {
     const fallback = [...prompt.replace(/\s+/g, ' ').trim()].slice(0, 24).join('') || '新对话';
     try {
-      const result = await this.llm.chat([
-        { role: 'system', content: '请为这次对话写一个简短标题，最多 12 个汉字或 24 个字符。只返回标题，不要引号、标点或解释。' },
-        { role: 'user', content: `用户：${prompt}\n助手：${answer.slice(0, 500)}` },
-      ], { model: CHAT_MODEL, maxTokens: 48 });
-      return [...result.text.trim().replace(/^["“”'「」]+|["“”'「」]+$/g, '')].slice(0, 24).join('') || fallback;
+      const result = await this.llm.chat(
+        [
+          {
+            role: 'system',
+            content:
+              '请为这次对话写一个简短标题，最多 12 个汉字或 24 个字符。只返回标题，不要引号、标点或解释。',
+          },
+          { role: 'user', content: `用户：${prompt}\n助手：${answer.slice(0, 500)}` },
+        ],
+        { model: CHAT_MODEL, maxTokens: 48 },
+      );
+      return (
+        [...result.text.trim().replace(/^["“”'「」]+|["“”'「」]+$/g, '')].slice(0, 24).join('') ||
+        fallback
+      );
     } catch {
       return fallback;
     }

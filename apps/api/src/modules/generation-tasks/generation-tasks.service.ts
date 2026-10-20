@@ -21,6 +21,7 @@ import type { Queue } from 'bullmq';
 import { createHash } from 'crypto';
 import type { Env } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CreditsService } from '../credits/credits.service';
 
 export const GENERATION_QUEUE = 'generation-tasks';
 const INCLUDE_TASK = { items: { orderBy: { index: 'asc' as const }, include: { asset: true } } };
@@ -55,6 +56,7 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService<Env, true>,
     @InjectQueue(GENERATION_QUEUE) private readonly queue: Queue,
+    private readonly credits: CreditsService,
   ) {}
 
   onModuleInit() {
@@ -138,39 +140,72 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
     if (references.length > 100) throw new BadRequestException('参考内容最多支持 100 项');
     const snapshot = { ...input, model, references };
     try {
-      const task = await this.prisma.generationTask.create({
-        data: {
-          userId,
-          canvasId: input.canvasId,
-          projectId: input.projectId,
-          nodeId: input.nodeId,
-          requestId: input.requestId,
-          inputHash,
-          kind: input.kind,
-          model,
-          activeNodeKey: this.nodeKey(userId, input.canvasId, input.nodeId),
-          input: JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue,
-          items: {
-            create: Array.from({ length: input.count }, (_, index) => ({
-              index,
-              asset: {
-                create: {
-                  userId,
-                  canvasId: input.canvasId,
-                  projectId: input.projectId,
-                  kind: input.kind,
-                  source: 'ai',
-                  status: 'generating',
-                  model,
-                  name: `AI ${input.kind}: ${(input.userPrompt ?? input.prompt).slice(0, 30)}`,
-                  prompt: (input.userPrompt ?? input.prompt).slice(0, 2000),
-                  references: JSON.parse(JSON.stringify(references)) as Prisma.InputJsonValue,
+      const task = await this.prisma.$transaction(async (tx) => {
+        // Serialize creation with scope deletion so a paid task cannot appear after cleanup.
+        const scope = input.canvasId
+          ? await tx.$queryRaw<
+              { id: string }[]
+            >`SELECT id FROM canvases WHERE id = ${input.canvasId} AND "userId" = ${userId} FOR UPDATE`
+          : await tx.$queryRaw<
+              { id: string }[]
+            >`SELECT id FROM projects WHERE id = ${input.projectId} AND "userId" = ${userId} AND "deletedAt" IS NULL FOR UPDATE`;
+        if (!scope.length) throw new NotFoundException('Generation scope not found');
+        const quote = await this.credits.quote(
+          { kind: input.kind, model, count: input.count, duration: input.duration },
+          tx,
+        );
+        const created = await tx.generationTask.create({
+          data: {
+            userId,
+            canvasId: input.canvasId,
+            projectId: input.projectId,
+            nodeId: input.nodeId,
+            requestId: input.requestId,
+            inputHash,
+            kind: input.kind,
+            model,
+            activeNodeKey: this.nodeKey(userId, input.canvasId, input.nodeId),
+            input: JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonValue,
+            creditQuote: JSON.parse(JSON.stringify(quote)) as Prisma.InputJsonValue,
+            items: {
+              create: Array.from({ length: input.count }, (_, index) => ({
+                index,
+                creditCost: quote.perItem,
+                asset: {
+                  create: {
+                    userId,
+                    canvasId: input.canvasId,
+                    projectId: input.projectId,
+                    kind: input.kind,
+                    source: 'ai',
+                    status: 'generating',
+                    model,
+                    name: `AI ${input.kind}: ${(input.userPrompt ?? input.prompt).slice(0, 30)}`,
+                    prompt: (input.userPrompt ?? input.prompt).slice(0, 2000),
+                    references: JSON.parse(JSON.stringify(references)) as Prisma.InputJsonValue,
+                  },
                 },
-              },
-            })),
+              })),
+            },
           },
-        },
-        include: INCLUDE_TASK,
+          include: INCLUDE_TASK,
+        });
+        await this.credits.assertConcurrentLimit(tx, userId, created.id);
+        for (const item of created.items) {
+          const hold = await this.credits.reserve(
+            tx,
+            userId,
+            quote.perItem,
+            `generation:${item.id}:0`,
+            `${input.kind} · ${model}`,
+            created.id,
+          );
+          await tx.generationTaskItem.update({
+            where: { id: item.id },
+            data: { creditHoldId: hold.id },
+          });
+        }
+        return created;
       });
       void this.dispatchDue().catch((error: Error) =>
         this.logger.warn(`Generation enqueue deferred: ${error.message}`),
@@ -264,11 +299,30 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
             activeNodeKey: this.nodeKey(userId, task.canvasId, task.nodeId),
           },
         });
+        await this.credits.assertConcurrentLimit(tx, userId, id);
         for (const item of resumable) {
+          let creditHoldId = item.creditHoldId;
+          if (creditHoldId) {
+            const previous = await tx.creditHold.findUniqueOrThrow({ where: { id: creditHoldId } });
+            // A failed save can be resumed without a second provider call, but still needs a paid result.
+            if (previous.status === 'refunded' || item.status === 'failed') {
+              if (previous.status === 'held') await this.credits.settle(tx, previous.id, false);
+              const hold = await this.credits.reserve(
+                tx,
+                userId,
+                item.creditCost,
+                `generation:${item.id}:${item.revision + 1}`,
+                `${task.kind} · ${task.model} · 恢复`,
+                task.id,
+              );
+              creditHoldId = hold.id;
+            }
+          }
           await tx.generationTaskItem.update({
             where: { id: item.id },
             data: {
               status: item.providerResult ? 'saving' : 'generating',
+              creditHoldId,
               error: null,
               errorCode: null,
               pollFailures: 0,
@@ -301,6 +355,10 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
       await tx.$queryRaw`SELECT id FROM generation_tasks WHERE id = ${id} FOR UPDATE`;
       const task = await tx.generationTask.findUnique({ where: { id }, include: { items: true } });
       if (!task) return;
+      for (const item of task.items) {
+        if (item.creditHoldId && ['completed', 'failed'].includes(item.status))
+          await this.credits.settle(tx, item.creditHoldId, item.status === 'completed');
+      }
       const status = this.aggregate(task.items);
       await tx.generationTask.update({
         where: { id },

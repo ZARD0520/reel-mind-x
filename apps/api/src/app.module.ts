@@ -21,6 +21,9 @@ import { RenderModule } from './modules/render/render.module';
 import { TextGenModule } from './modules/text-gen/text-gen.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { GenerationTasksWorkerModule } from './modules/generation-tasks/generation-tasks-worker.module';
+import { CreditsModule } from './modules/credits/credits.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { ZodExceptionFilter } from './filters/zod-exception.filter';
 
 @Module({
   imports: [
@@ -38,6 +41,8 @@ import { GenerationTasksWorkerModule } from './modules/generation-tasks/generati
       }),
     }),
     PrismaModule,
+    CreditsModule,
+    AdminModule,
     AuthModule,
     CanvasesModule,
     CanvasChatModule,
@@ -54,6 +59,7 @@ import { GenerationTasksWorkerModule } from './modules/generation-tasks/generati
     GenerationTasksWorkerModule,
   ],
   providers: [
+    { provide: APP_FILTER, useClass: ZodExceptionFilter },
     { provide: APP_PIPE, useClass: ZodValidationPipe },
     { provide: APP_FILTER, useClass: LlmExceptionFilter },
     { provide: APP_FILTER, useClass: AiGenExceptionFilter },

@@ -9,10 +9,14 @@ import {
 } from '@reel/contracts';
 import type { Prisma } from '@reel/db';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CreditsService } from '../credits/credits.service';
 
 @Injectable()
 export class CanvasesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly credits: CreditsService,
+  ) {}
 
   private toInputJson(graph: CanvasGraph): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(graph)) as Prisma.InputJsonValue;
@@ -73,7 +77,18 @@ export class CanvasesService {
   }
 
   async remove(userId: string, id: string): Promise<void> {
-    await this.findOne(userId, id);
-    await this.prisma.canvas.delete({ where: { id } });
+    await this.prisma.$transaction(
+      async (tx) => {
+        const scope = await tx.$queryRaw<
+          { id: string }[]
+        >`SELECT id FROM canvases WHERE id = ${id} AND "userId" = ${userId} FOR UPDATE`;
+        if (!scope.length) throw new NotFoundException(`Canvas ${id} not found`);
+        const settlements = await this.credits.closeCanvasTasks(tx, id);
+        await tx.canvas.delete({ where: { id } });
+        // Take balance locks last, after scope/chat/asset locks, to avoid inversions with running workers.
+        for (const hold of settlements) await this.credits.settle(tx, hold.id, hold.success);
+      },
+      { timeout: 30000 },
+    );
   }
 }

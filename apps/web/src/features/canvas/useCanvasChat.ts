@@ -63,9 +63,11 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
       setPending(null);
       setDraft(text);
       setReferences(selectedReferences);
-      setError(cause instanceof Error && cause.message === '对话流中断，请重试' ? cause.message : '发送失败，请重试');
+      setError(cause instanceof Error ? cause.message : '发送失败，请重试');
       busyRef.current = false;
       setBusy(false);
+    } finally {
+      void queryClient.invalidateQueries({ queryKey: ['credits'] });
     }
   }, [activeId, canvasId, queryClient, references]);
 

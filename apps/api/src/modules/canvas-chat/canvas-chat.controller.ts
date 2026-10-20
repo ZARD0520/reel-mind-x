@@ -72,9 +72,9 @@ export class CanvasChatController {
         if (response.writableEnded || abort.signal.aborted) break;
         response.write(`event: ${item.event}\ndata: ${JSON.stringify(item.data)}\n\n`);
       }
-    } catch {
+    } catch (error) {
       if (!response.writableEnded && !abort.signal.aborted) {
-        response.write(`event: error\ndata: ${JSON.stringify({ message: '生成失败，请重试' })}\n\n`);
+        response.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : '生成失败，请重试' })}\n\n`);
       }
     } finally {
       if (!response.writableEnded) response.end();
