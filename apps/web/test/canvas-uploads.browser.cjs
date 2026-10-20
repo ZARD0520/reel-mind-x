@@ -26,7 +26,7 @@ const { randomUUID } = require('node:crypto');
       } else if (url.pathname.startsWith('/api/assets/')) json = assets.get(url.pathname.split('/').pop()) ?? [];
       await route.fulfill({ json });
     });
-    const base = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+    const base = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8899';
     await page.goto(`${base}/canvas/${canvasId}`);
     await expect(page.locator('.react-flow__node').getByRole('button', { name: '上传', exact: true })).toHaveCount(0);
     await expect(page.locator('.react-flow__node').getByRole('button', { name: '资产库', exact: true })).toHaveCount(0);

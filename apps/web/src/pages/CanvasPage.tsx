@@ -48,6 +48,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import {
   ArrowLeft,
+  AlertCircle,
   Bot,
   Check,
   AlignLeft,
@@ -87,6 +88,7 @@ import {
 import { AssetLibraryDialog, apiErrorMessage } from '../features/canvas/components/AssetLibraryDialog';
 import { AssetFolderPickerDialog } from '../features/canvas/components/AssetFolderPickerDialog';
 import { AssetHistoryDialog } from '../features/canvas/components/AssetHistoryDialog';
+import { AudioNodePlayer } from '../features/canvas/components/AudioNodePlayer';
 import { CanvasChatDrawer } from '../features/canvas/components/CanvasChatDrawer';
 import { InlineReferenceInput, type InlineReferenceInputHandle } from '../features/canvas/components/InlineReferenceInput';
 import { readableReferences, referenceIds, referenceToken, splitReferences } from '../features/canvas/inline-references';
@@ -169,6 +171,8 @@ type WorkflowNodeData = {
   assetId?: string;
   url?: string | null;
   uploaded?: boolean;
+  uploadState?: 'uploading' | 'failed';
+  uploadError?: string;
   status?: 'idle' | 'generating' | 'ready' | 'failed';
   error?: string;
   referenceNodeIds?: string[];
@@ -472,6 +476,8 @@ function normalizeNode(node: CanvasGraph['nodes'][number]): WorkflowNode {
       assetId: typeof rawData.assetId === 'string' ? rawData.assetId : undefined,
       url: typeof rawData.url === 'string' ? rawData.url : null,
       uploaded: rawData.uploaded === true,
+      uploadState: rawData.uploadState === 'uploading' || rawData.uploadState === 'failed' ? 'failed' : undefined,
+      uploadError: rawData.uploadState === 'uploading' ? '上传已中断，请重新上传' : rawData.uploadError,
       status:
         rawData.status === 'generating' || rawData.status === 'ready' || rawData.status === 'failed'
           ? rawData.status
@@ -999,18 +1005,25 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
       if (data.kind === 'text') throw new Error('请选择对应类型的素材');
       return api.assets.uploadToCanvas(canvasId, data.kind, file) as Promise<Asset>;
     },
+    onMutate: () => updateNodeData(id, { uploadState: 'uploading', uploadError: '' }),
     onSuccess: (asset) => {
+      void queryClient.invalidateQueries({ queryKey: ['assetHistory'] });
       const current = getNode(id);
       if (!current?.data.uploaded || current.data.kind !== asset.kind) return;
       queryClient.setQueryData(['asset', asset.id], asset);
       updateNodeData(id, {
         title: asset.name, assetId: asset.id, url: asset.url, status: 'ready', error: '',
+        uploadState: undefined, uploadError: '',
         aspectRatio: closestAspectRatio(asset.width, asset.height, asset.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO),
         ...(asset.kind === 'video' && asset.durationInFrames ? { videoDuration: (asset.durationInFrames / 30 < 7.5 ? 5 : 10) as VideoDuration } : {}),
         editorProjectId: undefined,
       });
     },
-    onError: (error) => toast.error(apiErrorMessage(error, '替换失败，请重试')),
+    onError: (error) => {
+      const message = apiErrorMessage(error, '上传失败，请检查网络后重新上传');
+      if (getNode(id)) updateNodeData(id, { uploadState: 'failed', uploadError: message });
+      toast.error(message);
+    },
   });
   const feedbackMessage = generationFeedbackMessage(data);
   const lastNotification = useRef('');
@@ -1284,7 +1297,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         </div>
       ) : (
         <div
-          className={`relative flex h-[360px] items-center justify-center overflow-hidden rounded-[24px] border bg-[#202020] shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
+          className={`relative flex ${data.kind === 'audio' ? 'h-[216px]' : 'h-[360px]'} items-center justify-center overflow-hidden rounded-[24px] border bg-[#202020] shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
         >
           {data.uploaded && <>
             <input ref={replacementInputRef} type="file" accept={`${data.kind}/*`} aria-label="替换节点素材" className="hidden" disabled={replacement.isPending} onChange={(event) => {
@@ -1295,19 +1308,35 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
               if (!file.type.startsWith(`${data.kind}/`)) { toast.error(`请选择${nodeLabels[data.kind]}文件，替换素材必须为同一类型`); return; }
               replacement.mutate(file);
             }} />
-            <button type="button" aria-label="替换素材" disabled={replacement.isPending} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); replacementInputRef.current?.click(); }}
+            {!data.uploadState && <button type="button" aria-label="替换素材" disabled={replacement.isPending} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); replacementInputRef.current?.click(); }}
               className={`nodrag nopan nowheel absolute right-3 top-3 z-10 flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-white/15 bg-black/65 px-2.5 text-xs text-white transition-opacity focus-visible:opacity-100 group-hover:opacity-100 disabled:cursor-default ${replacement.isPending ? 'opacity-100' : 'opacity-0'}`}>
               {replacement.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}{replacement.isPending ? '替换中' : '替换'}
-            </button>
+            </button>}
           </>}
-          {data.url ? (
+          {data.uploadState ? (
+            <div data-upload-state={data.uploadState} className={data.uploadState === 'uploading'
+              ? 'absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-[inherit] bg-black/55 text-sm text-[#d0d0d2] backdrop-blur-[2px]'
+              : `flex h-full w-full flex-col items-center justify-center px-6 text-center ${data.kind === 'audio' ? 'gap-2 py-4' : 'gap-3 py-6'}`}>
+              {data.uploadState === 'uploading' ? <>
+                <Loader2 className="h-6 w-6 animate-spin" />
+                <span>上传中</span>
+              </> : <>
+                <div className="flex items-center gap-2 text-sm font-medium text-[#e4e4e7]">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                  <span>上传失败</span>
+                </div>
+                <span role="alert" className="max-h-12 max-w-sm overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-red-300/80">{data.uploadError || '素材上传失败，请重新上传'}</span>
+                <button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); replacementInputRef.current?.click(); }}
+                  className="nodrag nopan nowheel flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-white/15 bg-white/[0.05] px-3 text-xs text-[#dedee3] transition-colors hover:border-white/25 hover:bg-white/[0.12] hover:text-white">
+                  <Upload className="h-3.5 w-3.5" />重新上传
+                </button>
+              </>}
+            </div>
+          ) : data.url ? (
             data.kind === 'image' ? (
               <img src={data.url} alt={data.title} className="h-full w-full object-contain" />
             ) : data.kind === 'audio' ? (
-              <div className="flex w-full flex-col items-center gap-6 px-6">
-                <Music className="h-16 w-16 text-[#77777b]" />
-                <audio src={data.url} controls aria-label={data.title} className="nodrag nopan nowheel w-full" />
-              </div>
+              <AudioNodePlayer key={data.url} src={data.url} title={data.title} />
             ) : (
               <video
                 src={data.url}
@@ -1778,16 +1807,44 @@ function InfiniteCanvas({
   );
 
   const upload = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file }: { file: File; nodeId: string }) => {
       const kind = file.type.split('/')[0];
       if (kind !== 'image' && kind !== 'video' && kind !== 'audio') throw new Error('请选择图片、视频或音频文件');
       return await api.assets.uploadToCanvas(canvas.id, kind, file) as Asset;
     },
-    onSuccess: (asset) => {
-      queryClient.setQueryData(['asset', asset.id], asset);
-      addAssetNode(asset, true);
+    onMutate: ({ file, nodeId }) => {
+      const kind = file.type.split('/')[0] as 'image' | 'video' | 'audio';
+      const bounds = wrapperRef.current!.getBoundingClientRect();
+      const center = instance!.screenToFlowPosition({ x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 });
+      setNodes((current) => [
+        ...current.map((node) => ({ ...node, selected: false })),
+        {
+          id: nodeId, type: 'workflow', selected: true,
+          position: { x: center.x - (kind === 'video' ? 320 : 180), y: center.y - (kind === 'audio' ? 108 : 180) },
+          data: { ...nodeTemplates[kind], title: file.name, uploaded: true, generationDetached: true, status: 'idle', uploadState: 'uploading' },
+        },
+      ]);
     },
-    onError: (error) => toast.error(apiErrorMessage(error, '上传失败，请重试')),
+    onSuccess: (asset, { nodeId }) => {
+      queryClient.setQueryData(['asset', asset.id], asset);
+      void queryClient.invalidateQueries({ queryKey: ['assetHistory'] });
+      setNodes((current) => current.map((node) => node.id !== nodeId ? node : {
+        ...node,
+        data: {
+          ...node.data, assetId: asset.id, url: asset.url, status: 'ready', error: '',
+          uploadState: undefined, uploadError: '',
+          aspectRatio: closestAspectRatio(asset.width, asset.height, asset.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO),
+          ...(asset.kind === 'video' && asset.durationInFrames ? { videoDuration: (asset.durationInFrames / 30 < 7.5 ? 5 : 10) as VideoDuration } : {}),
+        },
+      }));
+    },
+    onError: (error, { nodeId }) => {
+      const message = apiErrorMessage(error, '上传失败，请检查网络后重新上传');
+      setNodes((current) => current.map((node) => node.id !== nodeId ? node : {
+        ...node, data: { ...node.data, uploadState: 'failed', uploadError: message },
+      }));
+      toast.error(message);
+    },
   });
 
   const duplicateNode = useCallback(
@@ -1903,8 +1960,9 @@ function InfiniteCanvas({
         if (!file || upload.isPending) return;
         if (file.size > 500 * 1024 * 1024) { toast.error('文件大小不能超过 500MB'); return; }
         if (!/^(image|video|audio)\//.test(file.type)) { toast.error('请选择图片、视频或音频文件'); return; }
+        if (!instance || !wrapperRef.current) return;
         setShowAddMenu(false);
-        upload.mutate(file);
+        upload.mutate({ file, nodeId: uuid() });
       }} />
       <CanvasIdContext.Provider value={canvas.id}>
         <DependencySelectionContext.Provider
