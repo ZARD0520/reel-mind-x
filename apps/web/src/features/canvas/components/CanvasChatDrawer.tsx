@@ -5,8 +5,6 @@ import type { CanvasChatReference } from '../chat-types';
 import { CanvasChatComposer } from './CanvasChatComposer';
 import { CanvasChatHistory } from './CanvasChatHistory';
 import { CanvasChatMessage } from './CanvasChatMessage';
-import { creditsApi } from '@reel/api-client';
-import { useQuery } from '@tanstack/react-query';
 
 export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPrompt, userName, onInitialPromptConsumed, onFocusNode, onToggleFullscreen, onClose }: {
   canvasId: string;
@@ -21,7 +19,6 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
   onClose: () => void;
 }) {
   const chat = useCanvasChat(canvasId, initialPrompt, onInitialPromptConsumed);
-  const quote = useQuery({ queryKey: ['credits', 'quote', 'chat'], queryFn: () => creditsApi.quote({ kind: 'chat' }), enabled: open, retry: false, staleTime: 15000 });
   const availableNodeIds = useMemo(() => new Set(nodes.map((node) => node.id)), [nodes]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -58,7 +55,6 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
         <div className="shrink-0 px-4 pb-4">
           {chat.error && <p role="alert" className="mb-2 px-1 text-xs text-red-400">{chat.error}</p>}
           <CanvasChatComposer chat={chat} nodes={nodes} onFocusNode={onFocusNode} />
-          <p className="mt-2 px-1 text-[10px] text-[#777780]" title={quote.error?.message}>{quote.data ? `每次对话 ${quote.data.total} 积分 · 失败自动退还` : quote.error ? '暂时无法获取对话报价' : ''}</p>
         </div>
       </div>
     </aside>

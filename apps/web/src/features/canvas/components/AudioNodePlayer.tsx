@@ -9,7 +9,7 @@ function formatTime(seconds: number) {
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
 }
 
-export function AudioNodePlayer({ src, title }: { src: string; title: string }) {
+export function AudioNodePlayer({ src, title, autoPlay = false, previewOnly = false }: { src: string; title: string; autoPlay?: boolean; previewOnly?: boolean }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -61,6 +61,21 @@ export function AudioNodePlayer({ src, title }: { src: string; title: string }) 
   }, [src]);
 
   useEffect(() => {
+    const audio = audioRef.current;
+    if (!autoPlay || !audio) return;
+    let active = true;
+    void audio.play().then(() => {
+      if (!active) audio.pause();
+    }).catch(() => {
+      // Browsers may block hover autoplay; the play button remains available.
+    });
+    return () => {
+      active = false;
+      audio.pause();
+    };
+  }, [src, autoPlay]);
+
+  useEffect(() => {
     if (!playing) return;
     let frame: number;
     const tick = () => {
@@ -94,7 +109,7 @@ export function AudioNodePlayer({ src, title }: { src: string; title: string }) 
 
   return (
     <div
-      className="flex h-full w-full cursor-grab flex-col p-3 active:cursor-grabbing"
+      className={previewOnly ? 'flex h-full w-full flex-col' : 'flex h-full w-full cursor-grab flex-col p-3 active:cursor-grabbing'}
       data-audio-player=""
       onDoubleClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
@@ -113,7 +128,7 @@ export function AudioNodePlayer({ src, title }: { src: string; title: string }) 
         onEnded={() => setPlaying(false)}
         onError={() => { setPlaying(false); setError('音频加载失败，请检查素材'); }}
       />
-      <div className="relative mb-3 min-h-0 flex-1" role="group" aria-label="音频波形">
+      <div className={`relative min-h-0 flex-1 ${previewOnly ? '' : 'mb-3'}`} role="group" aria-label="音频波形">
         <div
           className="nodrag nopan nowheel relative h-full w-full overflow-hidden rounded-lg border border-white/[0.06] bg-[#18181b]"
           data-audio-waveform=""
@@ -152,7 +167,7 @@ export function AudioNodePlayer({ src, title }: { src: string; title: string }) 
         />
         </div>
       </div>
-      <div className="relative flex h-12 shrink-0 items-center justify-center">
+      {!previewOnly && <div className="relative flex h-12 shrink-0 items-center justify-center">
         <span className="absolute left-0 text-xs tabular-nums text-[#a1a1aa]" data-audio-time="">
           {formatTime(currentTime)} / {formatTime(duration)}
         </span>
@@ -165,8 +180,8 @@ export function AudioNodePlayer({ src, title }: { src: string; title: string }) 
         >
           {playing ? <Pause className="h-5 w-5 fill-current" /> : <Play className="ml-0.5 h-5 w-5 fill-current" />}
         </button>
-      </div>
-      {error && <span role="status" className="mt-2 text-center text-xs text-red-300">{error}</span>}
+      </div>}
+      {!previewOnly && error && <span role="status" className="mt-2 text-center text-xs text-red-300">{error}</span>}
     </div>
   );
 }

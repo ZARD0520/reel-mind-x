@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { AssetReference } from '@reel/contracts';
+import { AudioNodePlayer } from '../../features/canvas/components/AudioNodePlayer';
 
 export function ReferencePreview({ reference, children }: { reference: AssetReference; children: ReactNode }) {
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -32,7 +33,7 @@ export function ReferencePreview({ reference, children }: { reference: AssetRefe
           style={{ left: position.left, top: 'auto', bottom: position.bottom }} onPointerDown={(event) => event.stopPropagation()}>
           {reference.kind === 'image' && reference.url ? <img src={reference.url} alt={reference.name} className="max-h-32 w-full rounded object-contain" />
             : reference.kind === 'video' && reference.url ? <video src={reference.url} muted autoPlay loop playsInline className="max-h-32 w-full rounded object-contain" />
-              : reference.kind === 'audio' && reference.url ? <audio src={reference.url} controls className="w-full" aria-label={reference.name} />
+              : reference.kind === 'audio' && reference.url ? <div className="h-24"><AudioNodePlayer key={reference.url} src={reference.url} title={reference.name} autoPlay previewOnly /></div>
                 : <div className="reel-scroll max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-[#dedee0]">{reference.kind === 'text' ? reference.content || '暂无文本内容' : '素材暂无可预览内容'}</div>}
         </div>
       )}

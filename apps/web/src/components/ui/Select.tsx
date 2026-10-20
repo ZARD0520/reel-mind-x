@@ -21,6 +21,7 @@ interface SelectProps<T extends string> {
   menuClassName?: string;
   triggerContent?: ReactNode;
   panel?: ReactNode;
+  showChevron?: boolean;
 }
 
 export function Select<T extends string>({
@@ -35,6 +36,7 @@ export function Select<T extends string>({
   menuClassName = '',
   triggerContent,
   panel,
+  showChevron = true,
 }: SelectProps<T>) {
   const [isOpen, setIsOpen] = useState(false);
   const [placement, setPlacement] = useState<'bottom' | 'top'>('bottom');
@@ -102,9 +104,9 @@ export function Select<T extends string>({
       >
         {selected?.icon && <span className="shrink-0">{selected.icon}</span>}
         <span className="truncate">{triggerContent ?? selected?.label}</span>
-        <ChevronDown
+        {showChevron && <ChevronDown
           className={`h-3.5 w-3.5 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-        />
+        />}
       </button>
 
       {isOpen && (

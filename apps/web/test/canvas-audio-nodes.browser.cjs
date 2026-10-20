@@ -59,6 +59,7 @@ const { randomUUID } = require('node:crypto');
     await expect.poll(() => graph.edges.some((edge) => edge.source === 'uploaded' && edge.target === 'video')).toBe(true);
     await input.locator('[data-node-id="uploaded"]').hover();
     await expect(page.getByRole('tooltip').locator('audio')).toHaveCount(1);
+    await expect(page.getByRole('tooltip').getByRole('group', { name: '音频波形' })).toBeVisible();
     await page.mouse.move(10, 10);
     // Audio generation is unavailable; video must not silently ignore audio either.
     await page.getByRole('button', { name: '生成视频', exact: true }).click();

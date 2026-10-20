@@ -121,9 +121,9 @@ const DEFAULT_VIDEO_WITH_AUDIO = true;
 const IMAGE_NODE_HEIGHT = 360;
 
 const GENERATION_COUNT_OPTIONS: SelectOption<GenerationCountValue>[] = [
-  { value: '1', label: '1 个' },
-  { value: '2', label: '2 个' },
-  { value: '4', label: '4 个' },
+  { value: '1', label: '1x' },
+  { value: '2', label: '2x' },
+  { value: '4', label: '4x' },
 ];
 
 const IMAGE_ASPECT_RATIO_OPTIONS: SelectOption<AspectRatioKey>[] = RATIO_OPTIONS.map(
@@ -961,7 +961,6 @@ function NodeGenerationPrompt({
           )}
         </div>
         <div className="flex items-center gap-1">
-          <GenerationCreditCost kind={kind} model={model} count={generationCount} duration={videoDuration} />
           <Select
             value={String(generationCount) as GenerationCountValue}
             options={GENERATION_COUNT_OPTIONS}
@@ -971,11 +970,13 @@ function NodeGenerationPrompt({
               updateNodeData(nodeId, { generationCount: count });
             }}
             ariaLabel="选择生成数量"
+            showChevron={false}
             disabled={isGenerating || kind === 'audio'}
             size="compact"
-            className="w-[72px]"
-            triggerClassName="w-full"
+            className="w-[48px]"
+            triggerClassName="w-full justify-center"
           />
+          <GenerationCreditCost kind={kind} model={model} count={generationCount} duration={videoDuration} />
           <button
             type="submit"
             disabled={kind === 'audio' || !prompt.trim() || isGenerating}
@@ -1535,7 +1536,6 @@ function InfiniteCanvas({
   } | null>(null);
   const [nodeActionError, setNodeActionError] = useState<string | null>(null);
   const [viewportRevision, setViewportRevision] = useState(0);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const renderedEdges = useMemo(() => {
     if (!showEdges) return [];
     const selectedNodeIds = new Set(nodes.filter((node) => node.selected).map((node) => node.id));
@@ -1561,13 +1561,11 @@ function InfiniteCanvas({
   const saveGraph = useMutation({
     mutationFn: (graph: CanvasGraph) =>
       api.canvases.update(canvas.id, { graph }) as Promise<Canvas>,
-    onMutate: () => setSaveStatus('saving'),
     onSuccess: (updatedCanvas) => {
       queryClient.setQueryData(['canvas', canvas.id], updatedCanvas);
       void queryClient.invalidateQueries({ queryKey: ['canvases'] });
-      setSaveStatus('saved');
     },
-    onError: () => setSaveStatus('error'),
+    onError: () => toast.error('画布保存失败，请稍后重试'),
   });
   const saveGraphRef = useRef(saveGraph.mutate);
   saveGraphRef.current = saveGraph.mutate;
@@ -1640,7 +1638,6 @@ function InfiniteCanvas({
       initializedRef.current = true;
       return;
     }
-    setSaveStatus('idle');
     const timeout = window.setTimeout(() => {
       saveGraphRef.current(serializeCanvasGraph(nodes, edges, viewportRef.current));
     }, 800);
@@ -2484,21 +2481,6 @@ function InfiniteCanvas({
         </div>
       </div>
 
-      <div className="pointer-events-none absolute right-5 top-6 z-10 flex items-center gap-1.5 text-[11px] text-[#67676b]">
-        {saveStatus === 'saving' && (
-          <>
-            <Loader2 className="h-3 w-3 animate-spin" />
-            正在保存
-          </>
-        )}
-        {saveStatus === 'saved' && (
-          <>
-            <Check className="h-3 w-3" />
-            已保存
-          </>
-        )}
-        {saveStatus === 'error' && <span className="text-red-400">保存失败</span>}
-      </div>
     </div>
   );
 }
@@ -2660,6 +2642,9 @@ export function CanvasPage() {
               <Loader2 className="absolute right-3 top-3 h-4 w-4 animate-spin text-[#7b7b80]" />
             )}
           </div>
+        </div>
+
+        <div className={`absolute right-5 top-5 z-10 transition-opacity ${isDependencySelecting ? 'pointer-events-none opacity-20' : ''}`}>
           <CreditWallet />
         </div>
 

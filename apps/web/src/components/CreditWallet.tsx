@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Coins, RefreshCw, X } from 'lucide-react';
+import { CircleHelp, Zap, RefreshCw, X } from 'lucide-react';
 import { creditsApi } from '@reel/api-client';
 import { CREDIT_ENTRY_LABELS } from '@reel/contracts/credits';
 
 export function CreditWallet({ enabled = true }: { enabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
+  const freezeHelpId = useId();
   const balance = useQuery({
     queryKey: ['credits', 'balance'],
     queryFn: creditsApi.balance,
@@ -35,13 +36,13 @@ export function CreditWallet({ enabled = true }: { enabled?: boolean }) {
         className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-white/[0.12] bg-[#202020] px-3 text-xs text-[#d8d8de] transition-colors hover:bg-[#303030]"
         aria-label="查看积分账户"
       >
-        <Coins className="h-4 w-4 text-[#c3b4f7]" />
-        {balance.data ? `${balance.data.available.toLocaleString()} 积分` : '积分账户'}
+        <Zap strokeWidth={1.5} className="h-4 w-3.5 scale-y-110 text-[#79a4d5]" />
+        {balance.data ? balance.data.available.toLocaleString() : '—'}
       </button>
       {open &&
         createPortal(
           <div
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/65 p-5 backdrop-blur-sm"
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/35 p-5 backdrop-blur-[2px]"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) setOpen(false);
             }}
@@ -53,17 +54,17 @@ export function CreditWallet({ enabled = true }: { enabled?: boolean }) {
               role="dialog"
               aria-modal="true"
               aria-labelledby="credits-title"
-              className="flex max-h-[85vh] w-full max-w-[760px] flex-col overflow-hidden rounded-xl border border-white/15 bg-[#1c1c22] text-[#e8e8ed] shadow-2xl"
+              className="flex max-h-[85vh] w-full max-w-[760px] flex-col overflow-hidden rounded-2xl border border-white/[0.14] bg-[#242424] text-[#f7f7f2] shadow-[0_28px_80px_rgba(0,0,0,0.62)]"
             >
               <div className="flex items-center justify-between p-5">
-                <h2 id="credits-title" className="text-base font-semibold">
+                <h2 id="credits-title" className="text-base font-semibold text-white">
                   积分账户
                 </h2>
                 <button
                   autoFocus
                   aria-label="关闭积分账户"
                   onClick={() => setOpen(false)}
-                  className="cursor-pointer rounded-md p-2 hover:bg-white/10"
+                  className="cursor-pointer rounded-lg p-2 text-[#a4a4a8] transition-colors hover:bg-white/[0.07] hover:text-white"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -76,18 +77,36 @@ export function CreditWallet({ enabled = true }: { enabled?: boolean }) {
                 ].map((item) => (
                   <div
                     key={item.label}
-                    className="rounded-lg border border-white/10 bg-white/[0.025] p-4"
+                    className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-4"
                   >
-                    <div className="text-xs text-[#92929e]">{item.label}</div>
+                    <div className="flex items-center gap-1.5 text-xs text-[#a4a4a8]">
+                      {item.label}
+                      {item.label === '冻结积分' && (
+                        <span className="group relative inline-flex">
+                          <button
+                            type="button"
+                            aria-label="冻结积分说明"
+                            aria-describedby={freezeHelpId}
+                            className="cursor-pointer rounded-sm text-[#77777c] outline-none transition-colors hover:text-white focus-visible:text-white focus-visible:ring-1 focus-visible:ring-white/40"
+                          >
+                            <CircleHelp className="h-3.5 w-3.5" />
+                          </button>
+                          <span
+                            id={freezeHelpId}
+                            role="tooltip"
+                            className="pointer-events-none absolute left-1/2 top-full z-10 mt-2 hidden w-60 -translate-x-1/2 rounded-lg border border-white/[0.12] bg-[#303030] px-3 py-2 text-xs font-normal leading-5 text-[#c4c4c8] shadow-xl group-hover:block group-focus-within:block"
+                          >
+                            生成前冻结积分，成功后扣除，失败自动退还。结果待确认时保留冻结，确认结果后结算。
+                          </span>
+                        </span>
+                      )}
+                    </div>
                     <strong className="mt-2 block text-2xl font-medium">
                       {item.value?.toLocaleString() ?? '—'}
                     </strong>
                   </div>
                 ))}
               </div>
-              <p className="px-5 pb-4 text-xs leading-5 text-[#92929e]">
-                生成前冻结积分，成功后扣除，失败自动退还。结果待确认时保留冻结，确认结果后结算。
-              </p>
               {(balance.error || ledger.error) && (
                 <div
                   role="alert"
@@ -106,9 +125,9 @@ export function CreditWallet({ enabled = true }: { enabled?: boolean }) {
                   </button>
                 </div>
               )}
-              <div className="min-h-0 overflow-auto border-y border-white/10">
+              <div className="min-h-0 overflow-auto border-y border-white/[0.08]">
                 <table className="w-full text-left text-xs">
-                  <thead className="sticky top-0 bg-[#25252c] text-[#9999a6]">
+                  <thead className="sticky top-0 bg-[#2b2b2b] text-[#a4a4a8]">
                     <tr>
                       {['时间', '类型', '可用变化', '冻结变化', '说明'].map((title) => (
                         <th key={title} className="whitespace-nowrap px-4 py-3 font-normal">
@@ -120,7 +139,7 @@ export function CreditWallet({ enabled = true }: { enabled?: boolean }) {
                   <tbody>
                     {ledger.data?.items.map((entry) => (
                       <tr key={entry.id} className="border-t border-white/[0.06]">
-                        <td className="whitespace-nowrap px-4 py-3 text-[#9999a6]">
+                        <td className="whitespace-nowrap px-4 py-3 text-[#a4a4a8]">
                           {new Date(entry.createdAt).toLocaleString('zh-CN', { hour12: false })}
                         </td>
                         <td className="whitespace-nowrap px-4 py-3">
@@ -142,13 +161,13 @@ export function CreditWallet({ enabled = true }: { enabled?: boolean }) {
                   </tbody>
                 </table>
                 {ledger.isPending && (
-                  <p className="p-8 text-center text-xs text-[#9999a6]">加载中…</p>
+                  <p className="p-8 text-center text-xs text-[#77777c]">加载中…</p>
                 )}
                 {ledger.data?.total === 0 && (
-                  <p className="p-8 text-center text-xs text-[#9999a6]">暂无积分流水</p>
+                  <p className="p-8 text-center text-xs text-[#77777c]">暂无积分流水</p>
                 )}
               </div>
-              <div className="flex items-center justify-between p-4 text-xs text-[#9999a6]">
+              <div className="flex items-center justify-between p-4 text-xs text-[#a4a4a8]">
                 <span>共 {ledger.data?.total ?? 0} 条</span>
                 <div className="flex items-center gap-4">
                   <button
@@ -199,10 +218,12 @@ export function GenerationCreditCost({
   if (kind === 'audio') return null;
   return (
     <span
-      className="whitespace-nowrap px-1 text-[10px] text-[#92929e]"
+      className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap px-1 text-[10px] text-[#a4a4a8]"
       title={quote.error?.message ?? '提交时冻结，成功扣除，失败退还'}
+      aria-label={quote.data ? `预计消耗 ${quote.data.total} 积分` : quote.error ? '报价不可用' : '计算积分中'}
     >
-      {quote.data ? `预计 ${quote.data.total} 积分` : quote.error ? '报价不可用' : '计算积分…'}
+      <Zap aria-hidden="true" strokeWidth={1.5} className="h-3.5 w-3 scale-y-110 text-[#79a4d5]" />
+      {quote.data ? quote.data.total : quote.error ? '—' : '…'}
     </span>
   );
 }

@@ -5,6 +5,7 @@ import type { Asset } from '@reel/contracts';
 import { api } from '../../../lib/api';
 import type { CanvasChatReference } from '../chat-types';
 import { readableReferences } from '../inline-references';
+import { AudioNodePlayer } from './AudioNodePlayer';
 
 type Preview = { reference: CanvasChatReference; anchor: HTMLElement; available: boolean };
 
@@ -79,7 +80,7 @@ function ReferenceHoverPreview({ reference, anchor, available, variant, onMouseE
       ? <div className="reel-scroll max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-[#dedee0]">{readableReferences(reference.content || reference.prompt || '暂无文本内容')}</div>
       : source ? reference.kind === 'image'
         ? <img src={source} alt={reference.title} className={variant === 'node' ? 'max-h-32 w-full rounded object-contain' : 'h-36 w-full rounded-lg bg-black object-contain'} />
-        : reference.kind === 'audio' ? <audio src={source} controls aria-label={reference.title} className="w-full" />
+        : reference.kind === 'audio' ? <div className="h-24"><AudioNodePlayer key={source} src={source} title={reference.title} autoPlay previewOnly /></div>
         : <video src={source} autoPlay muted loop playsInline preload="metadata" className={variant === 'node' ? 'max-h-32 w-full rounded object-contain' : 'h-36 w-full rounded-lg bg-black object-contain'} />
         : <p className="text-xs leading-5">素材暂无可预览内容</p>}
   </div>, document.body);
