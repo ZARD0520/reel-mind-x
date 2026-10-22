@@ -22,6 +22,7 @@ import { createHash } from 'crypto';
 import type { Env } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreditsService } from '../credits/credits.service';
+import { referenceImagePath } from './reference-image-path';
 
 export const GENERATION_QUEUE = 'generation-tasks';
 const INCLUDE_TASK = { items: { orderBy: { index: 'asc' as const }, include: { asset: true } } };
@@ -120,12 +121,15 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
           userId,
           kind: 'image',
           status: 'ready',
-          ...(input.canvasId ? { canvasId: input.canvasId } : { projectId: input.projectId }),
         },
         select: { id: true, name: true, url: true, localPath: true },
       });
-      if (frames.length !== input.imageAssetIds.length || frames.some((frame) => !frame.localPath))
-        throw new BadRequestException('首尾帧必须是当前画布中已生成完成的图片');
+      // References can come from uploads, history, or the library, not only this scope.
+      // The owner, media type and ready status are still checked above.
+      if (frames.length !== input.imageAssetIds.length)
+        throw new BadRequestException('首尾帧图片不可用，请选择已上传或生成完成的图片');
+      if (frames.some((frame) => !referenceImagePath(frame, userId, this.config.get('STORAGE_DIR', { infer: true }))))
+        throw new BadRequestException('首尾帧图片文件不可用，请重新上传或选择其他图片');
       for (const id of input.imageAssetIds) {
         const frame = frames.find((candidate) => candidate.id === id)!;
         if (!references.some((reference) => reference.kind === 'image' && reference.assetId === id))

@@ -1,6 +1,6 @@
 import type { Asset } from '@reel/contracts';
 
-export async function downloadAssetFile(asset: Asset): Promise<void> {
+export async function downloadAssetFile(asset: Pick<Asset, 'kind' | 'name' | 'content' | 'url'>): Promise<void> {
   let blob: Blob;
   let extension = '.txt';
   if (asset.kind === 'text') {

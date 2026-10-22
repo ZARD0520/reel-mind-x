@@ -29,11 +29,14 @@ import {
   BaseEdge,
   ConnectionLineType,
   getBezierPath,
+  getNodesBounds,
   Handle,
   MiniMap,
   NodeToolbar,
   Position,
   ReactFlow,
+  SelectionMode,
+  ViewportPortal,
   type Connection,
   type Edge,
   type EdgeProps,
@@ -54,6 +57,7 @@ import {
   AlignLeft,
   ArrowUp,
   Copy,
+  Download,
   Film,
   Focus,
   Folder,
@@ -90,6 +94,7 @@ import { AssetFolderPickerDialog } from '../features/canvas/components/AssetFold
 import { AssetHistoryDialog } from '../features/canvas/components/AssetHistoryDialog';
 import { AudioNodePlayer } from '../features/canvas/components/AudioNodePlayer';
 import { CreditWallet, GenerationCreditCost } from '../components/CreditWallet';
+import { downloadAssetFile } from '../lib/download-asset';
 import { CanvasChatDrawer } from '../features/canvas/components/CanvasChatDrawer';
 import { InlineReferenceInput, type InlineReferenceInputHandle } from '../features/canvas/components/InlineReferenceInput';
 import { readableReferences, referenceIds, referenceToken, splitReferences } from '../features/canvas/inline-references';
@@ -1229,7 +1234,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
       onContextMenu={(event) => event.preventDefault()}
     >
       <NodeToolbar
-        isVisible={selected && !isSelectingDependency && !data.uploaded}
+        isVisible={selected && dependencySelection.nodes.filter((node) => node.selected).length === 1 && !isSelectingDependency && !data.uploaded}
         position={Position.Bottom}
         offset={12}
       >
@@ -1284,7 +1289,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
       {acceptsDependencyInput(data) && <MagneticConnectionHandle type="target" selected={selected} />}
       {data.kind === 'text' ? (
         <div
-          className={`relative h-[360px] overflow-hidden rounded-[24px] border bg-[#202020] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
+          className={`relative h-[360px] overflow-hidden rounded-[24px] border bg-[#202020] p-5 shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-white shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
           onDoubleClick={(event) => {
             event.stopPropagation();
             if (!isSelectingDependency) setIsEditing(true);
@@ -1300,7 +1305,7 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
         </div>
       ) : (
         <div
-          className={`relative flex ${data.kind === 'audio' ? 'h-[216px]' : 'h-[360px]'} items-center justify-center overflow-hidden rounded-[24px] border bg-[#202020] shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-[#49a8dc] shadow-[0_0_0_1px_rgba(73,168,220,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
+          className={`relative flex ${data.kind === 'audio' ? 'h-[216px]' : 'h-[360px]'} items-center justify-center overflow-hidden rounded-[24px] border bg-[#202020] shadow-[0_18px_45px_rgba(0,0,0,0.28)] transition-[border-color,box-shadow] ${selected ? 'border-white shadow-[0_0_0_1px_rgba(255,255,255,0.2),0_18px_45px_rgba(0,0,0,0.34)]' : 'border-[#38383a]'}`}
         >
           {data.uploaded && <>
             <input ref={replacementInputRef} type="file" accept={`${data.kind}/*`} aria-label="替换节点素材" className="hidden" disabled={replacement.isPending} onChange={(event) => {
@@ -1469,6 +1474,9 @@ function InfiniteCanvas({
   const [instance, setInstance] = useState<ReactFlowInstance<WorkflowNode, Edge> | null>(null);
   const [zoom, setZoom] = useState(Math.round(canvas.graph.viewport.zoom * 100));
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [addMenuPosition, setAddMenuPosition] = useState<{ x: number; y: number; flow: { x: number; y: number } } | null>(null);
+  const [batchLibraryNodes, setBatchLibraryNodes] = useState<WorkflowNode[] | null>(null);
+  const [downloadingSelection, setDownloadingSelection] = useState(false);
   const [showNodeSearch, setShowNodeSearch] = useState(false);
   const [showAssetLibrary, setShowAssetLibrary] = useState(false);
   const [showAssetHistory, setShowAssetHistory] = useState(false);
@@ -1735,7 +1743,7 @@ function InfiniteCanvas({
       const nextNode: WorkflowNode = {
         id: uuid(),
         type: 'workflow',
-        position: { x: center.x - (kind === 'video' ? 320 : 180), y: center.y - 195 },
+        position: addMenuPosition?.flow ?? { x: center.x - (kind === 'video' ? 320 : 180), y: center.y - 195 },
         data: {
           ...nodeTemplates[kind],
           title: nodeLabels[kind],
@@ -1747,7 +1755,7 @@ function InfiniteCanvas({
       ]);
       setShowAddMenu(false);
     },
-    [instance, setNodes],
+    [instance, setNodes, addMenuPosition],
   );
 
   // 把资产库中的素材作为就绪节点加到画布视口中心
@@ -1939,10 +1947,47 @@ function InfiniteCanvas({
     focusNodeFromSearch(node);
   }, [focusRequest, focusNodeFromSearch, instance, nodes]);
 
+  const selectedNodes = nodes.filter((node) => node.selected);
+  const showSelectionTools = !dependencyTargetId && selectedNodes.length > 1;
+  const selectionBounds = getNodesBounds(selectedNodes);
+  const savableSelection = selectedNodes.filter((node) => node.data.kind === 'text'
+    ? Boolean(node.data.content.trim()) : Boolean(node.data.assetId && node.data.status === 'ready'));
+  const downloadableSelection = selectedNodes.filter((node) => node.data.kind === 'text'
+    ? Boolean(node.data.content.trim()) : Boolean(node.data.url || node.data.assetId && node.data.status === 'ready'));
+
+  const duplicateSelection = () => {
+    const ids = new globalThis.Map(selectedNodes.map((node) => [node.id, uuid()]));
+    setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), ...selectedNodes.map((node) => ({
+      ...node, id: ids.get(node.id)!, selected: true,
+      position: { x: node.position.x + 36, y: node.position.y + 36 },
+      data: { ...node.data, title: `${node.data.title} 副本`, referenceNodeIds: [], editorProjectId: undefined },
+    }))]);
+    setEdges((current) => [...current, ...current.filter((edge) => ids.has(edge.source) && ids.has(edge.target)).map((edge) => ({
+      ...edge, id: uuid(), source: ids.get(edge.source)!, target: ids.get(edge.target)!, selected: false,
+    }))]);
+  };
+
+  const downloadSelection = async () => {
+    setDownloadingSelection(true);
+    let failures = 0;
+    for (const node of downloadableSelection) {
+      try {
+        const asset = node.data.kind === 'text'
+          ? { kind: 'text' as const, name: node.data.title, content: node.data.content, url: null }
+          : node.data.url
+            ? { kind: node.data.kind, name: node.data.title, url: node.data.url, content: null }
+            : await api.assets.get(node.data.assetId!) as Asset;
+        await downloadAssetFile(asset);
+      } catch { failures++; }
+    }
+    setDownloadingSelection(false);
+    if (failures) toast.error(`${failures} 项素材下载失败，请重试`);
+  };
+
   return (
     <div
       ref={wrapperRef}
-      className={`absolute inset-0 ${dependencyTargetId ? 'canvas-dependency-selecting' : ''} ${isPanKeyPressed && !dependencyTargetId ? 'canvas-panning' : ''}`}
+      className={`canvas-workspace absolute inset-0 ${dependencyTargetId ? 'canvas-dependency-selecting' : ''} ${isPanKeyPressed && !dependencyTargetId ? 'canvas-panning' : ''}`}
       onPointerDownCapture={(event) => {
         if (
           nodeActionMenu &&
@@ -2024,10 +2069,23 @@ function InfiniteCanvas({
             nodesDraggable={!dependencyTargetId && !isPanKeyPressed}
             zoomOnDoubleClick={false}
             nodesConnectable={!dependencyTargetId}
-            panOnDrag={!dependencyTargetId}
+            panOnDrag={dependencyTargetId ? false : isPanKeyPressed ? true : [1]}
             panOnScroll={!dependencyTargetId}
             zoomOnScroll={!dependencyTargetId}
-            selectionOnDrag={!dependencyTargetId}
+            selectionOnDrag={!dependencyTargetId && !isPanKeyPressed}
+            selectionMode={SelectionMode.Partial}
+            onSelectionStart={() => setShowAddMenu(false)}
+            onDoubleClick={(event) => {
+              if (dependencyTargetId || !(event.target instanceof Element) || !event.target.closest('.react-flow__pane') || !wrapperRef.current || !instance) return;
+              const bounds = wrapperRef.current.getBoundingClientRect();
+              setAddMenuPosition({
+                x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - 216)),
+                y: Math.max(8, Math.min(event.clientY - bounds.top, bounds.height - 374)),
+                flow: instance.screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+              });
+              setShowAddMenu(true);
+              setNodeActionMenu(null);
+            }}
             deleteKeyCode={dependencyTargetId ? null : ['Backspace', 'Delete']}
             fitView={
               canvas.graph.nodes.length > 0 &&
@@ -2039,6 +2097,27 @@ function InfiniteCanvas({
             proOptions={{ hideAttribution: true }}
             colorMode="dark"
           >
+            {showSelectionTools && (
+              <>
+                <ViewportPortal>
+                  <div data-selection-background className="pointer-events-none absolute rounded-[24px] border border-white/50 bg-white/[0.07]" style={{ left: selectionBounds.x - 16, top: selectionBounds.y - 16, width: selectionBounds.width + 32, height: selectionBounds.height + 32 }} />
+                </ViewportPortal>
+                <NodeToolbar nodeId={selectedNodes.map((node) => node.id)} isVisible position={Position.Top} offset={10 + 16 * zoom / 100}>
+                  <div role="toolbar" aria-label="框选工具栏" className="nodrag nopan flex gap-1 rounded-xl border border-white/[0.14] bg-[#242424] p-1 shadow-xl">
+                    {[
+                      { label: '复制', icon: Copy, action: duplicateSelection, disabled: false },
+                      { label: '下载', icon: Download, action: () => void downloadSelection(), disabled: downloadingSelection || !downloadableSelection.length },
+                      { label: '添加到资产库', icon: FolderPlus, action: () => setBatchLibraryNodes(savableSelection), disabled: !savableSelection.length },
+                    ].map(({ label, icon: Icon, action, disabled }) => (
+                      <div key={label} className="group relative">
+                        <button type="button" aria-label={label} disabled={disabled} onClick={action} className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-[#ddd] hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"><Icon className="h-4 w-4" /></button>
+                        <span role="tooltip" className="pointer-events-none absolute bottom-full left-1/2 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-[#303030] px-2 py-1 text-xs text-white group-hover:block group-focus-within:block">{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </NodeToolbar>
+              </>
+            )}
             <Background
               variant={BackgroundVariant.Dots}
               gap={24}
@@ -2300,6 +2379,25 @@ function InfiniteCanvas({
         />
       )}
 
+      {batchLibraryNodes && (
+        <AssetFolderPickerDialog
+          assetName={`${batchLibraryNodes.length} 项素材`}
+          save={async (folderId) => {
+            let saved: Asset | undefined;
+            for (const node of batchLibraryNodes) {
+              saved = (node.data.kind === 'text'
+                ? await api.assetFolders.createTextAsset(folderId, { name: node.data.title, content: node.data.content, prompt: node.data.prompt, model: node.data.model, sourceAssetId: node.data.assetId })
+                : await api.assets.saveToLibrary(node.data.assetId!, folderId, node.data.title)) as Asset;
+              // Keep only unfinished items so retrying does not duplicate successful saves.
+              setBatchLibraryNodes((current) => current?.filter((item) => item.id !== node.id) ?? null);
+            }
+            return saved!;
+          }}
+          onClose={() => setBatchLibraryNodes(null)}
+          onSaved={() => { setBatchLibraryNodes(null); toast.success('已保存到资产库'); }}
+        />
+      )}
+
       {showAssetHistory && !dependencyTargetId && (
         <AssetHistoryDialog
           canvasId={canvas.id}
@@ -2335,6 +2433,7 @@ function InfiniteCanvas({
           label="添加节点"
           active={showAddMenu}
           onClick={() => {
+            setAddMenuPosition(null);
             setShowNodeSearch(false);
             setShowAssetLibrary(false);
             setShowAssetHistory(false);
@@ -2394,7 +2493,7 @@ function InfiniteCanvas({
       </aside>
 
       {showAddMenu && !dependencyTargetId && (
-        <div className="absolute left-[76px] top-1/2 z-20 w-52 -translate-y-[142px] rounded-2xl border border-white/[0.13] bg-[#252525] p-2 shadow-[0_20px_55px_rgba(0,0,0,0.55)]">
+        <div data-add-node-menu className={`absolute z-20 w-52 rounded-2xl border border-white/[0.13] bg-[#252525] p-2 shadow-[0_20px_55px_rgba(0,0,0,0.55)] ${addMenuPosition ? '' : 'left-[76px] top-1/2 -translate-y-[142px]'}`} style={addMenuPosition ? { left: addMenuPosition.x, top: addMenuPosition.y } : undefined}>
           <div className="px-3 pb-2 pt-1 text-xs text-[#77777b]">添加节点</div>
           {(['text', 'image', 'video', 'audio'] as const).map((kind) => {
             const Icon = nodeIcons[kind];
@@ -2469,7 +2568,7 @@ function InfiniteCanvas({
           >
             <Minus className="h-4 w-4" />
           </button>
-          <span className="w-12 text-center text-xs text-[#b9b9ba]">{zoom}%</span>
+          <button type="button" aria-label="恢复100%缩放" title="恢复100%缩放" onClick={() => void instance?.zoomTo(1, { duration: 180 })} className="h-8 w-12 cursor-pointer text-center text-xs text-[#b9b9ba] hover:text-white">{zoom}%</button>
           <button
             type="button"
             onClick={() => void instance?.zoomIn({ duration: 180 })}

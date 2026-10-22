@@ -19,6 +19,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TextGenService } from '../text-gen/text-gen.service';
 import { probeMedia } from '../assets/media-probe';
 import { GENERATION_QUEUE, GenerationTasksService } from './generation-tasks.service';
+import { referenceImagePath } from './reference-image-path';
 
 class LeaseLost extends Error {}
 class MediaSaveError extends Error {}
@@ -285,12 +286,13 @@ export class GenerationTasksProcessor extends WorkerHost {
     const rows = ids.length
       ? await this.prisma.asset.findMany({
           where: { id: { in: ids }, userId, kind: 'image', status: 'ready' },
-          select: { id: true, localPath: true },
+          select: { id: true, localPath: true, url: true },
         })
       : [];
     return Promise.all(
       ids.map(async (id) => {
-        const localPath = rows.find((row) => row.id === id)?.localPath;
+        const row = rows.find((row) => row.id === id);
+        const localPath = row && referenceImagePath(row, userId, this.config.get('STORAGE_DIR', { infer: true }));
         if (!localPath) throw new Error('Reference image unavailable');
         const buffer = await fs.readFile(localPath);
         const format = imageFormat(buffer);

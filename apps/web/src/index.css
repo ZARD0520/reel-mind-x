@@ -87,6 +87,20 @@ body {
   opacity: 1;
 }
 
+/* 保留多选区域的拖拽交互，仅隐藏 React Flow 自带的白色选框。 */
+.canvas-workspace .react-flow__selection {
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 24px;
+}
+
+.canvas-workspace .react-flow__nodesselection-rect {
+  border-radius: 24px;
+  border: none;
+  background: transparent;
+  outline: none;
+}
+
 /* 空格平移时，让节点和浮动提示词面板透过鼠标事件。 */
 .canvas-panning .react-flow__node,
 .canvas-panning .react-flow__node-toolbar {

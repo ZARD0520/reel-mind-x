@@ -51,6 +51,14 @@ const { CanvasesService } = require('../src/modules/canvases/canvases.service.ts
 const { PrismaService } = require('../src/prisma/prisma.service.ts');
 const { AssetFoldersService } = require('../src/modules/asset-folders/asset-folders.service.ts');
 const repo = path.resolve(__dirname, '../../..');
+const { referenceImagePath } = require('../src/modules/generation-tasks/reference-image-path.ts');
+
+test('library reference paths resolve only user-owned stored uploads', () => {
+  assert.equal(referenceImagePath({ localPath: null, url: '/files/users/owner/uploads/image.png' }, 'owner', '/storage'), '/storage/users/owner/uploads/image.png');
+  for (const url of ['/files/users/other/uploads/image.png', '/files/users/owner/uploads/../secret.png', '/files/users/owner/uploads/%2e%2e%2fsecret.png', 'https://invalid.test/image.png']) {
+    assert.equal(referenceImagePath({ localPath: null, url }, 'owner', '/storage'), null);
+  }
+});
 const {
   acceptsDependency,
   acceptsDependencyInput,
@@ -414,6 +422,31 @@ test(
         update: { value: 100 },
       });
       service = new GenerationTasksService(prisma, config, queue, credits);
+
+      await suite.test('video frames accept uploaded and library images and preserve frame order', async () => {
+        const directory = path.join(storage, 'users', user.id, 'uploads');
+        fs.mkdirSync(directory, { recursive: true });
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK0cAAAAASUVORK5CYII=', 'base64');
+        const file = path.join(directory, 'frame.png');
+        fs.writeFileSync(file, png);
+        const folder = await prisma.assetFolder.create({ data: { userId: user.id, name: 'Frames' } });
+        const library = await prisma.asset.create({ data: { userId: user.id, folderId: folder.id, kind: 'image', source: 'ai', status: 'ready', name: 'Library frame', url: `/files/users/${user.id}/uploads/frame.png` } });
+        const uploaded = await prisma.asset.create({ data: { userId: user.id, canvasId: canvas.id, kind: 'image', source: 'upload', status: 'ready', name: 'Uploaded frame', url: `/files/users/${user.id}/uploads/frame.png`, localPath: file, historyDeletedAt: new Date() } });
+        const task = await create({ imageAssetIds: [library.id, uploaded.id] });
+        const row = await prisma.generationTask.findUniqueOrThrow({ where: { id: task.id } });
+        assert.deepEqual(row.input.imageAssetIds, [library.id, uploaded.id]);
+        assert.deepEqual(row.input.references.map((ref) => ref.assetId), [library.id, uploaded.id]);
+        const encoded = await freshWorker().encodeImages(user.id, [library.id, uploaded.id]);
+        assert.deepEqual(encoded, [png, png].map((buffer) => `data:image/png;base64,${buffer.toString('base64')}`));
+        // Another account's ready image must remain inaccessible.
+        const stranger = await prisma.user.create({ data: { email: `${randomUUID()}@invalid.test`, name: 'Other' } });
+        const foreignCanvas = await prisma.canvas.create({ data: { userId: stranger.id, name: 'Private' } });
+        const foreign = await prisma.asset.create({ data: { userId: stranger.id, canvasId: foreignCanvas.id, kind: 'image', source: 'upload', status: 'ready', name: 'Private', localPath: file } });
+        await assert.rejects(create({ imageAssetIds: [foreign.id] }), /首尾帧图片不可用/);
+        // Leave no queued job/credit hold behind for subsequent reliability scenarios.
+        await step(freshWorker({ submitVideo: async () => { throw new AiGenError('Fixture complete', 400); } }), task.items[0].id);
+        fs.unlinkSync(file);
+      });
 
       await suite.test(
         'deleting a canvas retains billing history and atomically settles all outputs, including concurrent submission',
