@@ -45,6 +45,15 @@ export class AdminController {
   @Get('tasks') tasks(@Query() query: unknown) {
     return this.admin.tasks(query);
   }
+  @Get('projects') projects(@Query() query: unknown) {
+    return this.admin.projects(query);
+  }
+  @Get('assets') assets(@Query() query: unknown) {
+    return this.admin.assets(query);
+  }
+  @Get('assets/:id') asset(@Param('id', ParseUUIDPipe) id: string) {
+    return this.admin.asset(id);
+  }
   @Get('prices') prices() {
     return this.admin.prices();
   }

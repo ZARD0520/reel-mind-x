@@ -24,15 +24,18 @@ export function Toolbar(props: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       {...props}
-      className="flex items-center justify-between gap-[15px] px-[22px] py-[18px] max-[760px]:flex-wrap max-[760px]:p-[15px] [&>select]:max-w-[150px]"
+      className="flex items-center justify-between gap-[15px] px-[22px] py-[18px] max-[760px]:flex-wrap max-[760px]:p-[15px] [&>[data-select]]:max-w-[150px]"
     />
   );
 }
-export function SearchForm(props: FormHTMLAttributes<HTMLFormElement>) {
+export function SearchForm({
+  className = '',
+  ...props
+}: FormHTMLAttributes<HTMLFormElement>) {
   return (
     <form
       {...props}
-      className="flex w-[min(100%,470px)] items-center gap-[10px] text-[#737380] [&_input]:min-w-0 [&_button]:shrink-0"
+      className={`flex items-center gap-[10px] text-[#737380] [&_input]:min-w-0 [&_button]:shrink-0 ${className}`}
     />
   );
 }
@@ -75,7 +78,7 @@ export function BrandMark({
   return (
     <div
       {...props}
-      className={`inline-flex shrink-0 items-center justify-center rounded-[10px] bg-accent/10 text-[#c1b4ff] ${large ? 'mb-[23px] size-[46px]' : 'size-[36px]'}`}
+      className={`inline-flex shrink-0 items-center justify-center rounded-[10px] bg-accent/10 text-[#c1b4ff] ${large ? 'size-[46px]' : 'size-[36px]'}`}
     />
   );
 }

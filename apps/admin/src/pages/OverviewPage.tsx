@@ -72,10 +72,6 @@ export function OverviewPage() {
           <Empty />
         )}
       </Panel>
-      <div className="mt-[18px] text-[12px] leading-[1.8] text-[#8e8e9b]">
-        全站可用积分 {number(data.available)}
-        。统计为累计数据；积分是平台内部额度，不代表供应商实际费用。
-      </div>
     </>
   );
 }

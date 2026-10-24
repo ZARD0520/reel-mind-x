@@ -28,7 +28,9 @@ export class FilesController {
     @Param('filename') filename: string,
     @Res() res: FileResponse,
   ): Promise<void> {
-    if (user.id !== userId) throw new ForbiddenException('File access denied');
+    // 管理后台需要跨用户查看素材（如资产管理页缩略图），故放行管理员。
+    if (user.id !== userId && user.role !== 'admin')
+      throw new ForbiddenException('File access denied');
     if (!['uploads', 'exports'].includes(scope)) throw new NotFoundException('File not found');
     if (filename !== path.basename(filename)) throw new NotFoundException('File not found');
 

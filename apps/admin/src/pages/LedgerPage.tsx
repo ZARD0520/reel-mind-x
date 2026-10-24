@@ -36,6 +36,7 @@ export function LedgerPage() {
     <Panel>
       <Toolbar>
         <SearchForm
+          className="w-[min(100%,470px)]"
           onSubmit={(event) => {
             event.preventDefault();
             setSearch(text.trim());

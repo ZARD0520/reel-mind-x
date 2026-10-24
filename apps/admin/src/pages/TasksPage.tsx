@@ -28,6 +28,7 @@ export function TasksPage() {
     <Panel>
       <Toolbar>
         <SearchForm
+          className="w-[min(100%,470px)]"
           onSubmit={(event) => {
             event.preventDefault();
             setSearch(text.trim());
@@ -46,20 +47,17 @@ export function TasksPage() {
         <Select
           aria-label="任务状态"
           value={status}
-          onChange={(event) => {
-            setStatus(event.target.value);
+          onChange={(value) => {
+            setStatus(value);
             setPage(1);
           }}
-        >
-          <option value="">全部状态</option>
-          {['queued', 'submitting', 'generating', 'saving', 'unknown', 'completed', 'failed'].map(
-            (value) => (
-              <option key={value} value={value}>
-                {statusName[value]}
-              </option>
+          options={[
+            { value: '', label: '全部状态' },
+            ...['queued', 'submitting', 'generating', 'saving', 'unknown', 'completed', 'failed'].map(
+              (value) => ({ value, label: statusName[value] ?? value }),
             ),
-          )}
-        </Select>
+          ]}
+        />
       </Toolbar>
       <ErrorBox error={query.error} />
       {query.isPending ? (

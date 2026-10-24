@@ -1,5 +1,8 @@
 import type {
+  AdminAssetDetail,
+  AdminAssetRow,
   AdminOverview,
+  AdminProjectRow,
   AdminTask,
   AdminUser,
   AuditRecord,
@@ -67,6 +70,9 @@ export const adminApi = {
     request(`/admin/users/${id}/credits`, json('POST', input)),
   ledger: (query: string) => request<PageResult<CreditLedgerEntry>>(`/admin/ledger?${query}`),
   tasks: (query: string) => request<PageResult<AdminTask>>(`/admin/tasks?${query}`),
+  projects: (query: string) => request<PageResult<AdminProjectRow>>(`/admin/projects?${query}`),
+  assets: (query: string) => request<PageResult<AdminAssetRow>>(`/admin/assets?${query}`),
+  asset: (id: string) => request<AdminAssetDetail>(`/admin/assets/${id}`),
   prices: () => request<CreditPriceRecord[]>('/admin/prices'),
   savePrice: (input: Pick<CreditPriceRecord, 'kind' | 'model' | 'unit' | 'credits' | 'enabled'>) =>
     request('/admin/prices', json('POST', input)),

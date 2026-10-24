@@ -32,6 +32,7 @@ export function UsersPage() {
     <Panel>
       <Toolbar>
         <SearchForm
+          className="w-[min(100%,470px)]"
           onSubmit={(event) => {
             event.preventDefault();
             setPage(1);

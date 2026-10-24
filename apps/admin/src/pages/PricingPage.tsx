@@ -182,22 +182,19 @@ export function PricingPage() {
                 <Select
                   name="kind"
                   value={editing.kind}
-                  onChange={(event) =>
+                  onChange={(value) =>
                     setEditing({
                       ...editing,
-                      kind: event.target.value as CreditPriceRecord['kind'],
+                      kind: value as CreditPriceRecord['kind'],
                       unit: 'request',
                     })
                   }
                   disabled={!!editing.id}
-                >
-                  {Object.entries(kindName).map(([value, title]) => (
-                    <option key={value} value={value}>
-                      {title}
-                    </option>
-                  ))}
-                </Select>
-                {editing.id && <Input type="hidden" name="kind" value={editing.kind} />}
+                  options={Object.entries(kindName).map(([value, title]) => ({
+                    value,
+                    label: title,
+                  }))}
+                />
               </Field>
               <Field>
                 模型标识
@@ -212,10 +209,17 @@ export function PricingPage() {
               </Field>
               <Field>
                 计费单位
-                <Select name="unit" defaultValue={editing.unit}>
-                  <option value="request">每次生成</option>
-                  {editing.kind === 'video' && <option value="second">每秒视频</option>}
-                </Select>
+                <Select
+                  key={editing.kind}
+                  name="unit"
+                  defaultValue={editing.unit}
+                  options={[
+                    { value: 'request', label: '每次生成' },
+                    ...(editing.kind === 'video'
+                      ? [{ value: 'second', label: '每秒视频' }]
+                      : []),
+                  ]}
+                />
               </Field>
               <Field>
                 积分

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   AdjustCreditsSchema,
+  AdminListQuerySchema,
   CreditPriceInputSchema,
   PageQuerySchema,
   PlatformSettingsSchema,
@@ -14,6 +15,27 @@ import { Prisma } from '@reel/db';
 import { z } from 'zod';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreditsService } from '../credits/credits.service';
+
+/** 可选的创建时间范围过滤：start/end 任一提供即生效 */
+const createdAtRange = (start?: Date, end?: Date): { createdAt?: { gte?: Date; lte?: Date } } =>
+  start || end ? { createdAt: { ...(start ? { gte: start } : {}), ...(end ? { lte: end } : {}) } } : {};
+
+const assetListSelect = {
+  id: true,
+  kind: true,
+  source: true,
+  status: true,
+  name: true,
+  url: true,
+  width: true,
+  height: true,
+  prompt: true,
+  model: true,
+  error: true,
+  createdAt: true,
+  user: { select: { id: true, name: true, email: true } },
+  folder: { select: { name: true } },
+} satisfies Prisma.AssetSelect;
 
 @Injectable()
 export class AdminService {
@@ -259,6 +281,87 @@ export class AdminService {
       total,
       page,
       pageSize,
+    };
+  }
+
+  async projects(raw: unknown) {
+    const { page, pageSize, search, start, end } = AdminListQuerySchema.parse(raw);
+    const where: Prisma.ProjectWhereInput = {
+      ...(search ? { user: { name: { contains: search, mode: 'insensitive' } } } : {}),
+      ...createdAtRange(start, end),
+    };
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.project.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          createdAt: true,
+          updatedAt: true,
+          deletedAt: true,
+          user: { select: { id: true, name: true, email: true } },
+          _count: { select: { assets: { where: { status: { not: 'failed' } } }, generationTasks: true } },
+        },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.project.count({ where }),
+    ]);
+    return {
+      items: rows.map(({ _count, ...row }) => ({
+        ...row,
+        assetCount: _count.assets,
+        taskCount: _count.generationTasks,
+      })),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async assets(raw: unknown) {
+    const { page, pageSize, search, start, end, kind, status } =
+      AdminListQuerySchema.parse(raw);
+    // 资产管理只统计资产库素材（folderId 非空），生成失败的记录不算资产
+    const where: Prisma.AssetWhereInput = {
+      folderId: { not: null },
+      ...(search ? { user: { name: { contains: search, mode: 'insensitive' } } } : {}),
+      ...createdAtRange(start, end),
+      ...(kind ? { kind } : {}),
+      status: status ?? { not: 'failed' },
+    };
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.asset.findMany({
+        where,
+        select: assetListSelect,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.asset.count({ where }),
+    ]);
+    return {
+      items: rows.map(({ folder, ...row }) => ({
+        ...row,
+        folderName: folder?.name ?? null,
+      })),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async asset(id: string) {
+    const row = await this.prisma.asset.findUnique({
+      where: { id },
+      select: { ...assetListSelect, content: true },
+    });
+    if (!row) throw new NotFoundException('素材不存在');
+    const { folder, ...rest } = row;
+    return {
+      ...rest,
+      folderName: folder?.name ?? null,
     };
   }
 

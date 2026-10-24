@@ -58,12 +58,14 @@ export function LoginPage() {
   return (
     <LoginShell>
       <LoginCard>
-        <BrandMark large>
-          <ShieldCheck size={26} />
-        </BrandMark>
-        <h1 className="text-[25px] font-bold tracking-[-0.6px] max-[760px]:text-[22px]">
-          ReelMindX <span>Admin</span>
-        </h1>
+        <div className="mb-[23px] flex items-center gap-[13px]">
+          <BrandMark large>
+            <ShieldCheck size={26} />
+          </BrandMark>
+          <h1 className="text-[25px] font-bold tracking-[-0.6px] max-[760px]:text-[22px]">
+            ReelMindX <span>Admin</span>
+          </h1>
+        </div>
         <p className="text-fg-muted">创作平台管理控制台</p>
         {denied ? (
           <>

@@ -53,6 +53,12 @@ export const PageQuerySchema = z.object({
   userId: z.string().uuid().optional(),
   status: z.string().max(30).optional(),
 });
+/** 后台列表通用查询：用户名模糊搜索（search）+ 创建时间范围（start/end）+ 可选枚举过滤 */
+export const AdminListQuerySchema = PageQuerySchema.extend({
+  kind: z.string().max(30).optional(),
+  start: z.coerce.date().optional(),
+  end: z.coerce.date().optional(),
+});
 export const AdjustCreditsSchema = z.object({
   requestId: z.string().uuid(),
   amount: z
@@ -106,6 +112,36 @@ export interface AdminTask {
     providerTaskId: string | null;
   }[];
   settlements: { id: string; status: string; amount: number }[];
+}
+export interface AdminProjectRow {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  user: { id: string; name: string; email: string };
+  assetCount: number;
+  taskCount: number;
+}
+export interface AdminAssetRow {
+  id: string;
+  kind: string;
+  source: string;
+  status: string;
+  name: string;
+  url: string | null;
+  width: number | null;
+  height: number | null;
+  prompt: string | null;
+  model: string | null;
+  error: string | null;
+  createdAt: string;
+  user: { id: string; name: string; email: string };
+  folderName: string | null;
+}
+/** 素材详情：在行数据基础上补充文本内容，用于后台预览弹窗 */
+export interface AdminAssetDetail extends AdminAssetRow {
+  content: string | null;
 }
 export interface AuditRecord {
   id: string;
