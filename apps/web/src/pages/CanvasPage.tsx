@@ -1908,6 +1908,27 @@ function InfiniteCanvas({
     },
     [dependencyTargetId],
   );
+  // 双击与右键空白画布共用：在指针位置打开添加节点菜单。
+  // 仅 pane 本体（空白区域）触发；节点、连线、框选层上的双击不打开菜单。
+  const openAddMenuAt = useCallback(
+    (event: React.MouseEvent | MouseEvent) => {
+      if (dependencyTargetId || !(event.target instanceof Element) || !wrapperRef.current || !instance) return;
+      if (
+        !event.target.closest('.react-flow__pane') ||
+        event.target.closest('.react-flow__node, .react-flow__edge, .react-flow__nodesselection-rect')
+      )
+        return;
+      const bounds = wrapperRef.current.getBoundingClientRect();
+      setAddMenuPosition({
+        x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - 216)),
+        y: Math.max(8, Math.min(event.clientY - bounds.top, bounds.height - 374)),
+        flow: instance.screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+      });
+      setShowAddMenu(true);
+      setNodeActionMenu(null);
+    },
+    [dependencyTargetId, instance],
+  );
   const actionMenuNode = nodeActionMenu
     ? nodes.find((node) => node.id === nodeActionMenu.nodeId)
     : undefined;
@@ -2059,6 +2080,12 @@ function InfiniteCanvas({
               setNodeActionError(null);
               setDependencyTargetId(null);
             }}
+            // 禁用画布内系统默认右键菜单：节点/输入框等有自己的处理，其余一律屏蔽
+            onContextMenu={(event) => event.preventDefault()}
+            onPaneContextMenu={(event) => {
+              event.preventDefault();
+              openAddMenuAt(event);
+            }}
             defaultViewport={canvas.graph.viewport}
             minZoom={0.25}
             maxZoom={2}
@@ -2075,17 +2102,7 @@ function InfiniteCanvas({
             selectionOnDrag={!dependencyTargetId && !isPanKeyPressed}
             selectionMode={SelectionMode.Partial}
             onSelectionStart={() => setShowAddMenu(false)}
-            onDoubleClick={(event) => {
-              if (dependencyTargetId || !(event.target instanceof Element) || !event.target.closest('.react-flow__pane') || !wrapperRef.current || !instance) return;
-              const bounds = wrapperRef.current.getBoundingClientRect();
-              setAddMenuPosition({
-                x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - 216)),
-                y: Math.max(8, Math.min(event.clientY - bounds.top, bounds.height - 374)),
-                flow: instance.screenToFlowPosition({ x: event.clientX, y: event.clientY }),
-              });
-              setShowAddMenu(true);
-              setNodeActionMenu(null);
-            }}
+            onDoubleClick={openAddMenuAt}
             deleteKeyCode={dependencyTargetId ? null : ['Backspace', 'Delete']}
             fitView={
               canvas.graph.nodes.length > 0 &&
