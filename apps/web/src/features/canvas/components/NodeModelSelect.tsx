@@ -5,6 +5,7 @@ export type CanvasNodeKind = 'text' | 'image' | 'video';
 export type CanvasModelId =
   | 'glm-4v-flash'
   | 'glm-4.1v-thinking-flash'
+  | 'glm-4.6v-flash'
   | 'cogview-3-flash'
   | 'cogvideox-flash';
 
@@ -21,6 +22,12 @@ const MODEL_OPTIONS: Record<CanvasNodeKind, SelectOption<CanvasModelId>[]> = {
       label: 'GLM-4.1V-Thinking-Flash',
       description: '视觉深度推理，质量更高',
       icon: <BrainCircuit className="h-4 w-4" />,
+    },
+    {
+      value: 'glm-4.6v-flash',
+      label: 'GLM-4.6V-Flash',
+      description: '新一代多模态，128K 上下文',
+      icon: <Sparkles className="h-4 w-4" />,
     },
   ],
   image: [
