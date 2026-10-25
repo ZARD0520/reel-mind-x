@@ -1519,10 +1519,11 @@ function InfiniteCanvas({
     const wrapper = wrapperRef.current;
     if (!wrapper || dependencyTargetId) return;
     // React Flow 给可拖动节点添加 nopan；将节点和提示词上的滚轮交给画布处理。
+    // 引用列表（listbox）除外：滚轮应滚动列表本身，而不是转发给画布。
     const forwardWheel = (event: WheelEvent) => {
       if (!(event.target instanceof Element)) return;
       if (!event.target.closest('.react-flow__node, .react-flow__node-toolbar')) return;
-      if (event.target.closest('.workflow-node-editor, [role="dialog"], [role="tooltip"]')) return;
+      if (event.target.closest('.workflow-node-editor, [role="dialog"], [role="tooltip"], [role="listbox"]')) return;
       const pane = wrapper.querySelector('.react-flow__pane');
       if (!pane) return;
       event.preventDefault();
@@ -2606,9 +2607,19 @@ export function CanvasPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const routeState = location.state as { initialAgentPrompt?: unknown } | null;
+  const routeState = location.state as { initialAgentPrompt?: unknown; initialReferences?: unknown } | null;
   const initialAgentPrompt =
     typeof routeState?.initialAgentPrompt === 'string' ? routeState.initialAgentPrompt : '';
+  // 首页携带的聊天附件（已上传/从资产库选择的图片素材）
+  const initialReferences = Array.isArray(routeState?.initialReferences)
+    ? (routeState.initialReferences as CanvasChatReference[]).filter(
+        (reference) =>
+          reference &&
+          typeof reference.id === 'string' &&
+          typeof reference.title === 'string' &&
+          reference.kind === 'image',
+      )
+    : [];
   const [name, setName] = useState('');
   const [hasNameError, setHasNameError] = useState(false);
   const [isDependencySelecting, setIsDependencySelecting] = useState(false);
@@ -2787,6 +2798,7 @@ export function CanvasPage() {
         open={isAgentChatOpen}
         fullscreen={isAgentChatFullscreen}
         initialPrompt={initialAgentPrompt}
+        initialReferences={initialReferences}
         onInitialPromptConsumed={() => navigate(location.pathname, { replace: true, state: null })}
         onFocusNode={focusChatNode}
         userName={me.data?.name || me.data?.email || '用户'}

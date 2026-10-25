@@ -1,21 +1,36 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { GenerateTextInput, GeneratedText } from '@reel/contracts';
+import type { AssetReference } from '@reel/contracts';
 import type { ChatMessage } from '@reel/llm';
 import { LlmService } from '../llm/llm.service';
+import { MAX_REFERENCE_IMAGES, readLocalImageAsDataUrl } from '../llm/asset-image';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { Env } from '../../config/env';
 
 /**
  * AI 文本生成业务逻辑。
  * 约束模型输出字数（默认 100 字），并做兜底截断。
+ * 参考图通过 base64 随消息传给视觉模型（GLM-4V 系列），不走 /files URL——
+ * 该路由需要登录态，第三方服务无法拉取。
  */
 @Injectable()
 export class TextGenService {
-  constructor(private readonly llm: LlmService, private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly llm: LlmService,
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService<Env, true>,
+  ) {}
 
   async generateContent(input: GenerateTextInput, signal?: AbortSignal): Promise<GeneratedText> {
+    const referenceImages = await this.resolveReferenceImages(input.references);
     const messages: ChatMessage[] = [{ role: 'system', content:
       `你是短视频文案助手。请根据用户需求生成一段简洁有力的文案，严格控制在 ${input.maxLength} 字以内，不要输出多余解释、标题或引号。注意结合上下文。`,
     }, ...(input.messages?.length ? input.messages.map((message) => ({ role: message.role, content: message.content })) : [{ role: 'user' as const, content: input.prompt! }])];
+    if (referenceImages.length) {
+      const lastUser = [...messages].reverse().find((message) => message.role === 'user');
+      if (lastUser) lastUser.images = referenceImages;
+    }
     const result = await this.llm.chat(messages, { temperature: input.temperature, model: input.model, maxTokens: Math.ceil(input.maxLength * 2), signal });
     return { text: this.clamp(result.text.trim(), input.maxLength), model: result.model, usage: result.usage };
   }
@@ -81,6 +96,32 @@ export class TextGenService {
 
   /** 按字符数截断（超出时保留前 maxLength 个字符） */
   private clamp(text: string, maxLength: number): string {
-    return [...text].length > maxLength ? [...text].slice(0, maxLength).join('') : text;
+    return [...text].slice(0, maxLength).join('');
+  }
+
+  /**
+   * 解析引用中的图片为 base64 data URL（最多 MAX_REFERENCE_IMAGES 张）。
+   * 图片引用优先用自带 url，否则按 assetId 查询；磁盘读取失败时跳过该图，不阻断生成。
+   */
+  private async resolveReferenceImages(references?: AssetReference[]): Promise<string[]> {
+    const imageRefs = (references ?? []).filter(
+      (reference) => reference.kind === 'image' && (reference.url || reference.assetId),
+    ).slice(0, MAX_REFERENCE_IMAGES);
+    const storageDir = this.config.get('STORAGE_DIR', { infer: true });
+    const images: string[] = [];
+    for (const reference of imageRefs) {
+      let url = reference.url;
+      if (!url && reference.assetId) {
+        const asset = await this.prisma.asset.findUnique({
+          where: { id: reference.assetId },
+          select: { url: true },
+        });
+        url = asset?.url ?? undefined;
+      }
+      if (!url) continue;
+      const dataUrl = await readLocalImageAsDataUrl(storageDir, url);
+      if (dataUrl) images.push(dataUrl);
+    }
+    return images;
   }
 }

@@ -6,19 +6,20 @@ import { CanvasChatComposer } from './CanvasChatComposer';
 import { CanvasChatHistory } from './CanvasChatHistory';
 import { CanvasChatMessage } from './CanvasChatMessage';
 
-export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPrompt, userName, onInitialPromptConsumed, onFocusNode, onToggleFullscreen, onClose }: {
+export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPrompt, initialReferences, userName, onInitialPromptConsumed, onFocusNode, onToggleFullscreen, onClose }: {
   canvasId: string;
   nodes: CanvasChatReference[];
   open: boolean;
   fullscreen: boolean;
   initialPrompt: string;
+  initialReferences: CanvasChatReference[];
   userName: string;
   onInitialPromptConsumed: () => void;
   onFocusNode: (nodeId: string) => void;
   onToggleFullscreen: () => void;
   onClose: () => void;
 }) {
-  const chat = useCanvasChat(canvasId, initialPrompt, onInitialPromptConsumed);
+  const chat = useCanvasChat(canvasId, initialPrompt, onInitialPromptConsumed, initialReferences);
   const availableNodeIds = useMemo(() => new Set(nodes.map((node) => node.id)), [nodes]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -54,7 +55,7 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
 
         <div className="shrink-0 px-4 pb-4">
           {chat.error && <p role="alert" className="mb-2 px-1 text-xs text-red-400">{chat.error}</p>}
-          <CanvasChatComposer chat={chat} nodes={nodes} onFocusNode={onFocusNode} />
+          <CanvasChatComposer chat={chat} nodes={nodes} canvasId={canvasId} onFocusNode={onFocusNode} />
         </div>
       </div>
     </aside>

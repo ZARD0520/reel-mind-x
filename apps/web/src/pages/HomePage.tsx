@@ -1,11 +1,14 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, AlertTriangle, ArrowUp, Check, Clapperboard, Loader2, LogOut, Mic, Plus, Trash2, User, X } from 'lucide-react';
 import type { AuthSession, Canvas, User as ReelUser } from '@reel/contracts';
 import { ApiError, api } from '../lib/api';
+import type { CanvasChatReference } from '../features/canvas/chat-types';
+import { readableReferences, referenceIds, referenceToken } from '../features/canvas/inline-references';
+import { ChatAttachMenu } from '../features/canvas/components/ChatAttachMenu';
+import { InlineReferenceInput, type InlineReferenceInputHandle } from '../features/canvas/components/InlineReferenceInput';
 import { useToast } from '../components/ui/Toast';
-import { ModelSelect, type ModelId } from '../features/home/components/ModelSelect';
 import { AssetsView } from '../features/home/components/AssetsView';
 import { CreditWallet } from '../components/CreditWallet';
 
@@ -267,7 +270,10 @@ export function HomePage() {
   const [prompt, setPrompt] = useState('');
   const [placeholderLength, setPlaceholderLength] = useState(0);
   const [isDeletingPlaceholder, setIsDeletingPlaceholder] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<ModelId>('glm-4-flash');
+  const [chatAttachments, setChatAttachments] = useState<{ reference: CanvasChatReference; file?: File }[]>([]);
+  const composerRef = useRef<InlineReferenceInputHandle>(null);
+  /** 首页上传的附件文件：延迟到画布创建后再上传，按引用 id 索引 */
+  const fileByReferenceId = useRef(new Map<string, File>());
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const toast = useToast();
@@ -301,14 +307,28 @@ export function HomePage() {
   }, [isDeletingPlaceholder, placeholderLength]);
 
   const createCanvas = useMutation({
-    mutationFn: ({ name }: { name?: string; initialAgentPrompt?: string }) => {
-      return api.canvases.create(name) as Promise<Canvas>;
+    mutationFn: async ({ name, initialAgentPrompt, attachments }: { name?: string; initialAgentPrompt?: string; attachments?: { reference: CanvasChatReference; file?: File }[] }) => {
+      const canvas = await api.canvases.create(name) as Canvas;
+      // 首页上传的附件在画布创建后补传（归属到新画布），资产库添加的引用直接沿用
+      const references: CanvasChatReference[] = [];
+      for (const attachment of attachments ?? []) {
+        if (attachment.file) {
+          const asset = await api.assets.uploadToCanvas(canvas.id, 'image', attachment.file) as { id: string; name: string; url: string | null };
+          references.push({ id: asset.id, kind: 'image', title: asset.name, assetId: asset.id, url: asset.url ?? undefined });
+        } else {
+          references.push(attachment.reference);
+        }
+      }
+      return { canvas, references };
     },
-    onSuccess: (canvas, request) => {
+    onSuccess: (result, request) => {
       void qc.invalidateQueries({ queryKey: ['canvases'] });
-      navigate(`/canvas/${canvas.id}`, {
+      navigate(`/canvas/${result.canvas.id}`, {
         state: request.initialAgentPrompt
-          ? { initialAgentPrompt: request.initialAgentPrompt }
+          ? {
+              initialAgentPrompt: request.initialAgentPrompt,
+              ...(result.references.length ? { initialReferences: result.references } : {}),
+            }
           : undefined,
       });
     },
@@ -325,18 +345,41 @@ export function HomePage() {
   const logout = useMutation({ mutationFn: () => api.auth.logout(), onSuccess: () => { qc.clear(); navigate('/'); } });
   const greeting = useMemo(() => (me.data ? me.data.name || me.data.email : ''), [me.data]);
 
-  const handleCreateCanvas = (name?: string, initialAgentPrompt?: string) => {
+  const handleCreateCanvas = (name?: string, initialAgentPrompt?: string, attachments?: { reference: CanvasChatReference; file?: File }[]) => {
     if (!me.data) {
       setIsAuthOpen(true);
       return;
     }
-    createCanvas.mutate({ name, initialAgentPrompt });
+    createCanvas.mutate({ name, initialAgentPrompt, attachments });
   };
 
   const handlePromptSubmit = () => {
     const initialAgentPrompt = prompt.trim();
     if (!initialAgentPrompt || createCanvas.isPending) return;
-    handleCreateCanvas(undefined, initialAgentPrompt);
+    handleCreateCanvas(undefined, initialAgentPrompt, chatAttachments);
+  };
+
+  const handleAttachPick = (reference: CanvasChatReference, file?: File) => {
+    setChatAttachments((current) => (current.some((item) => item.reference.id === reference.id) ? current : [...current, { reference, file }]));
+    composerRef.current?.insert(reference);
+  };
+
+  const handleConfirmPicks = (references: CanvasChatReference[]) => {
+    setChatAttachments((current) => [
+      ...current,
+      ...references
+        .filter((reference) => !current.some((item) => item.reference.id === reference.id))
+        .map((reference) => ({ reference, file: fileByReferenceId.current.get(reference.id) })),
+    ]);
+    // 弹窗确认时输入框通常未聚焦，统一追加到内容末尾
+    const tokens = references.map((reference) => `${referenceToken(reference)} `).join('');
+    setPrompt((current) => `${current}${current && !current.endsWith(' ') && !current.endsWith('\n') ? ' ' : ''}${tokens}`);
+    composerRef.current?.focus();
+  };
+
+  const handleUploaded = (reference: CanvasChatReference, file?: File) => {
+    if (file) fileByReferenceId.current.set(reference.id, file);
+    setChatAttachments((current) => (current.some((item) => item.reference.id === reference.id) ? current : [...current, { reference, file }]));
   };
 
   const handleRemoveCanvas = (canvas: Canvas) => {
@@ -443,34 +486,34 @@ export function HomePage() {
                     <span className="typewriter-cursor">_</span>
                   </div>
                 )}
-                <textarea
+                <InlineReferenceInput
+                  ref={composerRef}
+                  variant="chat"
                   value={prompt}
-                  onChange={(event) => setPrompt(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault();
-                      handlePromptSubmit();
-                    }
-                  }}
-                  rows={3}
-                  className="relative block min-h-[88px] w-full resize-none bg-transparent px-1 py-1 text-[15px] leading-6 text-[#f7f7f2] caret-[#f7f7f2] outline-none sm:px-1.5"
-                  aria-label="描述你的创作目标"
+                  candidates={chatAttachments.map((attachment) => attachment.reference)}
+                  onChange={setPrompt}
+                  onSubmit={handlePromptSubmit}
+                  placeholder=""
+                  label="描述你的创作目标"
+                  editorClassName="min-h-[88px]! text-[15px]! leading-6! text-[#f7f7f2]! caret-[#f7f7f2]! sm:px-1.5"
                 />
               </div>
-              <div className="mt-1 flex items-center justify-end gap-2">
-                <ModelSelect value={selectedModel} onChange={setSelectedModel} />
-                <button type="button" disabled className="flex h-9 w-9 items-center justify-center rounded-full text-[#b9b9ba] opacity-75" title="语音输入即将支持" aria-label="语音输入即将支持">
-                  <Mic className="h-[17px] w-[17px]" />
-                </button>
-                <button
-                  type="submit"
-                  disabled={!prompt.trim() || createCanvas.isPending}
-                  className="flex h-9 w-9 items-center justify-center rounded-full bg-[#f7f7f2] text-[#090909] transition-all hover:scale-[1.03] hover:bg-white active:scale-95 disabled:cursor-not-allowed disabled:bg-white/[0.12] disabled:text-white/35"
-                  title="创建工作流"
-                  aria-label="发送"
-                >
-                  {createCanvas.isPending ? <Loader2 className="h-[17px] w-[17px] animate-spin" /> : <ArrowUp className="h-[18px] w-[18px] stroke-[2.4]" />}
-                </button>
+              <div className="mt-1 flex items-center justify-between">
+                <ChatAttachMenu uploads={chatAttachments.map((attachment) => attachment.reference)} draftIds={new Set(referenceIds(prompt))} onPick={handleAttachPick} onUploaded={handleUploaded} onConfirmPicks={handleConfirmPicks} disabled={createCanvas.isPending} />
+                <div className="flex items-center gap-2">
+                  <button type="button" disabled className="flex h-9 w-9 items-center justify-center rounded-full text-[#b9b9ba] opacity-75" title="语音输入即将支持" aria-label="语音输入即将支持">
+                    <Mic className="h-[17px] w-[17px]" />
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!prompt.trim() || createCanvas.isPending}
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-[#f7f7f2] text-[#090909] transition-all hover:scale-[1.03] hover:bg-white active:scale-95 disabled:cursor-not-allowed disabled:bg-white/[0.12] disabled:text-white/35"
+                    title="创建工作流"
+                    aria-label="发送"
+                  >
+                    {createCanvas.isPending ? <Loader2 className="h-[17px] w-[17px] animate-spin" /> : <ArrowUp className="h-[18px] w-[18px] stroke-[2.4]" />}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

@@ -1,33 +1,26 @@
-import { Film, Image as ImageIcon, Sparkles } from 'lucide-react';
+import { Film, Image as ImageIcon, Sparkles, Eye, BrainCircuit } from 'lucide-react';
 import { Select, type SelectOption } from '../../../components/ui/Select';
 
 export type CanvasNodeKind = 'text' | 'image' | 'video';
 export type CanvasModelId =
-  | 'glm-4-flash'
-  | 'glm-4-plus'
-  | 'glm-4-air'
+  | 'glm-4v-flash'
+  | 'glm-4.1v-thinking-flash'
   | 'cogview-3-flash'
   | 'cogvideox-flash';
 
 const MODEL_OPTIONS: Record<CanvasNodeKind, SelectOption<CanvasModelId>[]> = {
   text: [
     {
-      value: 'glm-4-flash',
-      label: 'GLM-4-Flash',
-      description: '快速生成脚本',
-      icon: <Sparkles className="h-4 w-4" />,
+      value: 'glm-4v-flash',
+      label: 'GLM-4V-Flash',
+      description: '图像理解，支持参考图',
+      icon: <Eye className="h-4 w-4" />,
     },
     {
-      value: 'glm-4-plus',
-      label: 'GLM-4-Plus',
-      description: '更强理解与创意能力',
-      icon: <Sparkles className="h-4 w-4" />,
-    },
-    {
-      value: 'glm-4-air',
-      label: 'GLM-4-Air',
-      description: '速度与质量均衡',
-      icon: <Sparkles className="h-4 w-4" />,
+      value: 'glm-4.1v-thinking-flash',
+      label: 'GLM-4.1V-Thinking-Flash',
+      description: '视觉深度推理，质量更高',
+      icon: <BrainCircuit className="h-4 w-4" />,
     },
   ],
   image: [
@@ -49,7 +42,7 @@ const MODEL_OPTIONS: Record<CanvasNodeKind, SelectOption<CanvasModelId>[]> = {
 };
 
 export const DEFAULT_CANVAS_MODELS: Record<CanvasNodeKind, CanvasModelId> = {
-  text: 'glm-4-flash',
+  text: 'glm-4v-flash',
   image: 'cogview-3-flash',
   video: 'cogvideox-flash',
 };

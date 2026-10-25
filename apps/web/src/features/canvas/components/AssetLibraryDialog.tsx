@@ -316,13 +316,6 @@ export function AssetLibraryDialog({
   const gridStyle = embedded ? {
     gridTemplateColumns: 'repeat(auto-fill, min(100%, calc((100% - (var(--material-columns) - 1) * 1rem) / var(--material-columns) * 0.7)))',
   } : undefined;
-  const sectionHeading = (label: string, count: number) => embedded && (
-    <div className="mb-4 flex items-center gap-4">
-      <h2 className="shrink-0 text-sm font-medium text-[#b9b9ba]">{label}</h2>
-      <div className="h-px flex-1 bg-white/[0.08]" />
-      <span className="text-xs text-[#66666b]">{count} 个{label === '文件夹' ? '文件夹' : '素材'}</span>
-    </div>
-  );
   const [scope, setScope] = useState<AssetFolderScope>('personal');
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -876,7 +869,7 @@ export function AssetLibraryDialog({
                   </div>
                 ) : folderAssets.length > 0 ? (
                   <div>
-                  {sectionHeading('素材', folderAssets.length)}
+                  <h2 className="mb-4 text-sm font-medium text-[#b9b9ba]">素材</h2>
                   <div className={gridClassName} style={gridStyle}>
                     {folderAssets.map((asset) => (
                       <LibraryAssetThumb

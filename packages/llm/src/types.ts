@@ -11,6 +11,11 @@ export type ChatRole = 'system' | 'user' | 'assistant';
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  /**
+   * 随消息传给多模态（视觉）模型的图片，为图片 URL 或 base64 data URL。
+   * 纯文本模型会忽略；provider 负责映射为厂商的多模态消息格式。
+   */
+  images?: string[];
 }
 
 /** 生成参数（各 provider 自行映射到厂商字段） */

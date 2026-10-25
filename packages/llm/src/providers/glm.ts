@@ -22,10 +22,25 @@ interface GlmResponse {
   };
 }
 
+/**
+ * 已知模型的单次输出 token 上限：智谱服务端会拒绝超限请求（400）。
+ * 未列出的模型不做钳制，由服务端自行校验。
+ */
+const OUTPUT_TOKEN_CEILINGS: Record<string, number> = {
+  'glm-4v-flash': 1024,
+};
+
+function clampMaxTokens(model: string, maxTokens?: number): number | undefined {
+  const ceiling = OUTPUT_TOKEN_CEILINGS[model];
+  if (maxTokens === undefined) return undefined;
+  return ceiling ? Math.min(maxTokens, ceiling) : maxTokens;
+}
+
 
 /**
- * 智谱 GLM-4.5 provider（OpenAI-compatible API）。
- * API 文档：https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5
+ * 智谱 GLM provider（OpenAI-compatible API）。
+ * 文本模型文档：https://docs.bigmodel.cn/cn/guide/models/text/glm-4.5
+ * 视觉模型（GLM-4V 系列）文档：https://docs.bigmodel.cn/cn/guide/models/free/glm-4v-flash
  */
 export class GlmProvider implements LlmProvider {
   readonly name = 'glm';
@@ -48,9 +63,20 @@ export class GlmProvider implements LlmProvider {
 
     const body = {
       model,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: messages.map((m) => ({
+        role: m.role,
+        // 视觉模型（GLM-4V 系列）要求 content 为 text/image_url 分段数组
+        content: m.images?.length
+          ? [
+              { type: 'text', text: m.content },
+              ...m.images.map((url) => ({ type: 'image_url', image_url: { url } })),
+            ]
+          : m.content,
+      })),
       ...(options.temperature !== undefined && { temperature: options.temperature }),
-      ...(options.maxTokens !== undefined && { max_tokens: options.maxTokens }),
+      ...(clampMaxTokens(model, options.maxTokens) !== undefined && {
+        max_tokens: clampMaxTokens(model, options.maxTokens),
+      }),
     };
 
     try {
@@ -79,7 +105,8 @@ export class GlmProvider implements LlmProvider {
       }
 
       return {
-        text: choice.message.content,
+        // 视觉思考模型（GLM-4.1V-Thinking）会用 box 标记包裹最终答案，剥离掉
+        text: choice.message.content.replace(/<\|begin_of_box\|>|<\|end_of_box\|>/g, ''),
         model: data.model ?? model,
         usage: data.usage
           ? {
@@ -107,10 +134,21 @@ export class GlmProvider implements LlmProvider {
         },
         body: JSON.stringify({
           model,
-          messages: messages.map(({ role, content }) => ({ role, content })),
+          messages: messages.map((m) => ({
+            role: m.role,
+            // 与 chat 一致：视觉模型（GLM-4V 系列）要求 content 为 text/image_url 分段数组
+            content: m.images?.length
+              ? [
+                  { type: 'text', text: m.content },
+                  ...m.images.map((url) => ({ type: 'image_url', image_url: { url } })),
+                ]
+              : m.content,
+          })),
           stream: true,
           ...(options.temperature !== undefined && { temperature: options.temperature }),
-          ...(options.maxTokens !== undefined && { max_tokens: options.maxTokens }),
+          ...(clampMaxTokens(model, options.maxTokens) !== undefined && {
+            max_tokens: clampMaxTokens(model, options.maxTokens),
+          }),
         }),
         signal: options.signal,
       });

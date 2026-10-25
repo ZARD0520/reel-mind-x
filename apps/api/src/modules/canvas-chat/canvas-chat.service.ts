@@ -1,12 +1,15 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { ChatMessage } from '@reel/llm';
 import type { Prisma } from '@reel/db';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
+import { MAX_REFERENCE_IMAGES, readLocalImageAsDataUrl } from '../llm/asset-image';
 import { CanvasChatReferenceSchema, type CanvasChatReference } from './canvas-chat.dto';
 import { CreditsService } from '../credits/credits.service';
+import type { Env } from '../../config/env';
 
-const CHAT_MODEL = 'glm-4-flash';
+const CHAT_MODEL = 'glm-4v-flash';
 
 function readablePrompt(content: string): string {
   return content.replace(/@\[([^\]]*)\]\(node:([^)]*)\)/g, (token, title: string) => {
@@ -39,6 +42,7 @@ export class CanvasChatService {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly credits: CreditsService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   private async requireCanvas(userId: string, canvasId: string) {
@@ -164,11 +168,16 @@ export class CanvasChatService {
       });
     }
     const prompt = content.trim();
+    // 引用的图片节点以 base64 随消息传给视觉模型（GLM-4V 系列）；读取失败的跳过
+    const referenceImages = await this.resolveReferenceImages(resolvedReferences);
     const messages: ChatMessage[] = [
       {
         role: 'system',
         content:
-          '你是一个协助用户进行创意构思和内容创作的助手。根据用户的问题自然、清晰地回答。引用的文本节点可直接阅读；图片和视频节点只能依据节点标题、文字内容或生成提示词回答，不要声称看到了画面。',
+          '你是一个协助用户进行创意构思和内容创作的助手。根据用户的问题自然、清晰地回答。引用的文本节点可直接阅读。' +
+          (referenceImages.length
+            ? '用户引用的图片节点画面已作为图片附在本条消息中，可以直接查看、描述和分析。视频节点只能依据节点标题、文字内容或生成提示词回答。'
+            : '注意：本条消息没有附带任何图片，你看不到任何画面。如果用户询问图片或视频的内容，请明确说明你无法看到画面，只能依据节点标题、文字内容或生成提示词推断，不要编造画面细节。'),
       },
       ...history.map((message) => ({
         role: message.role as 'user' | 'assistant',
@@ -176,7 +185,11 @@ export class CanvasChatService {
           readablePrompt(message.content) +
           referenceContext(CanvasChatReferenceSchema.array().catch([]).parse(message.references)),
       })),
-      { role: 'user', content: readablePrompt(prompt) + referenceContext(resolvedReferences) },
+      {
+        role: 'user',
+        content: readablePrompt(prompt) + referenceContext(resolvedReferences),
+        ...(referenceImages.length ? { images: referenceImages } : {}),
+      },
     ];
     let answer = '';
     const hold = await this.credits.beginOperation(
@@ -221,6 +234,23 @@ export class CanvasChatService {
     } finally {
       if (!settled) await this.credits.finishOperation(hold.id, false);
     }
+  }
+
+  /**
+   * 解析引用中的图片节点为 base64 data URL（最多 MAX_REFERENCE_IMAGES 张）。
+   * 引用的素材属主已在 sendStream 中校验；读取失败的跳过，不阻断回复。
+   */
+  private async resolveReferenceImages(references: CanvasChatReference[]): Promise<string[]> {
+    const storageDir = this.config.get('STORAGE_DIR', { infer: true });
+    const imageRefs = references
+      .filter((reference) => reference.kind === 'image' && reference.url)
+      .slice(0, MAX_REFERENCE_IMAGES);
+    const images: string[] = [];
+    for (const reference of imageRefs) {
+      const dataUrl = await readLocalImageAsDataUrl(storageDir, reference.url!);
+      if (dataUrl) images.push(dataUrl);
+    }
+    return images;
   }
 
   private async makeTitle(prompt: string, answer: string): Promise<string> {

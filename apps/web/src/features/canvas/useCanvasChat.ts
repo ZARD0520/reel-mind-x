@@ -11,7 +11,7 @@ type PendingTurn = {
   completed: Conversation | null;
 };
 
-export function useCanvasChat(canvasId: string, initialPrompt: string, onInitialPromptConsumed: () => void) {
+export function useCanvasChat(canvasId: string, initialPrompt: string, onInitialPromptConsumed: () => void, initialReferences: CanvasChatReference[] = []) {
   const queryClient = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -21,6 +21,7 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
   const [error, setError] = useState('');
   const busyRef = useRef(false);
   const initialPromptStarted = useRef(false);
+  const initialReferencesRef = useRef(initialReferences);
   const turnCounter = useRef(0);
 
   const list = useQuery<ConversationSummary[]>({
@@ -75,7 +76,9 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
     if (!initialPrompt.trim() || initialPromptStarted.current) return;
     initialPromptStarted.current = true;
     onInitialPromptConsumed();
-    void send(initialPrompt);
+    void send(initialPrompt, [...initialReferencesRef.current, ...references]);
+    // 首条消息只在进入画布时自动发送一次，引用以跳转携带的为准
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPrompt, onInitialPromptConsumed, send]);
 
   const finishTurn = useCallback(() => {

@@ -39,12 +39,15 @@ export function CanvasChatMessage({ role, content, references = [], availableNod
   }, [typing, visible, onTypingProgress]);
 
   if (role === 'user') {
+    // 引用既可能是画布节点，也可能是聊天附件素材（资产引用带 assetId/url，非画布节点）
+    const isAvailable = (reference?: CanvasChatReference) =>
+      !!reference && (availableNodeIds.has(reference.id) || !!reference.assetId || !!reference.url);
     return <div className="max-w-[90%] self-end whitespace-pre-wrap break-words rounded-2xl bg-[#303030] px-4 py-2 text-sm leading-6 text-[#f3f3f0]">
       {splitReferences(content).map((part, index) => {
         const reference = references.find((item) => item.id === part.id);
-        return part.id ? <CanvasChatReferenceChip key={index} reference={reference ?? { id: part.id, title: part.title ?? '', kind: 'text' }} available={!!reference && availableNodeIds.has(part.id)} onFocusNode={onFocusNode} /> : part.text;
+        return part.id ? <CanvasChatReferenceChip key={index} reference={reference ?? { id: part.id, title: part.title ?? '', kind: 'text' }} available={isAvailable(reference)} onFocusNode={onFocusNode} /> : part.text;
       })}
-      {references.filter((item) => !referenceIds(content).includes(item.id)).map((reference) => <CanvasChatReferenceChip key={reference.id} reference={reference} available={availableNodeIds.has(reference.id)} onFocusNode={onFocusNode} />)}
+      {references.filter((item) => !referenceIds(content).includes(item.id)).map((reference) => <CanvasChatReferenceChip key={reference.id} reference={reference} available={isAvailable(reference)} onFocusNode={onFocusNode} />)}
     </div>;
   }
 
