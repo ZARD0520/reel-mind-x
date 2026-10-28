@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { VIDEO_SIZES, validImageSize } from './media-capabilities';
+export * from './media-capabilities';
 export * from './credits';
 export { MODEL_BUSY_MESSAGE } from './generation';
 
@@ -653,7 +655,10 @@ export type GeneratedText = z.infer<typeof GeneratedTextSchema>;
 
 /** 生成尺寸格式：宽x高（如 "1280x720"）。前端按比例映射到各模型支持的尺寸。 */
 const SizeSchema = z.string().regex(/^\d{2,5}x\d{2,5}$/, 'size 格式应为 "宽x高"，如 1280x720');
-const VideoSizeSchema = z.enum(['1280x720', '720x1280', '1024x1024']);
+const VideoSizeSchema = z.enum(VIDEO_SIZES);
+const ImageSizeSchema = SizeSchema.refine(validImageSize, '图片宽高须为 512～2048、16 的倍数，且总像素不超过 2097152');
+const FpsSchema = z.union([z.literal(30), z.literal(60)]);
+const MediaQualitySchema = z.enum(['standard', 'hd', 'speed', 'quality']);
 
 /** AI 图像生成请求 */
 export const GenerateImageSchema = z
@@ -664,7 +669,8 @@ export const GenerateImageSchema = z
     prompt: z.string().min(1).max(2000),
     userPrompt: z.string().min(1).max(2000).optional(),
     references: z.array(AssetReferenceSchema).max(100).optional(),
-    size: SizeSchema.default('1024x1024'),
+    size: ImageSizeSchema.default('1024x1024'),
+    quality: z.enum(['standard', 'hd']).optional(),
     model: z.string().min(1).max(100).optional(),
   })
   .refine((input) => Number(!!input.projectId) + Number(!!input.canvasId) === 1, {
@@ -681,15 +687,17 @@ export const GenerateVideoSchema = z
     requestId: z.string().uuid().optional(),
     projectId: z.string().uuid().optional(),
     canvasId: z.string().uuid().optional(),
-    prompt: z.string().min(1).max(2000),
+    prompt: z.string().min(1).max(512),
     userPrompt: z.string().min(1).max(2000).optional(),
     references: z.array(AssetReferenceSchema).max(100).optional(),
-    size: VideoSizeSchema.default('1280x720'),
-    duration: VideoDurationSchema.default(5),
+    size: VideoSizeSchema.default('1920x1080'),
+    fps: FpsSchema.optional(),
+    quality: z.enum(['speed', 'quality']).optional(),
+    duration: VideoDurationSchema.optional(),
     withAudio: z.boolean().default(false),
     model: z.string().min(1).max(100).optional(),
-    /** 按顺序传入图片素材：第一个是首帧，第二个是尾帧 */
-    imageAssetIds: z.array(z.string().uuid()).max(2).optional(),
+    /** CogVideoX-Flash 仅支持单张参考图片 */
+    imageAssetIds: z.array(z.string().uuid()).max(1, '当前视频模型最多支持一张参考图').optional(),
   })
   .refine((input) => Number(!!input.projectId) + Number(!!input.canvasId) === 1, {
     message: 'projectId 和 canvasId 必须且只能提供一个',
@@ -708,6 +716,8 @@ export const CreateGenerationTaskSchema = z.object({
   references: z.array(AssetReferenceSchema).max(100).default([]),
   model: z.string().min(1).max(100).optional(),
   size: SizeSchema.optional(),
+  fps: FpsSchema.optional(),
+  quality: MediaQualitySchema.optional(),
   duration: VideoDurationSchema.optional(),
   withAudio: z.boolean().optional(),
   imageAssetIds: z.array(z.string().uuid()).max(2).default([]),
@@ -717,7 +727,23 @@ export const CreateGenerationTaskSchema = z.object({
 }).refine((input) => Number(!!input.canvasId) + Number(!!input.projectId) === 1, {
   message: 'projectId 和 canvasId 必须且只能提供一个',
 }).refine((input) => !input.nodeId || !!input.canvasId, { message: '节点任务必须属于画布' })
-  .refine((input) => input.kind !== 'video' || !input.size || ['1280x720', '720x1280', '1024x1024'].includes(input.size), { message: '视频尺寸不受支持' });
+  .superRefine((input, ctx) => {
+    const issue = (path: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
+    if (input.kind === 'video') {
+      if (input.prompt.length > 512) issue('prompt', '视频提示词（含文字参考内容）不能超过 512 字符');
+      if (input.size && !VIDEO_SIZES.includes(input.size as typeof VIDEO_SIZES[number])) issue('size', '视频分辨率不受支持');
+      if (input.imageAssetIds.length > 1) issue('imageAssetIds', '当前视频模型最多支持一张参考图，不支持首尾帧');
+      if (input.duration !== undefined) issue('duration', '当前视频模型不支持自定义时长');
+      if (input.quality && !['speed', 'quality'].includes(input.quality)) issue('quality', '视频质量参数不受支持');
+      if (input.references.some(ref => ref.kind === 'audio' || ref.kind === 'video')) issue('references', '当前视频模型不支持音频或视频参考');
+    }
+    if (input.kind === 'image') {
+      if (input.prompt.length > 2000) issue('prompt', '图片提示词（含文字参考内容）不能超过 2000 字符');
+      if (input.size && !validImageSize(input.size)) issue('size', '图片尺寸不受支持');
+      if (input.quality && !['standard', 'hd'].includes(input.quality)) issue('quality', '图片质量参数不受支持');
+      if (input.imageAssetIds.length || input.references.some(ref => ref.kind !== 'text')) issue('references', '当前图片模型仅支持文字参考');
+    }
+  });
 export type CreateGenerationTaskInput = z.infer<typeof CreateGenerationTaskSchema>;
 
 export const GenerationTaskStateSchema = z.enum(['queued', 'submitting', 'generating', 'saving', 'unknown', 'completed', 'failed']);

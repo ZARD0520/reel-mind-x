@@ -22,7 +22,7 @@ import { createHash } from 'crypto';
 import type { Env } from '../../config/env';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreditsService } from '../credits/credits.service';
-import { referenceImagePath } from './reference-image-path';
+import { referenceImagePath, validateReferenceImage } from './reference-image-path';
 
 export const GENERATION_QUEUE = 'generation-tasks';
 const INCLUDE_TASK = { items: { orderBy: { index: 'asc' as const }, include: { asset: true } } };
@@ -114,7 +114,7 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
     const references = [...input.references];
     if (input.kind === 'video' && input.imageAssetIds.length) {
       if (new Set(input.imageAssetIds).size !== input.imageAssetIds.length)
-        throw new BadRequestException('首帧和尾帧不能使用同一个图片素材');
+        throw new BadRequestException('不能重复使用同一张参考图片');
       const frames = await this.prisma.asset.findMany({
         where: {
           id: { in: input.imageAssetIds },
@@ -127,9 +127,13 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
       // References can come from uploads, history, or the library, not only this scope.
       // The owner, media type and ready status are still checked above.
       if (frames.length !== input.imageAssetIds.length)
-        throw new BadRequestException('首尾帧图片不可用，请选择已上传或生成完成的图片');
+        throw new BadRequestException('参考图片不可用，请选择已上传或生成完成的图片');
       if (frames.some((frame) => !referenceImagePath(frame, userId, this.config.get('STORAGE_DIR', { infer: true }))))
-        throw new BadRequestException('首尾帧图片文件不可用，请重新上传或选择其他图片');
+        throw new BadRequestException('参考图片文件不可用，请重新上传或选择其他图片');
+      for (const frame of frames) {
+        try { await validateReferenceImage(referenceImagePath(frame, userId, this.config.get('STORAGE_DIR', { infer: true }))!); }
+        catch (error) { throw new BadRequestException(error instanceof Error && !('code' in error) ? error.message : '参考图片文件不可用，请重新上传'); }
+      }
       for (const id of input.imageAssetIds) {
         const frame = frames.find((candidate) => candidate.id === id)!;
         if (!references.some((reference) => reference.kind === 'image' && reference.assetId === id))

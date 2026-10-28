@@ -53,6 +53,42 @@ const { AssetFoldersService } = require('../src/modules/asset-folders/asset-fold
 const repo = path.resolve(__dirname, '../../..');
 const { referenceImagePath } = require('../src/modules/generation-tasks/reference-image-path.ts');
 
+test('media model contracts reject unsupported options and preserve valid parameters', () => {
+  const { CreateGenerationTaskSchema, VIDEO_SIZES, IMAGE_SIZES } = apiRequire('@reel/contracts');
+  const base = { requestId: randomUUID(), canvasId: randomUUID(), kind: 'video', prompt: 'test' };
+  for (const size of VIDEO_SIZES) for (const fps of [30, 60]) {
+    const result = CreateGenerationTaskSchema.parse({ ...base, size, fps, quality: 'quality' });
+    assert.equal(result.size, size);
+    assert.equal(result.fps, fps);
+  }
+  for (const patch of [{ size: '1280x720' }, { fps: 24 }, { duration: 10 }, { prompt: 'a'.repeat(513) }, { imageAssetIds: [randomUUID(), randomUUID()] }, { quality: 'hd' }]) {
+    assert.equal(CreateGenerationTaskSchema.safeParse({ ...base, ...patch }).success, false);
+  }
+  assert.equal(CreateGenerationTaskSchema.safeParse({ ...base, prompt: 'a'.repeat(512) }).success, true);
+  for (const size of IMAGE_SIZES) assert.equal(CreateGenerationTaskSchema.safeParse({ ...base, kind: 'image', size }).success, true);
+  for (const patch of [{ size: '2048x2048' }, { size: '513x512' }, { prompt: 'a'.repeat(2001) }, { quality: 'speed' }]) {
+    assert.equal(CreateGenerationTaskSchema.safeParse({ ...base, kind: 'image', ...patch }).success, false);
+  }
+});
+
+test('provider forwards resolution, frame rate, quality and audio without Flash duration', async () => {
+  const { ZhipuAiGenProvider } = apiRequire('@reel/ai-gen');
+  const provider = new ZhipuAiGenProvider({ apiKey: 'fixture' });
+  const originalFetch = global.fetch;
+  const bodies = [];
+  global.fetch = async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ id: 'fixture', data: [{ url: 'https://fixture/image.png' }] }) };
+  };
+  try {
+    await provider.submitVideo({ prompt: 'test', model: 'cogvideox-flash', size: '3840x2160', fps: 60, quality: 'quality', withAudio: true, duration: 10, imageUrls: ['data:image/png;base64,fixture'] });
+    assert.deepEqual(bodies[0], { model: 'cogvideox-flash', prompt: 'test', size: '3840x2160', fps: 60, quality: 'quality', with_audio: true, image_url: 'data:image/png;base64,fixture' });
+    await provider.generateImage({ prompt: 'test', size: '864x1152', quality: 'hd' });
+    assert.equal(bodies[1].quality, 'hd');
+    assert.equal(bodies[1].size, '864x1152');
+  } finally { global.fetch = originalFetch; }
+});
+
 test('library reference paths resolve only user-owned stored uploads', () => {
   assert.equal(referenceImagePath({ localPath: null, url: '/files/users/owner/uploads/image.png' }, 'owner', '/storage'), '/storage/users/owner/uploads/image.png');
   for (const url of ['/files/users/other/uploads/image.png', '/files/users/owner/uploads/../secret.png', '/files/users/owner/uploads/%2e%2e%2fsecret.png', 'https://invalid.test/image.png']) {
@@ -423,7 +459,7 @@ test(
       });
       service = new GenerationTasksService(prisma, config, queue, credits);
 
-      await suite.test('video frames accept uploaded and library images and preserve frame order', async () => {
+      await suite.test('video references accept one uploaded or library image and reject invalid references', async () => {
         const directory = path.join(storage, 'users', user.id, 'uploads');
         fs.mkdirSync(directory, { recursive: true });
         const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK0cAAAAASUVORK5CYII=', 'base64');
@@ -432,19 +468,27 @@ test(
         const folder = await prisma.assetFolder.create({ data: { userId: user.id, name: 'Frames' } });
         const library = await prisma.asset.create({ data: { userId: user.id, folderId: folder.id, kind: 'image', source: 'ai', status: 'ready', name: 'Library frame', url: `/files/users/${user.id}/uploads/frame.png` } });
         const uploaded = await prisma.asset.create({ data: { userId: user.id, canvasId: canvas.id, kind: 'image', source: 'upload', status: 'ready', name: 'Uploaded frame', url: `/files/users/${user.id}/uploads/frame.png`, localPath: file, historyDeletedAt: new Date() } });
-        const task = await create({ imageAssetIds: [library.id, uploaded.id] });
-        const row = await prisma.generationTask.findUniqueOrThrow({ where: { id: task.id } });
-        assert.deepEqual(row.input.imageAssetIds, [library.id, uploaded.id]);
-        assert.deepEqual(row.input.references.map((ref) => ref.assetId), [library.id, uploaded.id]);
-        const encoded = await freshWorker().encodeImages(user.id, [library.id, uploaded.id]);
-        assert.deepEqual(encoded, [png, png].map((buffer) => `data:image/png;base64,${buffer.toString('base64')}`));
+        await assert.rejects(create({ imageAssetIds: [library.id, uploaded.id] }), /最多支持一张参考图/);
+        for (const asset of [library, uploaded]) {
+          const task = await create({ imageAssetIds: [asset.id], size: '1920x1080', fps: 60, quality: 'quality' });
+          const row = await prisma.generationTask.findUniqueOrThrow({ where: { id: task.id } });
+          assert.deepEqual(row.input.imageAssetIds, [asset.id]);
+          assert.deepEqual(row.input.references.map((ref) => ref.assetId), [asset.id]);
+          assert.equal(row.input.fps, 60);
+          assert.deepEqual(await freshWorker().encodeImages(user.id, [asset.id]), [`data:image/png;base64,${png.toString('base64')}`]);
+          await step(freshWorker({ submitVideo: async () => { throw new AiGenError('Fixture complete', 400); } }), task.items[0].id);
+        }
+        fs.writeFileSync(file, Buffer.alloc(5 * 1024 * 1024 + 1));
+        await assert.rejects(create({ imageAssetIds: [uploaded.id] }), /不能超过 5MB/);
+        fs.writeFileSync(file, 'GIF89a');
+        await assert.rejects(create({ imageAssetIds: [uploaded.id] }), /仅支持 PNG/);
+        fs.writeFileSync(file, png);
         // Another account's ready image must remain inaccessible.
         const stranger = await prisma.user.create({ data: { email: `${randomUUID()}@invalid.test`, name: 'Other' } });
         const foreignCanvas = await prisma.canvas.create({ data: { userId: stranger.id, name: 'Private' } });
         const foreign = await prisma.asset.create({ data: { userId: stranger.id, canvasId: foreignCanvas.id, kind: 'image', source: 'upload', status: 'ready', name: 'Private', localPath: file } });
-        await assert.rejects(create({ imageAssetIds: [foreign.id] }), /首尾帧图片不可用/);
+        await assert.rejects(create({ imageAssetIds: [foreign.id] }), /参考图片不可用/);
         // Leave no queued job/credit hold behind for subsequent reliability scenarios.
-        await step(freshWorker({ submitVideo: async () => { throw new AiGenError('Fixture complete', 400); } }), task.items[0].id);
         fs.unlinkSync(file);
       });
 
@@ -520,7 +564,7 @@ test(
               yield '测试回答';
             },
           };
-          const chat = new CanvasChatService(prisma, llm, credits);
+          const chat = new CanvasChatService(prisma, llm, credits, config);
           const conversation = await chat.create(fixture.id, scope.id);
           const signal = new AbortController().signal;
           const events = [];

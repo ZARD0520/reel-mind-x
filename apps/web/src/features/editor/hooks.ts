@@ -39,12 +39,12 @@ export function useGenerateMedia(projectId: string) {
   const qc = useQueryClient();
   const invalidate = () => qc.invalidateQueries({ queryKey: ['assets', projectId] });
   const image = useMutation({
-    mutationFn: (input: { prompt: string; size: string }) =>
+    mutationFn: (input: { prompt: string; size: string; quality?: 'standard' | 'hd' }) =>
       api.aiGenMedia.generateImage({ projectId, ...input }) as Promise<Asset>,
     onSuccess: invalidate,
   });
   const video = useMutation({
-    mutationFn: (input: { prompt: string; size: string; duration?: 5 | 10; withAudio?: boolean }) =>
+    mutationFn: (input: { prompt: string; size: string; fps?: 30 | 60; quality?: 'speed' | 'quality'; withAudio?: boolean }) =>
       api.aiGenMedia.generateVideo({ projectId, ...input }) as Promise<Asset>,
     onSuccess: invalidate,
   });

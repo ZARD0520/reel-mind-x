@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Film, Image, Loader2, Sparkles, X } from 'lucide-react';
 import { useGenerateMedia } from '../hooks';
-import { RATIO_OPTIONS, IMAGE_SIZE_BY_RATIO, VIDEO_SIZE_BY_RATIO, type AspectRatioKey } from '../constants';
+import { MediaGenerationSettings } from '../../canvas/components/MediaGenerationSettings';
 
 interface AiMediaGenDialogProps {
   open: boolean;
@@ -12,7 +12,10 @@ interface AiMediaGenDialogProps {
 
 export function AiMediaGenDialog({ open, projectId, type, onClose }: AiMediaGenDialogProps) {
   const [prompt, setPrompt] = useState('');
-  const [ratio, setRatio] = useState<AspectRatioKey>('16:9');
+  const [sizes, setSizes] = useState({ image: '1024x1024', video: '1920x1080' });
+  const [quality, setQuality] = useState<'standard' | 'hd' | 'speed' | 'quality'>('standard');
+  const [fps, setFps] = useState<30 | 60>(30);
+  const [withAudio, setWithAudio] = useState(false);
   const { image, video } = useGenerateMedia(projectId);
   const mutation = type === 'image' ? image : video;
 
@@ -20,9 +23,9 @@ export function AiMediaGenDialog({ open, projectId, type, onClose }: AiMediaGenD
     e.preventDefault();
     const text = prompt.trim();
     if (!text || mutation.isPending) return;
-    const sizeMap = type === 'image' ? IMAGE_SIZE_BY_RATIO : VIDEO_SIZE_BY_RATIO;
-    const size = sizeMap[ratio];
-    mutation.mutate({ prompt: text, size });
+    if (text.length > (type === 'video' ? 512 : 2000)) return;
+    if (type === 'image') image.mutate({ prompt: text, size: sizes.image, quality: quality === 'hd' ? 'hd' : 'standard' });
+    else video.mutate({ prompt: text, size: sizes.video, quality: quality === 'quality' ? 'quality' : 'speed', fps, withAudio });
   };
 
   const handleClose = () => {
@@ -63,34 +66,19 @@ export function AiMediaGenDialog({ open, projectId, type, onClose }: AiMediaGenD
             onChange={(e) => setPrompt(e.target.value)}
             placeholder={placeholder}
             rows={4}
+            maxLength={type === 'video' ? 512 : 2000}
             disabled={mutation.isPending}
             className="resize-none rounded-lg border border-border-subtle bg-input px-3 py-2 text-[13px] text-fg outline-none placeholder:text-fg-tertiary focus:border-accent disabled:opacity-50"
           />
 
-          {/* 尺寸比例选择器 */}
-          <div className="flex flex-col gap-2">
-            <span className="text-xs text-fg-tertiary">生成比例</span>
-            <div className="flex gap-2">
-              {RATIO_OPTIONS.map((opt) => {
-                const isActive = ratio === opt.key;
-                return (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    onClick={() => setRatio(opt.key)}
-                    disabled={mutation.isPending}
-                    className={`flex-1 rounded-lg border px-3 py-2 text-[12px] font-medium transition-colors ${
-                      isActive
-                        ? 'border-accent bg-accent/10 text-accent'
-                        : 'border-border-subtle bg-input text-fg-secondary hover:border-accent/50'
-                    } disabled:opacity-50`}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <div className="text-right text-xs text-fg-tertiary">{prompt.length}/{type === 'video' ? 512 : 2000}</div>
+          <MediaGenerationSettings kind={type} size={sizes[type]} quality={quality} fps={fps} withAudio={withAudio} disabled={mutation.isPending}
+            onChange={patch => {
+              if (patch.generationSize) setSizes(current => ({ ...current, [type]: patch.generationSize! }));
+              if (patch.generationQuality) setQuality(patch.generationQuality);
+              if (patch.videoFps) setFps(patch.videoFps);
+              if (patch.videoWithAudio !== undefined) setWithAudio(patch.videoWithAudio);
+            }} />
 
           {mutation.isSuccess && (
             <p className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-[12px] text-green-300">

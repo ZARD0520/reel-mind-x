@@ -38,6 +38,7 @@ export class ZhipuAiGenProvider implements AiGenProvider {
           model,
           prompt,
           size,
+          ...(options.quality && { quality: options.quality }),
         }),
         signal,
       });
@@ -91,7 +92,9 @@ export class ZhipuAiGenProvider implements AiGenProvider {
             image_url: imageUrls.length === 1 ? imageUrls[0] : imageUrls,
           }),
           ...(size && { size }),
-          ...(duration && { duration }),
+          ...(model !== 'cogvideox-flash' && duration && { duration }),
+          ...(options.fps && { fps: options.fps }),
+          ...(options.quality && { quality: options.quality }),
           ...(withAudio !== undefined && { with_audio: withAudio }),
         }),
         signal,

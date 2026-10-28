@@ -1,7 +1,7 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { AlignLeft, FileText, Film, Image as ImageIcon, Music, X } from 'lucide-react';
 import type { CanvasChatReference } from '../chat-types';
-import { referenceIds, referenceToken, splitReferences } from '../inline-references';
+import { readableReferences, referenceIds, referenceToken, splitReferences } from '../inline-references';
 import { createReferenceIcon } from './reference-icon';
 import { useReferenceHoverPreview } from './ReferenceHoverPreview';
 import { usePromptEditMenu } from './usePromptEditMenu';
@@ -17,6 +17,7 @@ type Props = {
   label: string;
   disabled?: boolean;
   maxReferences?: number;
+  maxLength?: number;
   variant?: 'node' | 'chat';
   /** 覆盖/追加编辑区的样式（如首页输入框的字号与最小高度） */
   editorClassName?: string;
@@ -42,7 +43,7 @@ function serialize(node: Node): string {
     `${index && child.nodeName === 'DIV' ? '\n' : ''}${serialize(child)}`).join('');
 }
 
-export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props>(function InlineReferenceInput({ value, candidates, onChange, onReference, onSubmit, placeholder, label, disabled, maxReferences, variant = 'node', editorClassName }, ref) {
+export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props>(function InlineReferenceInput({ value, candidates, onChange, onReference, onSubmit, placeholder, label, disabled, maxReferences, maxLength, variant = 'node', editorClassName }, ref) {
   const root = useRef<HTMLDivElement>(null);
   const iconTemplates = useRef<HTMLSpanElement>(null);
   const editMenu = usePromptEditMenu(root, disabled);
@@ -51,6 +52,15 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
   const [mention, setMention] = useState<{ start: number; end: number; query: string } | null>(null);
   const [highlighted, setHighlighted] = useState(0);
   const hover = useReferenceHoverPreview(variant);
+  const [, refreshInput] = useState(0);
+  function commit(text: string) {
+    if (maxLength && readableReferences(text).length > maxLength && readableReferences(text).length > readableReferences(value).length) {
+      cursor.current = Math.min(cursor.current, value.length);
+      refreshInput(revision => revision + 1);
+      return;
+    }
+    onChange(text);
+  }
   const limited = !!maxReferences && referenceIds(value).length >= maxReferences;
   const matches = mention ? candidates.filter((item) => (!limited || referenceIds(value).includes(item.id)) && `${item.title} ${item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}`.toLowerCase().includes(mention.query.toLowerCase())).slice(0, 8) : [];
 
@@ -146,7 +156,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
     const end = focused ? (mention?.end ?? offset) : value.length;
     const token = referenceToken(reference);
     cursor.current = start + token.length + 1;
-    onChange(value.slice(0, start) + token + ' ' + value.slice(end));
+    commit(value.slice(0, start) + token + ' ' + value.slice(end));
     setMention(null);
     root.current?.focus();
   }
@@ -181,8 +191,8 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
       }}
       onMouseOut={(event) => { const chip = hoveredChip(event.target); if (chip && !chip.contains(event.relatedTarget as Node | null)) hover.hide(); }}
       className={`reel-scroll min-h-[56px] max-h-60 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-1 py-1 text-sm leading-7 text-[#f3f3f0] outline-none empty:before:pointer-events-none empty:before:text-[#68686d] empty:before:content-[attr(data-placeholder)] ${editorClassName ?? ''}`}
-      onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; const text = serialize(root.current!); onChange(text); updateMention(text); }}
-      onInput={() => { normalizeBreaks(root.current!); const text = serialize(root.current!); cursor.current = selectionOffset(); onChange(text); if (!composing.current) updateMention(text); }}
+      onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; const text = serialize(root.current!); commit(text); updateMention(text); }}
+      onInput={() => { normalizeBreaks(root.current!); const text = serialize(root.current!); cursor.current = selectionOffset(); if (!composing.current) commit(text); if (!composing.current) updateMention(text); }}
       onMouseDown={(event) => { if (event.target instanceof Element && event.target.closest('[data-remove-reference]')) event.preventDefault(); }}
       onClick={(event) => {
         const remove = event.target instanceof Element && event.target.closest('[data-remove-reference]');

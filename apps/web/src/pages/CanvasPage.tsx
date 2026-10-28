@@ -11,6 +11,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { IMAGE_SIZES, VIDEO_SIZES } from '@reel/contracts/media-capabilities';
+import { MediaGenerationSettings } from '../features/canvas/components/MediaGenerationSettings';
 import { MODEL_BUSY_MESSAGE, isGenerationActive } from '@reel/contracts/generation';
 import type {
   Asset,
@@ -104,7 +106,6 @@ import { ReferencePreview } from '../components/ui/ReferencePreview';
 import {
   IMAGE_SIZE_BY_RATIO,
   RATIO_OPTIONS,
-  VIDEO_SIZE_BY_RATIO,
   type AspectRatioKey,
 } from '../features/editor/constants';
 import { ApiError, api } from '../lib/api';
@@ -116,7 +117,7 @@ import { acceptsDependency, acceptsDependencyInput } from '../features/canvas/de
 type WorkflowNodeKind = CanvasNodeKind | 'audio';
 type GenerationCount = 1 | 2 | 4;
 type GenerationCountValue = `${GenerationCount}`;
-type VideoGenerationPresetValue = `${AspectRatioKey}|${VideoDuration}`;
+
 type NodeSearchKind = 'all' | WorkflowNodeKind;
 
 const DEFAULT_IMAGE_ASPECT_RATIO: AspectRatioKey = '1:1';
@@ -130,35 +131,6 @@ const GENERATION_COUNT_OPTIONS: SelectOption<GenerationCountValue>[] = [
   { value: '2', label: '2x' },
   { value: '4', label: '4x' },
 ];
-
-const IMAGE_ASPECT_RATIO_OPTIONS: SelectOption<AspectRatioKey>[] = RATIO_OPTIONS.map(
-  ({ key, label }) => ({ value: key, label }),
-);
-
-const VIDEO_ASPECT_RATIO_OPTIONS = RATIO_OPTIONS.filter(
-  ({ key }) => key === '16:9' || key === '9:16' || key === '1:1',
-);
-
-const VIDEO_RATIO_PANEL_OPTIONS: {
-  label: string;
-  value?: AspectRatioKey;
-  iconClassName: string;
-}[] = [
-  { label: '16:9', value: '16:9', iconClassName: 'h-2.5 w-6' },
-  { label: '4:3', iconClassName: 'h-3.5 w-5' },
-  { label: '1:1', value: '1:1', iconClassName: 'h-4 w-4' },
-  { label: '3:4', iconClassName: 'h-5 w-4' },
-  { label: '9:16', value: '9:16', iconClassName: 'h-6 w-3.5' },
-  { label: '21:9', iconClassName: 'h-2 w-7' },
-];
-
-const VIDEO_GENERATION_PRESET_OPTIONS: SelectOption<VideoGenerationPresetValue>[] =
-  VIDEO_ASPECT_RATIO_OPTIONS.flatMap(({ key }) =>
-    ([5, 10] as const).map((duration) => ({
-      value: `${key}|${duration}` as VideoGenerationPresetValue,
-      label: `${key} · ${duration} 秒`,
-    })),
-  );
 
 const NODE_SEARCH_FILTERS: { value: NodeSearchKind; label: string }[] = [
   { value: 'all', label: '全部' },
@@ -185,6 +157,9 @@ type WorkflowNodeData = {
   generationCount?: GenerationCount;
   editorProjectId?: string;
   aspectRatio?: AspectRatioKey;
+  generationSize?: string;
+  generationQuality?: 'standard' | 'hd' | 'speed' | 'quality';
+  videoFps?: 30 | 60;
   videoDuration?: VideoDuration;
   videoWithAudio?: boolean;
   generationTaskId?: string;
@@ -318,6 +293,15 @@ function CurrentFlowEdge({
 
 const edgeTypes = { current: CurrentFlowEdge };
 
+function buildGenerationPrompt(nextPrompt: string, referenceNodes: WorkflowNode[], kind: WorkflowNodeKind): string {
+  const texts = referenceNodes.filter((node) => kind === 'text' || node.data.kind === 'text').map((node) => '【' + node.data.title + '】' + (node.data.content || node.data.prompt || node.data.title));
+  const inlinePrompt = splitReferences(nextPrompt).map((part) => {
+    const node = referenceNodes.find((item) => item.id === part.id);
+    return node ? '【' + node.data.title + '】' + (node.data.kind === 'text' ? (node.data.content || readableReferences(node.data.prompt || '')) : '') : part.id ? '【' + part.title + '】' : part.text;
+  }).join('');
+  return referenceIds(nextPrompt).length ? inlinePrompt : texts.length ? '参考内容：\n' + texts.join('\n') + '\n\n生成要求：' + nextPrompt : nextPrompt;
+}
+
 function normalizeImageAspectRatio(value: unknown): AspectRatioKey {
   return RATIO_OPTIONS.some(({ key }) => key === value)
     ? (value as AspectRatioKey)
@@ -325,7 +309,7 @@ function normalizeImageAspectRatio(value: unknown): AspectRatioKey {
 }
 
 function normalizeVideoAspectRatio(value: unknown): AspectRatioKey {
-  return VIDEO_ASPECT_RATIO_OPTIONS.some(({ key }) => key === value)
+  return RATIO_OPTIONS.some(({ key }) => key === value)
     ? (value as AspectRatioKey)
     : DEFAULT_VIDEO_ASPECT_RATIO;
 }
@@ -516,6 +500,9 @@ function normalizeNode(node: CanvasGraph['nodes'][number]): WorkflowNode {
           : kind === 'video'
             ? normalizeVideoAspectRatio(rawData.aspectRatio)
             : undefined,
+      generationSize: rawData.generationSize,
+      generationQuality: rawData.generationQuality,
+      videoFps: rawData.videoFps === 60 ? 60 : 30,
       videoDuration:
         kind === 'video' && rawData.videoDuration === 10
           ? 10
@@ -615,8 +602,14 @@ function NodeGenerationPrompt({
       ? normalizeVideoAspectRatio(data.aspectRatio)
       : normalizeImageAspectRatio(data.aspectRatio),
   );
-  const [videoDuration, setVideoDuration] = useState<VideoDuration>(
-    data.videoDuration === 10 ? 10 : DEFAULT_VIDEO_DURATION,
+  const videoDuration = DEFAULT_VIDEO_DURATION;
+  const allowedSizes: readonly string[] = kind === 'video' ? VIDEO_SIZES : IMAGE_SIZES;
+  const [generationSize, setGenerationSize] = useState(
+    data.generationSize && allowedSizes.includes(data.generationSize) ? data.generationSize : kind === 'video' ? '1920x1080' : IMAGE_SIZE_BY_RATIO[aspectRatio],
+  );
+  const [videoFps, setVideoFps] = useState<30 | 60>(data.videoFps === 60 ? 60 : 30);
+  const [generationQuality, setGenerationQuality] = useState<'standard' | 'hd' | 'speed' | 'quality'>(
+    kind === 'video' ? (data.generationQuality === 'quality' ? 'quality' : 'speed') : (data.generationQuality === 'hd' ? 'hd' : 'standard'),
   );
   const [videoWithAudio, setVideoWithAudio] = useState(
     data.videoWithAudio ?? DEFAULT_VIDEO_WITH_AUDIO,
@@ -632,24 +625,20 @@ function NodeGenerationPrompt({
         .filter((node): node is WorkflowNode => !!node && acceptsDependency(node.data.kind, kind));
       if (referenceNodes.some((node) => node.data.kind === 'audio')) throw new GenerationPreparationError('当前视频模型暂不支持音频参考，请移除音频引用后再试');
       const references: AssetReference[] = referenceNodes.map((node) => ({ kind: node.data.kind, name: node.data.title, content: node.data.kind === 'text' ? node.data.content || node.data.prompt || node.data.title : undefined, url: node.data.url ?? undefined, assetId: node.data.assetId }));
-      const texts = referenceNodes.filter((node) => kind === 'text' || node.data.kind === 'text').map((node) => '【' + node.data.title + '】' + (node.data.content || node.data.prompt || node.data.title));
-      const frames = kind === 'video' ? referenceNodes.filter((node) => node.data.kind === 'image').slice(0, 2) : [];
-      const ratios = frames.map((node) => normalizeVideoAspectRatio(node.data.aspectRatio));
-      if (new Set(ratios).size > 1) throw new GenerationPreparationError('首帧和尾帧的比例需要保持一致');
-      if (frames.some((node) => !node.data.assetId || node.data.status !== 'ready')) throw new GenerationPreparationError('首尾帧图片尚未生成完成');
-      const inlinePrompt = splitReferences(nextPrompt).map((part) => {
-        const node = referenceNodes.find((item) => item.id === part.id);
-        return node ? '【' + node.data.title + '】' + (node.data.kind === 'text' ? (node.data.content || readableReferences(node.data.prompt || '')) : '') : part.id ? '【' + part.title + '】' : part.text;
-      }).join('');
-      const combined = referenceIds(nextPrompt).length ? inlinePrompt : texts.length ? '参考内容：\n' + texts.join('\n') + '\n\n生成要求：' + nextPrompt : nextPrompt;
-      return api.generationTasks.create({ requestId, canvasId, nodeId, kind, count, prompt: kind === 'video' ? combined.slice(0, 512) : combined, userPrompt: readableReferences(nextPrompt), references, model,
-        ...(kind === 'image' ? { size: IMAGE_SIZE_BY_RATIO[aspectRatio] } : {}),
-        ...(kind === 'video' ? { size: VIDEO_SIZE_BY_RATIO[ratios[0] ?? aspectRatio], duration: videoDuration, withAudio: videoWithAudio, imageAssetIds: frames.map((node) => node.data.assetId!) } : {}),
+      const frames = kind === 'video' ? referenceNodes.filter((node) => node.data.kind === 'image') : [];
+      if (frames.length > 1) throw new GenerationPreparationError('当前视频模型最多支持一张参考图，不支持首尾帧');
+      if (frames.some((node) => !node.data.assetId || node.data.status !== 'ready')) throw new GenerationPreparationError('参考图片尚未上传或生成完成');
+      const combined = buildGenerationPrompt(nextPrompt, referenceNodes, kind);
+      const limit = kind === 'video' ? 512 : kind === 'image' ? 2000 : 12000;
+      if (combined.length > limit) throw new GenerationPreparationError(`提示词（含文字参考内容）不能超过 ${limit} 字符，当前 ${combined.length} 字符`);
+      return api.generationTasks.create({ requestId, canvasId, nodeId, kind, count, prompt: combined, userPrompt: readableReferences(nextPrompt), references, model,
+        ...(kind === 'image' ? { size: generationSize, quality: generationQuality } : {}),
+        ...(kind === 'video' ? { size: generationSize, fps: videoFps, quality: generationQuality, withAudio: videoWithAudio, imageAssetIds: frames.map((node) => node.data.assetId!) } : {}),
       });
     },
     onMutate: ({ prompt: nextPrompt, count, requestId }) => {
       updateNodeData(nodeId, { prompt: nextPrompt, model, generationCount: count, generationRequestId: requestId, generationTaskId: undefined, generationDetached: false, generationStatus: 'queued', generationCanResume: false, generationMessage: '', generationProgress: '', generationFailureVisible: true,
-        ...(kind !== 'text' ? { aspectRatio } : {}), ...(kind === 'video' ? { videoDuration, videoWithAudio } : {}), status: 'generating', error: '' });
+        ...(kind !== 'text' ? { aspectRatio, generationSize, generationQuality, videoFps } : {}), ...(kind === 'video' ? { videoDuration, videoWithAudio } : {}), status: 'generating', error: '' });
     },
     onSuccess: (task) => {
       updateNodeData(nodeId, { generationTaskId: task.id, generationRequestId: task.requestId, generationStatus: task.status });
@@ -702,22 +691,8 @@ function NodeGenerationPrompt({
   const videoImageReferenceIds = selectedReferenceNodes
     .filter((node) => node.data.kind === 'image')
     .map((node) => node.id);
-  const selectedVideoFrameAspectRatio = selectedReferenceNodes.find(
-    (node) => node.data.kind === 'image',
-  )?.data.aspectRatio;
-  const lockedVideoAspectRatio = selectedVideoFrameAspectRatio
-    ? normalizeVideoAspectRatio(selectedVideoFrameAspectRatio)
-    : undefined;
-
-  useEffect(() => {
-    if (kind !== 'video' || !lockedVideoAspectRatio || lockedVideoAspectRatio === aspectRatio)
-      return;
-    setAspectRatio(lockedVideoAspectRatio);
-    updateNodeData(nodeId, { aspectRatio: lockedVideoAspectRatio });
-  }, [aspectRatio, kind, lockedVideoAspectRatio, nodeId, updateNodeData]);
-
   const candidates = dependencySelection.nodes.filter((node) => node.id !== nodeId && acceptsDependency(node.data.kind, kind) &&
-    (kind !== 'video' || node.data.kind !== 'image' || referenceDependencies.some((item) => item.node.id === node.id) || referenceDependencies.filter((item) => item.node.data.kind === 'image').length < 2))
+    (kind !== 'video' || node.data.kind !== 'image' || referenceDependencies.some((item) => item.node.id === node.id) || referenceDependencies.filter((item) => item.node.data.kind === 'image').length < 1))
     .map((node): CanvasChatReference => ({ id: node.id, title: node.data.title, kind: node.data.kind, content: node.data.content, prompt: node.data.prompt, url: node.data.url ?? undefined, assetId: node.data.assetId }));
 
   // Preserve references in graphs saved before inline mentions were introduced.
@@ -729,14 +704,9 @@ function NodeGenerationPrompt({
   const acceptReference = (reference: CanvasChatReference) => {
     const node = dependencySelection.nodes.find((item) => item.id === reference.id);
     if (!node || !candidates.some((item) => item.id === node.id)) return false;
-    if (kind === 'video' && node.data.kind === 'image') {
-      const ratio = normalizeVideoAspectRatio(node.data.aspectRatio);
-      if (lockedVideoAspectRatio && lockedVideoAspectRatio !== ratio) {
-        toast.warning('首帧和尾帧的比例需要保持一致');
-        return false;
-      }
-      setAspectRatio(ratio);
-      updateNodeData(nodeId, { aspectRatio: ratio });
+    if (kind === 'video' && node.data.kind === 'image' && videoImageReferenceIds.some(id => id !== node.id)) {
+      toast.warning('当前视频模型最多支持一张参考图');
+      return false;
     }
     setEdges((edges) => edges.some((edge) => edge.source === node.id && edge.target === nodeId) ? edges :
       addEdge({ id: uuid(), source: node.id, target: nodeId, ...edgeDefaults }, edges));
@@ -781,7 +751,7 @@ function NodeGenerationPrompt({
                 <ReferenceIcon className="h-3.5 w-3.5 shrink-0" />
                 {kind === 'video' && frameIndex >= 0 && (
                   <span className="shrink-0 text-[10px] text-[#929297]">
-                    {frameIndex === 0 ? '首帧' : '尾帧'}
+                    参考图
                   </span>
                 )}
                 <span className="truncate">{node.data.title}</span>
@@ -826,8 +796,11 @@ function NodeGenerationPrompt({
           onReference={acceptReference}
           onChange={(value) => updateNodeData(nodeId, { prompt: value, referenceNodeIds: referenceIds(value) })}
           onSubmit={() => { if (kind !== 'audio' && prompt.trim() && !isGenerating && !submissionRef.current) { submissionRef.current = true; generation.mutate({ prompt: prompt.trim(), count: generationCount, requestId: uuid() }); } }}
-          disabled={isGenerating} label="节点提示词" placeholder="描述生成要求，输入 @ 引用资产..." />
+          maxLength={kind === 'video' ? 512 : kind === 'image' ? 2000 : undefined} disabled={isGenerating} label="节点提示词" placeholder="描述生成要求，输入 @ 引用资产..." />
       </div>
+      {(kind === 'image' || kind === 'video') && <div className={`px-2 text-right text-[10px] ${buildGenerationPrompt(prompt, selectedReferenceNodes, kind).length > (kind === 'video' ? 512 : 2000) ? 'text-red-400' : 'text-[#77777c]'}`}>
+        {buildGenerationPrompt(prompt, selectedReferenceNodes, kind).length}/{kind === 'video' ? 512 : 2000}
+      </div>}
       <div className="mt-1 flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1">
           {kind === 'audio' ? <span className="px-2 text-xs text-[#929297]">音频模型暂未接入</span> : <NodeModelSelect
@@ -836,134 +809,21 @@ function NodeGenerationPrompt({
             onChange={setModel}
             disabled={isGenerating}
           />}
-          {kind === 'image' && (
-            <Select
-              value={aspectRatio}
-              options={IMAGE_ASPECT_RATIO_OPTIONS}
-              onValueChange={(value) => {
-                setAspectRatio(value);
-                updateNodeData(nodeId, { aspectRatio: value });
-              }}
-              ariaLabel="选择图片比例"
-              disabled={isGenerating}
-              size="compact"
-              className="w-[108px]"
-              triggerClassName="w-full"
-              menuClassName="!w-36"
-            />
-          )}
-          {kind === 'video' && (
-            <Select
-              value={`${aspectRatio}|${videoDuration}` as VideoGenerationPresetValue}
-              options={VIDEO_GENERATION_PRESET_OPTIONS}
-              onValueChange={(value) => {
-                const [nextAspectRatio, nextDuration] = value.split('|');
-                const normalizedAspectRatio = normalizeVideoAspectRatio(nextAspectRatio);
-                const normalizedDuration: VideoDuration = nextDuration === '10' ? 10 : 5;
-                setAspectRatio(normalizedAspectRatio);
-                setVideoDuration(normalizedDuration);
-                updateNodeData(nodeId, {
-                  aspectRatio: normalizedAspectRatio,
-                  videoDuration: normalizedDuration,
-                });
-              }}
-              triggerContent={`${aspectRatio} · ${videoDuration}s · ${videoWithAudio ? '有声' : '静音'}`}
-              panel={
-                <div className="space-y-3.5 p-2.5">
-                  <section>
-                    <div className="mb-2 text-xs font-medium text-[#9c9ca1]">比例</div>
-                    <div className="grid grid-cols-6 gap-1 rounded-2xl bg-white/[0.06] p-1">
-                      {VIDEO_RATIO_PANEL_OPTIONS.map((option) => {
-                        const isSelected = option.value === aspectRatio;
-                        const isLockedByFrame =
-                          !!option.value &&
-                          !!lockedVideoAspectRatio &&
-                          option.value !== lockedVideoAspectRatio;
-                        return (
-                          <button
-                            key={option.label}
-                            type="button"
-                            disabled={!option.value || isLockedByFrame || isGenerating}
-                            onClick={() => {
-                              if (!option.value) return;
-                              setAspectRatio(option.value);
-                              updateNodeData(nodeId, { aspectRatio: option.value });
-                            }}
-                            aria-pressed={isSelected}
-                            aria-label={`视频比例 ${option.label}`}
-                            title={
-                              !option.value
-                                ? '当前模型暂不支持'
-                                : isLockedByFrame
-                                  ? '视频比例已由首尾帧锁定'
-                                  : option.label
-                            }
-                            className={`flex h-13 min-w-0 flex-col items-center justify-center gap-1.5 rounded-xl text-[11px] font-semibold transition-colors ${isSelected ? 'bg-white/[0.12] text-white' : 'text-[#77777c] hover:bg-white/[0.06] hover:text-[#c7c7ca]'} disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[#77777c]`}
-                          >
-                            <span
-                              className={`rounded-[3px] border-2 ${option.iconClassName} ${isSelected ? 'border-white' : 'border-current'}`}
-                            />
-                            <span>{option.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
+          {(kind === 'image' || kind === 'video') && <MediaGenerationSettings
+            kind={kind} size={generationSize} quality={generationQuality} fps={videoFps} withAudio={videoWithAudio} disabled={isGenerating}
+            onChange={(patch) => {
+              if (patch.generationSize) {
+                setGenerationSize(patch.generationSize);
+                const [w = 1, h = 1] = patch.generationSize.split('x').map(Number);
+                const ratio = closestAspectRatio(w, h);
+                setAspectRatio(ratio);
+                updateNodeData(nodeId, { ...patch, aspectRatio: ratio });
+              } else updateNodeData(nodeId, patch);
+              if (patch.generationQuality) setGenerationQuality(patch.generationQuality);
+              if (patch.videoFps) setVideoFps(patch.videoFps);
+              if (patch.videoWithAudio !== undefined) setVideoWithAudio(patch.videoWithAudio);
+            }} />}
 
-                  <section>
-                    <div className="mb-2 text-xs font-medium text-[#9c9ca1]">生成时长</div>
-                    <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/[0.06] p-1">
-                      {([5, 10] as const).map((duration) => (
-                        <button
-                          key={duration}
-                          type="button"
-                          disabled={isGenerating}
-                          onClick={() => {
-                            setVideoDuration(duration);
-                            updateNodeData(nodeId, { videoDuration: duration });
-                          }}
-                          aria-pressed={videoDuration === duration}
-                          className={`h-8 rounded-lg text-xs font-semibold transition-colors ${videoDuration === duration ? 'bg-white/[0.12] text-white' : 'text-[#77777c] hover:bg-white/[0.06] hover:text-[#c7c7ca]'}`}
-                        >
-                          {duration}s
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-
-                  <section>
-                    <div className="mb-2 text-xs font-medium text-[#9c9ca1]">生成音频</div>
-                    <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/[0.06] p-1">
-                      {[
-                        { value: true, label: '开启' },
-                        { value: false, label: '关闭' },
-                      ].map((option) => (
-                        <button
-                          key={String(option.value)}
-                          type="button"
-                          disabled={isGenerating}
-                          onClick={() => {
-                            setVideoWithAudio(option.value);
-                            updateNodeData(nodeId, { videoWithAudio: option.value });
-                          }}
-                          aria-pressed={videoWithAudio === option.value}
-                          className={`h-8 rounded-lg text-xs font-semibold transition-colors ${videoWithAudio === option.value ? 'bg-white/[0.12] text-white' : 'text-[#77777c] hover:bg-white/[0.06] hover:text-[#c7c7ca]'}`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                </div>
-              }
-              ariaLabel="选择视频生成设置"
-              disabled={isGenerating}
-              size="compact"
-              className="w-[140px]"
-              triggerClassName="w-full"
-              menuClassName="!max-h-none !w-[320px] !overflow-visible !rounded-[18px] !p-1.5"
-            />
-          )}
         </div>
         <div className="flex items-center gap-1">
           <Select
@@ -1670,7 +1530,7 @@ function InfiniteCanvas({
         return (
           sourceNode.data.kind === 'text' ||
           sourceNode.data.kind === 'audio' ||
-          (sourceNode.data.kind === 'image' && existingInputCount < 2)
+          (sourceNode.data.kind === 'image' && existingInputCount < 1)
         );
       }
       return true;
@@ -1702,7 +1562,7 @@ function InfiniteCanvas({
         if (
           sourceNode.data.kind !== 'text' &&
           sourceNode.data.kind !== 'audio' &&
-          (sourceNode.data.kind !== 'image' || inputCount >= 2)
+          (sourceNode.data.kind !== 'image' || inputCount >= 1)
         ) {
           return;
         }

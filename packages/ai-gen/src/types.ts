@@ -20,6 +20,8 @@ export interface GenerateOptions {
   duration?: number;
   /** 是否为视频生成 AI 音效 */
   withAudio?: boolean;
+  fps?: 30 | 60;
+  quality?: 'standard' | 'hd' | 'speed' | 'quality';
   /** 中断信号 */
   signal?: AbortSignal;
 }

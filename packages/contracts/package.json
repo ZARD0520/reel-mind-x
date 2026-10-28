@@ -23,6 +23,11 @@
       "types": "./src/sse.ts",
       "browser": "./src/sse.ts",
       "default": "./dist/sse.js"
+    },
+    "./media-capabilities": {
+      "types": "./src/media-capabilities.ts",
+      "browser": "./src/media-capabilities.ts",
+      "default": "./dist/media-capabilities.js"
     }
   },
   "scripts": {

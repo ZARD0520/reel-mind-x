@@ -295,6 +295,7 @@ export class GenerationTasksProcessor extends WorkerHost {
         const localPath = row && referenceImagePath(row, userId, this.config.get('STORAGE_DIR', { infer: true }));
         if (!localPath) throw new Error('Reference image unavailable');
         const buffer = await fs.readFile(localPath);
+        if (buffer.length > 5 * 1024 * 1024) throw new Error('视频参考图不能超过 5MB');
         const format = imageFormat(buffer);
         if (!format) throw new Error('Unsupported reference image format');
         return `data:image/${format};base64,${buffer.toString('base64')}`;
