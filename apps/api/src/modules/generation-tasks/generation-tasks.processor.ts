@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AiGenError, ZhipuAiGenProvider } from '@reel/ai-gen';
+import { AiGenError, SiliconFlowAiGenProvider, ZhipuAiGenProvider } from '@reel/ai-gen';
 import { LlmError } from '@reel/llm';
 import {
   MODEL_BUSY_MESSAGE,
@@ -38,6 +38,7 @@ const isRejected = (error: unknown) =>
 export class GenerationTasksProcessor extends WorkerHost {
   private readonly logger = new Logger(GenerationTasksProcessor.name);
   private readonly provider: ZhipuAiGenProvider;
+  private readonly siliconflow: SiliconFlowAiGenProvider;
   constructor(
     private readonly prisma: PrismaService,
     private readonly tasks: GenerationTasksService,
@@ -50,6 +51,10 @@ export class GenerationTasksProcessor extends WorkerHost {
       baseUrl: config.get('GLM_BASE_URL', { infer: true }),
       imageModel: config.get('GLM_IMAGE_MODEL', { infer: true }),
       videoModel: config.get('GLM_VIDEO_MODEL', { infer: true }),
+    });
+    this.siliconflow = new SiliconFlowAiGenProvider({
+      apiKey: config.get('SILICONFLOW_API_KEY', { infer: true }) ?? '',
+      baseUrl: config.get('SILICONFLOW_BASE_URL', { infer: true }),
     });
   }
 
@@ -125,7 +130,7 @@ export class GenerationTasksProcessor extends WorkerHost {
           return;
         }
         const imageUrls =
-          input.kind === 'video'
+          input.kind === 'video' || (input.kind === 'image' && input.model === 'Kwai-Kolors/Kolors')
             ? await this.encodeImages(item.task.userId, input.imageAssetIds)
             : [];
         await transition(
@@ -147,7 +152,7 @@ export class GenerationTasksProcessor extends WorkerHost {
             nextRunAt: new Date(Date.now() + 5000),
           });
         } else if (input.kind === 'image') {
-          const result = await this.provider.generateImage({ ...input, signal });
+          const result = await (input.model === 'Kwai-Kolors/Kolors' ? this.siliconflow : this.provider).generateImage({ ...input, imageUrls, signal });
           await transition({
             status: 'saving',
             providerResult: json(result),
@@ -295,7 +300,7 @@ export class GenerationTasksProcessor extends WorkerHost {
         const localPath = row && referenceImagePath(row, userId, this.config.get('STORAGE_DIR', { infer: true }));
         if (!localPath) throw new Error('Reference image unavailable');
         const buffer = await fs.readFile(localPath);
-        if (buffer.length > 5 * 1024 * 1024) throw new Error('视频参考图不能超过 5MB');
+        if (buffer.length > 5 * 1024 * 1024) throw new Error('参考图不能超过 5MB');
         const format = imageFormat(buffer);
         if (!format) throw new Error('Unsupported reference image format');
         return `data:image/${format};base64,${buffer.toString('base64')}`;

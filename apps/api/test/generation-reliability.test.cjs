@@ -90,7 +90,7 @@ test('provider forwards resolution, frame rate, quality and audio without Flash 
 });
 
 test('library reference paths resolve only user-owned stored uploads', () => {
-  assert.equal(referenceImagePath({ localPath: null, url: '/files/users/owner/uploads/image.png' }, 'owner', '/storage'), '/storage/users/owner/uploads/image.png');
+  assert.equal(referenceImagePath({ localPath: null, url: '/files/users/owner/uploads/image.png' }, 'owner', '/storage'), path.resolve('/storage/users/owner/uploads/image.png'));
   for (const url of ['/files/users/other/uploads/image.png', '/files/users/owner/uploads/../secret.png', '/files/users/owner/uploads/%2e%2e%2fsecret.png', 'https://invalid.test/image.png']) {
     assert.equal(referenceImagePath({ localPath: null, url }, 'owner', '/storage'), null);
   }
@@ -458,6 +458,42 @@ test(
         update: { value: 100 },
       });
       service = new GenerationTasksService(prisma, config, queue, credits);
+
+      await suite.test('Kolors image references validate ownership and reach the image provider as base64', async () => {
+        const kolorsUser = await prisma.user.create({ data: { email: `${randomUUID()}@invalid.test`, name: 'Kolors fixture' } });
+        const kolorsCanvas = await prisma.canvas.create({ data: { userId: kolorsUser.id, name: 'Kolors fixture' } });
+        const createKolors = overrides => service.create(kolorsUser.id, { requestId: randomUUID(), canvasId: kolorsCanvas.id, prompt: 'Watercolor', ...overrides });
+        const directory = path.join(storage, 'users', kolorsUser.id, 'uploads');
+        fs.mkdirSync(directory, { recursive: true });
+        const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK0cAAAAASUVORK5CYII=', 'base64');
+        const file = path.join(directory, 'kolors-reference.png');
+        fs.writeFileSync(file, png);
+        const image = await prisma.asset.create({ data: { userId: kolorsUser.id, canvasId: kolorsCanvas.id, kind: 'image', source: 'upload', status: 'ready', name: 'Kolors reference', localPath: file, url: `/files/users/${kolorsUser.id}/uploads/kolors-reference.png` } });
+        const input = { kind: 'image', model: 'Kwai-Kolors/Kolors', imageAssetIds: [image.id], size: '720x1280' };
+        const task = await createKolors(input);
+        const row = await prisma.generationTask.findUniqueOrThrow({ where: { id: task.id } });
+        assert.equal(row.input.references[0].assetId, image.id);
+        let calls = 0;
+        const worker = freshWorker();
+        worker.siliconflow = { generateImage: async options => {
+          calls++;
+          assert.deepEqual(options.imageUrls, [`data:image/png;base64,${png.toString('base64')}`]);
+          assert.equal(options.model, input.model);
+          return { url: 'https://invalid.test/kolors.png', type: 'image', model: input.model, prompt: options.prompt };
+        } };
+        const item = await step(worker, task.items[0].id);
+        assert.equal(item.status, 'saving');
+        await step(worker, task.items[0].id);
+        assert.equal((await service.get(kolorsUser.id, task.id)).status, 'completed');
+        assert.equal(calls, 1);
+        const foreign = await prisma.user.create({ data: { email: `${randomUUID()}@invalid.test`, name: 'Other Kolors' } });
+        const foreignCanvas = await prisma.canvas.create({ data: { userId: foreign.id, name: 'Private Kolors' } });
+        const foreignImage = await prisma.asset.create({ data: { userId: foreign.id, canvasId: foreignCanvas.id, kind: 'image', source: 'upload', status: 'ready', name: 'Private', localPath: file } });
+        await assert.rejects(createKolors({ ...input, imageAssetIds: [foreignImage.id] }), /参考图片不可用/);
+        await prisma.asset.update({ where: { id: image.id }, data: { status: 'generating' } });
+        await assert.rejects(createKolors(input), /参考图片不可用/);
+        fs.unlinkSync(file);
+      });
 
       await suite.test('video references accept one uploaded or library image and reject invalid references', async () => {
         const directory = path.join(storage, 'users', user.id, 'uploads');

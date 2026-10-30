@@ -112,7 +112,7 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
           ? 'cogview-3-flash'
           : 'cogvideox-flash');
     const references = [...input.references];
-    if (input.kind === 'video' && input.imageAssetIds.length) {
+    if ((input.kind === 'video' || (input.kind === 'image' && model === 'Kwai-Kolors/Kolors')) && input.imageAssetIds.length) {
       if (new Set(input.imageAssetIds).size !== input.imageAssetIds.length)
         throw new BadRequestException('不能重复使用同一张参考图片');
       const frames = await this.prisma.asset.findMany({

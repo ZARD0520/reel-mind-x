@@ -1,4 +1,4 @@
-import { IMAGE_SIZES, VIDEO_SIZES } from '@reel/contracts/media-capabilities';
+import { imageSizesForModel, VIDEO_SIZES } from '@reel/contracts/media-capabilities';
 import { Select } from '../../../components/ui/Select';
 
 type Patch = {
@@ -19,12 +19,12 @@ function sizeAppearance(size: string) {
   };
 }
 
-export function MediaGenerationSettings({ kind, size, quality, fps, withAudio, disabled, onChange }: {
-  kind: 'image' | 'video'; size: string; quality: NonNullable<Patch['generationQuality']>;
+export function MediaGenerationSettings({ kind, model, size, quality, fps, withAudio, disabled, onChange }: {
+  kind: 'image' | 'video'; model?: string; size: string; quality: NonNullable<Patch['generationQuality']>;
   fps: 30 | 60; withAudio: boolean; disabled: boolean; onChange: (patch: Patch) => void;
 }) {
   const video = kind === 'video';
-  const sizes = video ? VIDEO_SIZES : IMAGE_SIZES;
+  const sizes = video ? VIDEO_SIZES : imageSizesForModel(model);
   const qualityOptions = video
     ? [{ value: 'speed' as const, label: '速度优先' }, { value: 'quality' as const, label: '质量优先' }]
     : [{ value: 'standard' as const, label: '标准' }, { value: 'hd' as const, label: '高清' }];
@@ -47,12 +47,12 @@ export function MediaGenerationSettings({ kind, size, quality, fps, withAudio, d
                 <span className="rounded-[3px] border-2 border-current" style={{ width: appearance.width, height: appearance.height }} />
               </span>
               <span>{appearance.ratio}</span>
-              <span className="text-[9px] font-normal opacity-65">{value.replace('x', '×')}</span>
             </button>;
           })}
         </div>
       </section>
-      <section>
+      {model === 'Kwai-Kolors/Kolors' && <p className="text-[11px] leading-4 text-[#77777c]">支持 1 张 PNG/JPG/JPEG 参考图，最大 5MB</p>}
+      {model !== 'Kwai-Kolors/Kolors' && <section>
         <div className="mb-2 text-xs text-[#9c9ca1]">{video ? '生成模式' : '图片质量'}</div>
         <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/[0.06] p-1">
           {qualityOptions.map(option => <button key={option.value} type="button" disabled={disabled}
@@ -61,7 +61,7 @@ export function MediaGenerationSettings({ kind, size, quality, fps, withAudio, d
             {option.label}
           </button>)}
         </div>
-      </section>
+      </section>}
       {video && <>
         <section>
           <div className="mb-2 text-xs text-[#9c9ca1]">帧率</div>

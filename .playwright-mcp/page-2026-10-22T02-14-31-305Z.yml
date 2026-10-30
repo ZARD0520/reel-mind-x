@@ -1,0 +1,248 @@
+- generic [ref=e2]:
+  - banner:
+    - generic [ref=e3]:
+      - link "小云雀" [ref=e4] [cursor=pointer]:
+        - /url: "#top"
+      - navigation "主导航" [ref=e10]:
+        - link "最新活动" [ref=e11] [cursor=pointer]:
+          - /url: "#activity"
+        - link "创作工具" [ref=e12] [cursor=pointer]:
+          - /url: "#features"
+        - link "创意营销" [ref=e13] [cursor=pointer]:
+          - /url: "#creative-agent"
+        - link "模型生态" [ref=e14] [cursor=pointer]:
+          - /url: /model-ecosystem
+        - link "会员套餐" [ref=e15] [cursor=pointer]:
+          - /url: /pricing
+        - link "使用教程" [ref=e17] [cursor=pointer]:
+          - /url: /tutorials
+      - link "登录领积分" [ref=e19] [cursor=pointer]:
+        - /url: https://www.xiaoyunque.com/login?enter_method=header_login&enter_from=landing_page_v3
+  - main [ref=e21]:
+    - region [ref=e22]:
+      - generic "弧形透视作品轮播，可拖拽切换，点击当前作品进入，点击图片左右外侧区域切换" [ref=e23]:
+        - generic [ref=e24]:
+          - article "商业化折扣-超值四重奏" [ref=e25] [cursor=pointer]:
+            - generic [ref=e26]:
+              - img "商业化折扣-超值四重奏"
+          - article "免费课程" [ref=e28] [cursor=pointer]:
+            - generic [ref=e29]:
+              - img "免费课程"
+          - article "一亿积分计划" [ref=e31] [cursor=pointer]:
+            - generic [ref=e32]:
+              - img "一亿积分计划"
+        - group "Banner 轮播切换":
+          - generic [ref=e34]:
+            - button "切换到 Banner 1" [pressed] [ref=e35] [cursor=pointer]
+            - button "切换到 Banner 2" [ref=e36] [cursor=pointer]
+            - button "切换到 Banner 3" [ref=e37] [cursor=pointer]
+            - button "切换到 Banner 4" [ref=e38] [cursor=pointer]
+            - button "切换到 Banner 5" [ref=e39] [cursor=pointer]
+            - button "切换到 Banner 6" [ref=e40] [cursor=pointer]
+            - button "切换到 Banner 7" [ref=e41] [cursor=pointer]
+      - heading "抖音旗下的内容创作Agent" [level=1] [ref=e42]
+      - generic [ref=e43]:
+        - generic [ref=e45]:
+          - tablist "创作类型" [ref=e46]:
+            - tab "创作" [selected] [ref=e47] [cursor=pointer]
+            - tab "短剧" [ref=e48] [cursor=pointer]
+            - tab "营销" [ref=e49] [cursor=pointer]
+          - tabpanel "创作" [ref=e50]:
+            - generic [ref=e51]: 输入你的创作灵感
+            - textbox "输入你的创作灵感" [ref=e52]:
+              - /placeholder: 描述你的想法，小云雀和你一起创作
+            - generic [ref=e53]:
+              - generic [ref=e54]:
+                - button "添加素材" [ref=e55] [cursor=pointer]
+                - generic [ref=e58]:
+                  - button "技能" [ref=e59] [cursor=pointer]
+                  - button "模型选择与偏好设置" [ref=e66] [cursor=pointer]:
+                    - generic [ref=e75]: 模型选择
+                    - generic [ref=e77]: 偏好设置
+              - link "登录体验" [ref=e80] [cursor=pointer]:
+                - /url: https://www.xiaoyunque.com/login?enter_method=hero_create&enter_from=landing_page_v3&redirect_url=https%3A%2F%2Fwww.xiaoyunque.com%2Fhome%3Ffrom_page%3Dxiaoyunque_landing_page
+        - generic "创作能力" [ref=e81]:
+          - strong [ref=e84]: 功能亮点
+          - generic [ref=e86]:
+            - link "登录后进入首页" [ref=e87] [cursor=pointer]:
+              - /url: https://www.xiaoyunque.com/login?enter_method=feature_card&enter_from=landing_page_v3
+              - generic [ref=e88]:
+                - heading "视频生成" [level=2] [ref=e89]
+                - paragraph [ref=e90]: 自由画布，极致生产力
+            - link "登录后进入首页" [ref=e91] [cursor=pointer]:
+              - /url: https://www.xiaoyunque.com/login?enter_method=feature_card&enter_from=landing_page_v3
+              - generic [ref=e93]:
+                - heading "自由画布" [level=2] [ref=e94]
+                - paragraph [ref=e95]: 无限画布，沉浸式定义创意工作流
+            - link "登录后进入短剧Agent" [ref=e96] [cursor=pointer]:
+              - /url: https://www.xiaoyunque.com/login?enter_method=feature_card&enter_from=landing_page_v3&redirect_url=https%3A%2F%2Fwww.xiaoyunque.com%2Fnovel%2Flist%3Ffrom_page%3Dxiaoyunque_landing_page%26tab_name%3Dhome
+              - generic [ref=e97]:
+                - heading "短剧Agent" [level=2] [ref=e98]
+                - paragraph [ref=e99]: 全球首个Seedance系列短剧Agent
+            - link "登录后进入首页" [ref=e100] [cursor=pointer]:
+              - /url: https://www.xiaoyunque.com/login?enter_method=feature_card&enter_from=landing_page_v3
+              - generic [ref=e102]:
+                - heading "智能预演" [level=2] [ref=e103]
+                - paragraph [ref=e104]: 整组镜头一键预演，降低抽卡率
+            - link "登录后进入首页" [ref=e105] [cursor=pointer]:
+              - /url: https://www.xiaoyunque.com/login?enter_method=feature_card&enter_from=landing_page_v3
+              - generic [ref=e106]:
+                - heading "图片生成" [level=2] [ref=e107]
+                - paragraph [ref=e108]: 多场景创作，高效生图
+    - region "专业内容创作 Agent" [ref=e109]:
+      - generic [ref=e110]:
+        - heading "专业内容创作 Agent" [level=2]:
+          - text: 专业内容创作
+          - emphasis: Agent
+        - paragraph: 行业首个 Seedance 2.5 短剧 Agent，你的 AI 短剧创作专家
+        - tablist "Agent 创作类型切换":
+          - tab "短剧创作" [selected]
+          - tab "通用创作"
+      - tabpanel "短剧创作" [ref=e111]:
+        - generic [ref=e112]:
+          - generic [ref=e113]:
+            - paragraph: 10万字剧本解析
+          - link "登录后进入短剧创作" [ref=e115] [cursor=pointer]:
+            - /url: https://www.xiaoyunque.com/login?enter_method=agent_demo_enter&enter_from=landing_page_v3&redirect_url=https%3A%2F%2Fwww.xiaoyunque.com%2Fnovel%2Flist%3Fenter_from%3Dsmall_tool
+            - generic [aria-hidden]: 登录立即体验
+    - region [ref=e116]:
+      - generic [ref=e117]:
+        - heading "一栈式创意营销" [level=2] [ref=e119]
+        - generic "一栈式创意营销演示" [ref=e120]:
+          - generic [ref=e121]:
+            - group "创意营销选择" [ref=e122]:
+              - generic [ref=e123]:
+                - button "剧情广告" [pressed] [ref=e124] [cursor=pointer]
+                - button "三视图生成" [ref=e127] [cursor=pointer]
+                - button "达人带货" [ref=e129] [cursor=pointer]
+                - button "提示词提取" [ref=e131] [cursor=pointer]
+                - button "分镜脚本编写" [ref=e133] [cursor=pointer]
+                - button "品牌大片" [ref=e135] [cursor=pointer]
+                - button "知识类视频生成" [ref=e137] [cursor=pointer]
+                - button "字幕擦除" [ref=e139] [cursor=pointer]
+                - button [aria-hidden]:
+                  - generic: 剧情广告
+                - button [aria-hidden]:
+                  - generic: 三视图生成
+                - button [aria-hidden]:
+                  - generic: 达人带货
+                - button [aria-hidden]:
+                  - generic: 提示词提取
+                - button [aria-hidden]:
+                  - generic: 分镜脚本编写
+                - button [aria-hidden]:
+                  - generic: 品牌大片
+                - button [aria-hidden]:
+                  - generic: 知识类视频生成
+                - button [aria-hidden]:
+                  - generic: 字幕擦除
+            - generic [ref=e141]:
+              - button "上一个功能" [ref=e142] [cursor=pointer]: ‹
+              - button "下一个功能" [ref=e143] [cursor=pointer]: › ›
+          - generic [ref=e144] [cursor=pointer]:
+            - link "打开剧情广告创意工具" [ref=e145]:
+              - /url: https://www.xiaoyunque.com/login?enter_method=creative_tool_enter&enter_from=landing_page_v3&redirect_url=https%3A%2F%2Fwww.xiaoyunque.com%2Fhome%3Fscene_template_id%3D54217318-255e-4516-8e84-cad19b9b1e60
+            - generic [aria-hidden]:
+              - generic: 商品图生成短剧脚本、分镜和广告成片
+              - generic: 登录立即体验
+    - region "丧尸清道夫" [ref=e146]:
+      - generic [ref=e147]:
+        - generic [ref=e149]:
+          - heading "丧尸清道夫" [level=2]
+          - generic:
+            - generic:
+              - paragraph: 小云雀精选短片｜作者@Mx-Shell
+          - generic:
+            - link "登录观看全片":
+              - /url: https://www.xiaoyunque.com/login?enter_method=case_watch&enter_from=landing_page_v3&redirect_url=https%3A%2F%2Fwww.xiaoyunque.com%2Fhome%3Ftab_name%3Dhome%26agent_tab%3Dcreative%26cw_preview_id%3D2
+            - link "查看工作流":
+              - /url: https://www.xiaoyunque.com/login?enter_method=case_workflow&enter_from=landing_page_v3&redirect_url=https%3A%2F%2Fwww.xiaoyunque.com%2Fnovel%2Fdetail%2Fcanvas%3Fthread_id%3D1575693334796%26canvasId%3D1563117075212%26showcase%3D1
+        - generic [ref=e150]:
+          - generic "视频缩略切换":
+            - button "切换到视频 1" [pressed]
+            - button "切换到视频 2"
+            - button "切换到视频 3"
+            - button "切换到视频 4"
+            - link "查看更多短片":
+              - /url: https://www.xiaoyunque.com/login?enter_method=case_more&enter_from=landing_page_v3&redirect_url=https%3A%2F%2Fwww.xiaoyunque.com%2Fhome%3Ftab_name%3Dhome%26agent_tab%3Dnovel
+    - region [ref=e151]:
+      - generic [ref=e152]:
+        - heading "我们用户的声音" [level=2] [ref=e154]
+        - generic [ref=e155]:
+          - article [ref=e156] [cursor=pointer]:
+            - paragraph [ref=e158]: 小雀就像一个真正懂我的同频创作搭子，把我的小脑洞变成会发光的故事，把作者的每个建议都稳稳接住，也是因为有共鸣，能有幸被更多人看到我创作的内容，祝小雀越来越好~
+            - generic [ref=e161]:
+              - strong [ref=e162]: 鹤咽声
+              - generic [ref=e163]: 超级创作者
+          - article [ref=e164] [cursor=pointer]:
+            - paragraph [ref=e166]: 从接触 AI 开始就是用的小雀，从打磨镜头、提示词调整到拍卡画面，给每一帧都堆成我的奇思妙想落地。“雀”实在是好鸟，愿陪伴一起见证小云雀的一周年。
+            - generic [ref=e169]:
+              - strong [ref=e170]: Mx-Shell
+              - generic [ref=e171]: 超级创作者
+          - article [ref=e172] [cursor=pointer]:
+            - paragraph [ref=e174]: 创作最难的从来不是技术，是把脑子里的画面落地。小云雀解决的就是这一步，而且它解决的方式，是让人觉得这是我做的，而不是“这是 AI 做的”。
+            - generic [ref=e177]:
+              - strong [ref=e178]: AIGC十三
+              - generic [ref=e179]: 超级创作者
+          - article [ref=e180] [cursor=pointer]:
+            - paragraph [ref=e182]: 小云雀很适合我们这类叙事方向的 AI 影视创作者。它不只是生成单个镜头，更能支撑长视频创作，让人物、情节和画面持续统一，把故事真正做完整。
+            - generic [ref=e185]:
+              - strong [ref=e186]: 玩AI的小笼包
+              - generic [ref=e187]: 超级创作者
+          - article [ref=e188] [cursor=pointer]:
+            - paragraph [ref=e190]: 让想法不再停留于脑海，让画面不再困于想象，让念头不再止步于一闪而过。小云雀让普通人的灵感有了被看见、被塑造、被呈现的可能。
+            - generic [ref=e193]:
+              - strong [ref=e194]: 陈野neo
+              - generic [ref=e195]: 优质创作者
+      - generic [ref=e196]:
+        - heading "小云雀，帮助 灵感 立即成片" [level=2] [ref=e197]:
+          - generic [ref=e198]: 小云雀，帮助
+          - strong [ref=e199]: 灵感
+          - generic [ref=e200]: 立即成片
+        - link "登录开始创作" [ref=e201] [cursor=pointer]:
+          - /url: https://www.xiaoyunque.com/login?enter_method=voices_create&enter_from=landing_page_v3
+  - contentinfo [ref=e202]:
+    - generic [ref=e203]:
+      - generic [ref=e204]:
+        - paragraph [ref=e205]: 字节跳动旗下创意 Agent 平台
+        - generic [ref=e206]:
+          - img "关注官方公众号" [ref=e207]
+          - paragraph [ref=e208]: 官方公众号
+      - generic [ref=e209]:
+        - generic [ref=e210]:
+          - heading "Agent 工具" [level=2] [ref=e211]
+          - link "短剧/漫剧 Agent" [ref=e212] [cursor=pointer]:
+            - /url: https://www.xiaoyunque.com/login?enter_method=footer_link&enter_from=landing_page_v3&redirect_url=https%3A%2F%2Fwww.xiaoyunque.com%2Fnovel%2Flist%3Fenter_from%3Dsmall_tool
+          - link "创意 Agent" [ref=e213] [cursor=pointer]:
+            - /url: https://www.xiaoyunque.com/login?enter_method=footer_link&enter_from=landing_page_v3
+          - link "更多创意工具" [ref=e214] [cursor=pointer]:
+            - /url: https://www.xiaoyunque.com/login?enter_method=footer_link&enter_from=landing_page_v3&redirect_url=https%3A%2F%2Fwww.xiaoyunque.com%2Fhome%3Fscene_template_view_all%3D1
+        - generic [ref=e215]:
+          - heading "服务条款" [level=2] [ref=e216]
+          - link "用户协议" [ref=e217] [cursor=pointer]:
+            - /url: https://sf1-cdn-tos.douyinstatic.com/obj/ies-hotsoon-draft/vco/a40822a6-30c0-4037-919d-49230f660a25.html
+          - link "隐私政策" [ref=e218] [cursor=pointer]:
+            - /url: https://sf1-cdn-tos.douyinstatic.com/obj/ies-hotsoon-draft/vco/503995fb-a603-4549-91a0-8316a9a2f1de.html
+        - generic [ref=e219]:
+          - heading "联系我们" [level=2] [ref=e220]
+          - link "抖音" [ref=e221] [cursor=pointer]:
+            - /url: https://www.douyin.com/user/MS4wLjABAAAADLjhhf0-VNlcMT45Ca4hYbiVvjGo3tln_97KvBwiLBo
+          - link "小红书" [ref=e224] [cursor=pointer]:
+            - /url: https://xhslink.com/m/AE3qaFvuF69
+          - link "发送邮件至 xiaoyunque@bytedance.com" [ref=e227] [cursor=pointer]:
+            - /url: mailto:xiaoyunque@bytedance.com
+            - generic [ref=e231]: xiaoyunque@bytedance.com
+        - generic [ref=e232]:
+          - heading "下载" [level=2] [ref=e233]
+          - generic [ref=e234]:
+            - generic "iOS 下载，扫码下载 App" [ref=e235]: iOS 下载
+            - generic "Android 下载，扫码下载 App" [ref=e238]: Android 下载
+    - generic [ref=e241]:
+      - link "营业执照" [ref=e242] [cursor=pointer]:
+        - /url: https://p11-xiaoyunque.byteimg.com/tos-cn-i-men7yzdrs1/18f9e2ba77da466b89f4a0834076b161~tplv-men7yzdrs1-webp.webp
+      - link "粤ICP备13065114号-44" [ref=e244] [cursor=pointer]:
+        - /url: https://beian.miit.gov.cn/
+      - generic [ref=e246]: 粤B2-20190879
+      - generic [ref=e248]: 深圳市脸萌科技有限公司
+      - generic [ref=e250]: 深圳市南山区招商街道水湾社区太子路51号太子广场1104
+      - generic [ref=e252]: 客服热线：957123

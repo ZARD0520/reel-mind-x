@@ -19,7 +19,7 @@ const { randomUUID } = require('node:crypto');
       { id: 'source', position: { x: 850, y: 120 }, data: { kind: 'text', title: 'Source', content: 'source content', status: 'ready' } },
       { id: 'photo', position: { x: 1800, y: 120 }, data: { kind: 'image', title: 'Photo', url: '/reference-image.svg', status: 'ready' } },
       { id: 'clip', position: { x: 2400, y: 120 }, data: { kind: 'video', title: 'Clip', url: '/reference-video.mp4', status: 'ready' } },
-    ], edges: [], viewport: { x: 0, y: 0, zoom: 0.7 } };
+    ], edges: [{ id: 'source-target', source: 'source', target: 'target' }], viewport: { x: 0, y: 0, zoom: 0.7 } };
     let generation;
     let sent;
     const conversation = { id: randomUUID(), title: 'Test', messages: [] };

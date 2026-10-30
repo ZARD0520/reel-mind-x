@@ -1,7 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AiGenError, ZhipuAiGenProvider } from '@reel/ai-gen';
+import { AiGenError, SiliconFlowAiGenProvider, ZhipuAiGenProvider } from '@reel/ai-gen';
 import { MODEL_BUSY_MESSAGE } from '@reel/contracts';
 import type { Job } from 'bullmq';
 import * as fs from 'fs';
@@ -41,6 +41,7 @@ function detectImageFormat(
 export class AiGenMediaProcessor extends WorkerHost {
   private readonly logger = new Logger(AiGenMediaProcessor.name);
   private readonly provider: ZhipuAiGenProvider;
+  private readonly siliconflow: SiliconFlowAiGenProvider;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -52,6 +53,10 @@ export class AiGenMediaProcessor extends WorkerHost {
       baseUrl: this.config.get('GLM_BASE_URL', { infer: true }),
       imageModel: this.config.get('GLM_IMAGE_MODEL', { infer: true }),
       videoModel: this.config.get('GLM_VIDEO_MODEL', { infer: true }),
+    });
+    this.siliconflow = new SiliconFlowAiGenProvider({
+      apiKey: config.get('SILICONFLOW_API_KEY', { infer: true }) ?? '',
+      baseUrl: config.get('SILICONFLOW_BASE_URL', { infer: true }),
     });
   }
 
@@ -69,7 +74,7 @@ export class AiGenMediaProcessor extends WorkerHost {
     const { userId, assetId, prompt, size, model } = job.data;
     this.logger.log(`Image generation ${assetId} started`);
     try {
-      const result = await this.provider.generateImage({ prompt, size, model });
+      const result = await (model === 'Kwai-Kolors/Kolors' ? this.siliconflow : this.provider).generateImage({ prompt, size, model });
       await this.downloadAndFinalize(userId, assetId, result.url, 'image', 'png');
       this.logger.log(`Image generation ${assetId} completed`);
     } catch (err) {

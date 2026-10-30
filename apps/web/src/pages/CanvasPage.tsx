@@ -11,7 +11,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { IMAGE_SIZES, VIDEO_SIZES } from '@reel/contracts/media-capabilities';
+import { imageSizesForModel, VIDEO_SIZES } from '@reel/contracts/media-capabilities';
 import { MediaGenerationSettings } from '../features/canvas/components/MediaGenerationSettings';
 import { MODEL_BUSY_MESSAGE, isGenerationActive } from '@reel/contracts/generation';
 import type {
@@ -29,6 +29,7 @@ import {
   Background,
   BackgroundVariant,
   BaseEdge,
+  EdgeLabelRenderer,
   ConnectionLineType,
   getBezierPath,
   getNodesBounds,
@@ -227,8 +228,10 @@ function CurrentFlowEdge({
   markerEnd,
   style,
   data,
+  selected,
 }: EdgeProps) {
-  const [path] = getBezierPath({
+  const dependencies = useContext(DependencySelectionContext);
+  const [path, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     targetX,
@@ -283,10 +286,17 @@ function CurrentFlowEdge({
           strokeWidth={4.5}
           strokeLinecap="round"
           strokeDasharray={dasharray}
-          style={{ '--edge-current-period': `${-period}px` } as React.CSSProperties}
+          style={{ '--edge-current-period': `${-period}px`, pointerEvents: 'none' } as React.CSSProperties}
           className="edge-current-flow"
         />
       )}
+      {selected && <EdgeLabelRenderer>
+        <button type="button" className="nodrag nopan absolute flex h-8 items-center gap-1.5 rounded-lg border border-white/15 bg-[#292929] px-2.5 text-xs text-[#efefec] shadow-lg hover:bg-[#404040]"
+          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`, pointerEvents: 'all' }}
+          aria-label="截断连接" title="截断连接" onClick={event => { event.stopPropagation(); dependencies.remove(id); }}>
+          <Scissors className="h-3.5 w-3.5" />截断
+        </button>
+      </EdgeLabelRenderer>}
     </>
   );
 }
@@ -297,7 +307,7 @@ function buildGenerationPrompt(nextPrompt: string, referenceNodes: WorkflowNode[
   const texts = referenceNodes.filter((node) => kind === 'text' || node.data.kind === 'text').map((node) => '【' + node.data.title + '】' + (node.data.content || node.data.prompt || node.data.title));
   const inlinePrompt = splitReferences(nextPrompt).map((part) => {
     const node = referenceNodes.find((item) => item.id === part.id);
-    return node ? '【' + node.data.title + '】' + (node.data.kind === 'text' ? (node.data.content || readableReferences(node.data.prompt || '')) : '') : part.id ? '【' + part.title + '】' : part.text;
+    return node ? '【' + node.data.title + '】' + (node.data.kind === 'text' ? (node.data.content || readableReferences(node.data.prompt || '')) : '') : part.id ? '' : part.text;
   }).join('');
   return referenceIds(nextPrompt).length ? inlinePrompt : texts.length ? '参考内容：\n' + texts.join('\n') + '\n\n生成要求：' + nextPrompt : nextPrompt;
 }
@@ -603,9 +613,9 @@ function NodeGenerationPrompt({
       : normalizeImageAspectRatio(data.aspectRatio),
   );
   const videoDuration = DEFAULT_VIDEO_DURATION;
-  const allowedSizes: readonly string[] = kind === 'video' ? VIDEO_SIZES : IMAGE_SIZES;
+  const allowedSizes: readonly string[] = kind === 'video' ? VIDEO_SIZES : imageSizesForModel(model);
   const [generationSize, setGenerationSize] = useState(
-    data.generationSize && allowedSizes.includes(data.generationSize) ? data.generationSize : kind === 'video' ? '1920x1080' : IMAGE_SIZE_BY_RATIO[aspectRatio],
+    data.generationSize && allowedSizes.includes(data.generationSize) ? data.generationSize : kind === 'video' ? '1920x1080' : model === 'Kwai-Kolors/Kolors' ? '1024x1024' : IMAGE_SIZE_BY_RATIO[aspectRatio],
   );
   const [videoFps, setVideoFps] = useState<30 | 60>(data.videoFps === 60 ? 60 : 30);
   const [generationQuality, setGenerationQuality] = useState<'standard' | 'hd' | 'speed' | 'quality'>(
@@ -614,6 +624,7 @@ function NodeGenerationPrompt({
   const [videoWithAudio, setVideoWithAudio] = useState(
     data.videoWithAudio ?? DEFAULT_VIDEO_WITH_AUDIO,
   );
+  const supportsImageReference = kind === 'video' || (kind === 'image' && model === 'Kwai-Kolors/Kolors');
   const selectedReferenceIds = data.referenceNodeIds ?? [];
   const invalidateTasks = () => { void queryClient.invalidateQueries({ queryKey: ['generation-tasks', canvasId] }); };
   const generation = useMutation({
@@ -622,17 +633,17 @@ function NodeGenerationPrompt({
       const referenceNodes = selectedReferenceIds
         .filter((source) => dependencySelection.edges.some((edge) => edge.target === nodeId && edge.source === source))
         .map((source) => dependencySelection.nodes.find((node) => node.id === source))
-        .filter((node): node is WorkflowNode => !!node && acceptsDependency(node.data.kind, kind));
+        .filter((node): node is WorkflowNode => !!node && acceptsDependency(node.data.kind, kind, model));
       if (referenceNodes.some((node) => node.data.kind === 'audio')) throw new GenerationPreparationError('当前视频模型暂不支持音频参考，请移除音频引用后再试');
       const references: AssetReference[] = referenceNodes.map((node) => ({ kind: node.data.kind, name: node.data.title, content: node.data.kind === 'text' ? node.data.content || node.data.prompt || node.data.title : undefined, url: node.data.url ?? undefined, assetId: node.data.assetId }));
-      const frames = kind === 'video' ? referenceNodes.filter((node) => node.data.kind === 'image') : [];
-      if (frames.length > 1) throw new GenerationPreparationError('当前视频模型最多支持一张参考图，不支持首尾帧');
+      const frames = supportsImageReference ? referenceNodes.filter((node) => node.data.kind === 'image') : [];
+      if (frames.length > 1) throw new GenerationPreparationError('当前模型最多支持一张参考图');
       if (frames.some((node) => !node.data.assetId || node.data.status !== 'ready')) throw new GenerationPreparationError('参考图片尚未上传或生成完成');
       const combined = buildGenerationPrompt(nextPrompt, referenceNodes, kind);
       const limit = kind === 'video' ? 512 : kind === 'image' ? 2000 : 12000;
       if (combined.length > limit) throw new GenerationPreparationError(`提示词（含文字参考内容）不能超过 ${limit} 字符，当前 ${combined.length} 字符`);
       return api.generationTasks.create({ requestId, canvasId, nodeId, kind, count, prompt: combined, userPrompt: readableReferences(nextPrompt), references, model,
-        ...(kind === 'image' ? { size: generationSize, quality: generationQuality } : {}),
+        ...(kind === 'image' ? { size: generationSize, quality: generationQuality, imageAssetIds: frames.map((node) => node.data.assetId!) } : {}),
         ...(kind === 'video' ? { size: generationSize, fps: videoFps, quality: generationQuality, withAudio: videoWithAudio, imageAssetIds: frames.map((node) => node.data.assetId!) } : {}),
       });
     },
@@ -680,20 +691,20 @@ function NodeGenerationPrompt({
     }))
     .filter(
       (dependency): dependency is { edge: Edge; node: WorkflowNode } =>
-        !!dependency.node &&
-        acceptsDependency(dependency.node.data.kind, kind),
+        !!dependency.node,
     );
 
   const selectedReferenceNodes = selectedReferenceIds
     .map((referenceNodeId) => referenceDependencies.find(({ node }) => node.id === referenceNodeId))
     .filter((dependency): dependency is { edge: Edge; node: WorkflowNode } => !!dependency)
-    .map(({ node }) => node);
+    .map(({ node }) => node)
+    .filter(node => acceptsDependency(node.data.kind, kind, model));
   const videoImageReferenceIds = selectedReferenceNodes
     .filter((node) => node.data.kind === 'image')
     .map((node) => node.id);
-  const candidates = dependencySelection.nodes.filter((node) => node.id !== nodeId && acceptsDependency(node.data.kind, kind) &&
-    (kind !== 'video' || node.data.kind !== 'image' || referenceDependencies.some((item) => item.node.id === node.id) || referenceDependencies.filter((item) => item.node.data.kind === 'image').length < 1))
+  const referenceItems = referenceDependencies.map(({ node }) => node)
     .map((node): CanvasChatReference => ({ id: node.id, title: node.data.title, kind: node.data.kind, content: node.data.content, prompt: node.data.prompt, url: node.data.url ?? undefined, assetId: node.data.assetId }));
+  const candidates = referenceItems.filter(node => acceptsDependency(node.kind, kind, model));
 
   // Preserve references in graphs saved before inline mentions were introduced.
   useEffect(() => {
@@ -704,8 +715,8 @@ function NodeGenerationPrompt({
   const acceptReference = (reference: CanvasChatReference) => {
     const node = dependencySelection.nodes.find((item) => item.id === reference.id);
     if (!node || !candidates.some((item) => item.id === node.id)) return false;
-    if (kind === 'video' && node.data.kind === 'image' && videoImageReferenceIds.some(id => id !== node.id)) {
-      toast.warning('当前视频模型最多支持一张参考图');
+    if (supportsImageReference && node.data.kind === 'image' && videoImageReferenceIds.some(id => id !== node.id)) {
+      toast.warning('当前模型最多支持一张参考图');
       return false;
     }
     setEdges((edges) => edges.some((edge) => edge.source === node.id && edge.target === nodeId) ? edges :
@@ -792,7 +803,7 @@ function NodeGenerationPrompt({
         </button>
       </div>
       <div className="flex min-h-14 w-full px-2 py-1">
-        <InlineReferenceInput ref={promptInputRef} value={prompt} candidates={candidates}
+        <InlineReferenceInput ref={promptInputRef} value={prompt} candidates={candidates} referenceItems={referenceItems}
           onReference={acceptReference}
           onChange={(value) => updateNodeData(nodeId, { prompt: value, referenceNodeIds: referenceIds(value) })}
           onSubmit={() => { if (kind !== 'audio' && prompt.trim() && !isGenerating && !submissionRef.current) { submissionRef.current = true; generation.mutate({ prompt: prompt.trim(), count: generationCount, requestId: uuid() }); } }}
@@ -806,11 +817,18 @@ function NodeGenerationPrompt({
           {kind === 'audio' ? <span className="px-2 text-xs text-[#929297]">音频模型暂未接入</span> : <NodeModelSelect
             kind={kind}
             value={model}
-            onChange={setModel}
+            onChange={(value) => {
+              setModel(value);
+              if (kind === 'image' && !imageSizesForModel(value).includes(generationSize)) {
+                setGenerationSize('1024x1024');
+                setAspectRatio('1:1');
+                updateNodeData(nodeId, { model: value, generationSize: '1024x1024', aspectRatio: '1:1' });
+              } else updateNodeData(nodeId, { model: value });
+            }}
             disabled={isGenerating}
           />}
           {(kind === 'image' || kind === 'video') && <MediaGenerationSettings
-            kind={kind} size={generationSize} quality={generationQuality} fps={videoFps} withAudio={videoWithAudio} disabled={isGenerating}
+            kind={kind} model={model} size={generationSize} quality={generationQuality} fps={videoFps} withAudio={videoWithAudio} disabled={isGenerating}
             onChange={(patch) => {
               if (patch.generationSize) {
                 setGenerationSize(patch.generationSize);
@@ -1076,14 +1094,14 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   );
   const dependencyTargetImageCount = dependencySelection.edges.filter((edge) => {
     if (edge.target !== dependencySelection.targetId) return false;
-    if (dependencyTarget?.data.kind !== 'video') return true;
+    if (dependencyTarget?.data.kind !== 'video' && dependencyTarget?.data.model !== 'Kwai-Kolors/Kolors') return true;
     return dependencySelection.nodes.find((node) => node.id === edge.source)?.data.kind === 'image';
   }).length;
   const isDependencyCandidate =
     isSelectingDependency &&
     id !== dependencySelection.targetId &&
-    !!dependencyTarget && acceptsDependencyInput(dependencyTarget.data) && acceptsDependency(data.kind, dependencyTarget.data.kind) &&
-    (dependencyTarget.data.kind !== 'video' || data.kind !== 'image' || dependencyTargetImageCount < 2) &&
+    !!dependencyTarget && acceptsDependencyInput(dependencyTarget.data) && acceptsDependency(data.kind, dependencyTarget.data.kind, dependencyTarget.data.model) &&
+    ((dependencyTarget.data.kind !== 'video' && dependencyTarget.data.model !== 'Kwai-Kolors/Kolors') || data.kind !== 'image' || dependencyTargetImageCount < 1) &&
     !dependencySelection.edges.some(
       (edge) => edge.source === id && edge.target === dependencySelection.targetId,
     );
@@ -1337,6 +1355,7 @@ function InfiniteCanvas({
   const [addMenuPosition, setAddMenuPosition] = useState<{ x: number; y: number; flow: { x: number; y: number } } | null>(null);
   const [batchLibraryNodes, setBatchLibraryNodes] = useState<WorkflowNode[] | null>(null);
   const [downloadingSelection, setDownloadingSelection] = useState(false);
+  const [downloadingNode, setDownloadingNode] = useState<string | null>(null);
   const [showNodeSearch, setShowNodeSearch] = useState(false);
   const [showAssetLibrary, setShowAssetLibrary] = useState(false);
   const [showAssetHistory, setShowAssetHistory] = useState(false);
@@ -1519,8 +1538,8 @@ function InfiniteCanvas({
       const sourceNode = nodes.find((node) => node.id === connection.source);
       const targetNode = nodes.find((node) => node.id === connection.target);
       if (!sourceNode || !targetNode) return false;
-      if (!acceptsDependencyInput(targetNode.data) || !acceptsDependency(sourceNode.data.kind, targetNode.data.kind)) return false;
-      if (targetNode.data.kind === 'video') {
+      if (!acceptsDependencyInput(targetNode.data) || !acceptsDependency(sourceNode.data.kind, targetNode.data.kind, targetNode.data.model)) return false;
+      if (targetNode.data.kind === 'video' || (targetNode.data.kind === 'image' && targetNode.data.model === 'Kwai-Kolors/Kolors')) {
         const existingInputCount = edges.filter(
           (edge) =>
             edge.target === targetNode.id &&
@@ -1552,8 +1571,8 @@ function InfiniteCanvas({
       const sourceNode = nodes.find((node) => node.id === sourceId);
       const targetNode = nodes.find((node) => node.id === dependencyTargetId);
       if (!sourceNode || !targetNode) return;
-      if (!acceptsDependencyInput(targetNode.data) || !acceptsDependency(sourceNode.data.kind, targetNode.data.kind)) return;
-      if (targetNode.data.kind === 'video') {
+      if (!acceptsDependencyInput(targetNode.data) || !acceptsDependency(sourceNode.data.kind, targetNode.data.kind, targetNode.data.model)) return;
+      if (targetNode.data.kind === 'video' || (targetNode.data.kind === 'image' && targetNode.data.model === 'Kwai-Kolors/Kolors')) {
         const inputCount = edges.filter(
           (edge) =>
             edge.target === targetNode.id &&
@@ -1764,7 +1783,7 @@ function InfiniteCanvas({
       setNodeActionMenu({
         nodeId: node.id,
         x: Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - 168)),
-        y: Math.max(8, Math.min(event.clientY - bounds.top + 8, bounds.height - 180)),
+        y: Math.max(8, Math.min(event.clientY - bounds.top + 8, bounds.height - 216)),
       });
     },
     [dependencyTargetId],
@@ -1864,6 +1883,18 @@ function InfiniteCanvas({
     }
     setDownloadingSelection(false);
     if (failures) toast.error(`${failures} 项素材下载失败，请重试`);
+  };
+  const downloadNode = async (node: WorkflowNode) => {
+    if (downloadingNode) return;
+    setNodeActionMenu(null);
+    setDownloadingNode(node.id);
+    try {
+      const asset = node.data.url
+        ? { kind: node.data.kind, name: node.data.title, url: node.data.url, content: null }
+        : await api.assets.get(node.data.assetId!) as Asset;
+      await downloadAssetFile(asset);
+    } catch { toast.error('素材下载失败，请重试'); }
+    finally { setDownloadingNode(null); }
   };
 
   return (
@@ -2107,6 +2138,12 @@ function InfiniteCanvas({
             <Copy className="h-4 w-4" />
             复制
           </button>
+          {(actionMenuNode?.data.kind === 'image' || actionMenuNode?.data.kind === 'video') && <button
+            type="button" onClick={() => void downloadNode(actionMenuNode)}
+            disabled={!!downloadingNode || actionMenuNode.data.status !== 'ready' || !actionMenuNode.data.url && !actionMenuNode.data.assetId}
+            className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-[#dddddf] transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-40">
+            <Download className="h-4 w-4" />下载
+          </button>}
           <button
             type="button"
             onClick={() => deleteNode(nodeActionMenu.nodeId)}

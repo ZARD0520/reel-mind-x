@@ -47,6 +47,9 @@ services:
       GLM_BASE_URL: ${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
       GLM_MODEL: ${GLM_MODEL:-glm-4-flash}
       GLM_IMAGE_MODEL: ${GLM_IMAGE_MODEL:-cogview-3-flash}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_ASR_MODEL: ${SILICONFLOW_ASR_MODEL:-XingChenAGI/XingChenASR-V3.2-Ultra}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
       GLM_VIDEO_MODEL: ${GLM_VIDEO_MODEL:-cogvideox-flash}
     volumes:
       - api-storage-prod:/app/storage

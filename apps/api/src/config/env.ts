@@ -16,6 +16,9 @@ const envSchema = z.object({
   GLM_MODEL: z.string().default('glm-4-flash'),
   GLM_IMAGE_MODEL: z.string().default('cogview-3-flash'),
   GLM_VIDEO_MODEL: z.string().default('cogvideox-flash'),
+  SILICONFLOW_API_KEY: z.string().optional(),
+  SILICONFLOW_ASR_MODEL: z.string().default('XingChenAGI/XingChenASR-V3.2-Ultra'),
+  SILICONFLOW_BASE_URL: z.string().url().default('https://api.siliconflow.cn/v1'),
 });
 
 export type Env = z.infer<typeof envSchema>;

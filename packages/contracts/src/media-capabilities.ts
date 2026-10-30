@@ -9,3 +9,12 @@ export function validImageSize(size: string): boolean {
   const [w = 0, h = 0] = size.split('x').map(Number);
   return w >= 512 && h >= 512 && w <= 2048 && h <= 2048 && w % 16 === 0 && h % 16 === 0 && w * h <= 2 ** 21;
 }
+
+export const KOLORS_MODEL = 'Kwai-Kolors/Kolors';
+export const KOLORS_IMAGE_SIZES = ['1024x1024', '960x1280', '768x1024', '720x1440', '720x1280'] as const;
+export function imageSizesForModel(model?: string): readonly string[] {
+  return model === KOLORS_MODEL ? KOLORS_IMAGE_SIZES : IMAGE_SIZES;
+}
+export function validImageSizeForModel(size: string, model?: string): boolean {
+  return model === KOLORS_MODEL ? imageSizesForModel(model).includes(size) : validImageSize(size);
+}

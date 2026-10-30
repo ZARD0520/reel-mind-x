@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { VIDEO_SIZES, validImageSize } from './media-capabilities';
+import { VIDEO_SIZES, validImageSizeForModel } from './media-capabilities';
 export * from './media-capabilities';
 export * from './credits';
 export { MODEL_BUSY_MESSAGE } from './generation';
@@ -656,7 +656,6 @@ export type GeneratedText = z.infer<typeof GeneratedTextSchema>;
 /** 生成尺寸格式：宽x高（如 "1280x720"）。前端按比例映射到各模型支持的尺寸。 */
 const SizeSchema = z.string().regex(/^\d{2,5}x\d{2,5}$/, 'size 格式应为 "宽x高"，如 1280x720');
 const VideoSizeSchema = z.enum(VIDEO_SIZES);
-const ImageSizeSchema = SizeSchema.refine(validImageSize, '图片宽高须为 512～2048、16 的倍数，且总像素不超过 2097152');
 const FpsSchema = z.union([z.literal(30), z.literal(60)]);
 const MediaQualitySchema = z.enum(['standard', 'hd', 'speed', 'quality']);
 
@@ -669,13 +668,15 @@ export const GenerateImageSchema = z
     prompt: z.string().min(1).max(2000),
     userPrompt: z.string().min(1).max(2000).optional(),
     references: z.array(AssetReferenceSchema).max(100).optional(),
-    size: ImageSizeSchema.default('1024x1024'),
+    size: SizeSchema.default('1024x1024'),
+    imageAssetIds: z.array(z.string().uuid()).max(1).optional(),
     quality: z.enum(['standard', 'hd']).optional(),
     model: z.string().min(1).max(100).optional(),
   })
   .refine((input) => Number(!!input.projectId) + Number(!!input.canvasId) === 1, {
     message: 'projectId 和 canvasId 必须且只能提供一个',
-  });
+  })
+  .refine(input => validImageSizeForModel(input.size, input.model), { path: ['size'], message: '图片尺寸不受支持' });
 export type GenerateImageInput = z.infer<typeof GenerateImageSchema>;
 
 /** AI 视频生成请求 */
@@ -739,9 +740,13 @@ export const CreateGenerationTaskSchema = z.object({
     }
     if (input.kind === 'image') {
       if (input.prompt.length > 2000) issue('prompt', '图片提示词（含文字参考内容）不能超过 2000 字符');
-      if (input.size && !validImageSize(input.size)) issue('size', '图片尺寸不受支持');
+      if (input.size && !validImageSizeForModel(input.size, input.model)) issue('size', '图片尺寸不受支持');
       if (input.quality && !['standard', 'hd'].includes(input.quality)) issue('quality', '图片质量参数不受支持');
-      if (input.imageAssetIds.length || input.references.some(ref => ref.kind !== 'text')) issue('references', '当前图片模型仅支持文字参考');
+      if (input.model === 'Kwai-Kolors/Kolors') {
+        if (input.imageAssetIds.length > 1) issue('imageAssetIds', 'Kolors 最多支持一张参考图');
+        if (input.references.some(ref => ref.kind !== 'text' && ref.kind !== 'image')) issue('references', 'Kolors 仅支持文字和图片参考');
+        if (input.references.some(ref => ref.kind === 'image' && (!ref.assetId || !input.imageAssetIds.includes(ref.assetId)))) issue('references', '图片引用必须关联参考图片素材');
+      } else if (input.imageAssetIds.length || input.references.some(ref => ref.kind !== 'text')) issue('references', '当前图片模型仅支持文字参考');
     }
   });
 export type CreateGenerationTaskInput = z.infer<typeof CreateGenerationTaskSchema>;

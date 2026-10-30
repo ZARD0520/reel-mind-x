@@ -24,6 +24,7 @@ import { GenerationTasksWorkerModule } from './modules/generation-tasks/generati
 import { CreditsModule } from './modules/credits/credits.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { ZodExceptionFilter } from './filters/zod-exception.filter';
+import { TranscriptionModule } from './modules/transcription/transcription.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { ZodExceptionFilter } from './filters/zod-exception.filter';
     CreditsModule,
     AdminModule,
     AuthModule,
+    TranscriptionModule,
     CanvasesModule,
     CanvasChatModule,
     LlmModule,

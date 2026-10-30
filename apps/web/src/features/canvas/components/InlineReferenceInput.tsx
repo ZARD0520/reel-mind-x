@@ -10,6 +10,8 @@ export type InlineReferenceInputHandle = { insert: (reference: CanvasChatReferen
 type Props = {
   value: string;
   candidates: CanvasChatReference[];
+  /** 已有引用的展示信息，可包含当前模型不支持的节点。 */
+  referenceItems?: CanvasChatReference[];
   onChange: (value: string) => void;
   onReference?: (reference: CanvasChatReference) => boolean;
   onSubmit: () => void;
@@ -43,7 +45,7 @@ function serialize(node: Node): string {
     `${index && child.nodeName === 'DIV' ? '\n' : ''}${serialize(child)}`).join('');
 }
 
-export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props>(function InlineReferenceInput({ value, candidates, onChange, onReference, onSubmit, placeholder, label, disabled, maxReferences, maxLength, variant = 'node', editorClassName }, ref) {
+export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props>(function InlineReferenceInput({ value, candidates, referenceItems = candidates, onChange, onReference, onSubmit, placeholder, label, disabled, maxReferences, maxLength, variant = 'node', editorClassName }, ref) {
   const root = useRef<HTMLDivElement>(null);
   const iconTemplates = useRef<HTMLSpanElement>(null);
   const editMenu = usePromptEditMenu(root, disabled);
@@ -103,10 +105,11 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
     if (!value) { element.replaceChildren(); return; }
     function decorateChips() {
       for (const chip of element!.querySelectorAll<HTMLElement>('[data-node-id]')) {
-        const reference = candidates.find((item) => item.id === chip.dataset.nodeId);
+        const reference = referenceItems.find((item) => item.id === chip.dataset.nodeId);
+        const inactive = variant === 'node' && !candidates.some(item => item.id === chip.dataset.nodeId);
         const part = splitReferences(chip.dataset.reference ?? '')[0];
         const title = reference?.title ?? part?.title ?? '';
-        const appearance = JSON.stringify(['lucide', title, reference?.kind, variant, disabled]);
+        const appearance = JSON.stringify(['lucide', title, reference?.kind, variant, disabled, inactive]);
         if (chip.dataset.appearance === appearance) continue;
         chip.dataset.appearance = appearance;
         chip.className = variant === 'node'
@@ -115,6 +118,15 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
         const label = document.createElement('span');
         label.className = variant === 'node' ? 'min-w-0 max-w-36 truncate' : 'min-w-0 max-w-44 truncate';
         label.textContent = title;
+        if (inactive) {
+          chip.className += ' opacity-40';
+          label.className += ' line-through';
+          chip.title = '当前模型不支持此引用或节点已断开，此引用不会参与生成';
+          chip.dataset.inactiveReference = 'true';
+        } else {
+          chip.removeAttribute('title');
+          delete chip.dataset.inactiveReference;
+        }
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.tabIndex = -1;
@@ -148,6 +160,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
   }
 
   function insert(reference: CanvasChatReference) {
+    if (variant === 'node' && !candidates.some(item => item.id === reference.id)) return;
     if (disabled || (limited && !referenceIds(value).includes(reference.id)) || onReference?.(reference) === false) return;
     // 聚焦时插入到实时光标位置；未聚焦时插入到内容最末尾
     const focused = document.activeElement === root.current;
@@ -185,7 +198,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
       onMouseOver={(event) => {
         const chip = hoveredChip(event.target);
         if (!chip || chip.contains(event.relatedTarget as Node | null)) return;
-        const reference = candidates.find((item) => item.id === chip.dataset.nodeId);
+        const reference = referenceItems.find((item) => item.id === chip.dataset.nodeId);
         const part = splitReferences(chip.dataset.reference ?? '')[0];
         hover.show(reference ?? { id: chip.dataset.nodeId!, title: part?.title ?? '', kind: 'text' }, chip, !!reference);
       }}

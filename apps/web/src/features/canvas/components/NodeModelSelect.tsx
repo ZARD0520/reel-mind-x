@@ -6,6 +6,7 @@ export type CanvasModelId =
   | 'glm-4v-flash'
   | 'glm-4.1v-thinking-flash'
   | 'glm-4.6v-flash'
+  | 'Kwai-Kolors/Kolors'
   | 'cogview-3-flash'
   | 'cogvideox-flash';
 
@@ -31,6 +32,7 @@ const MODEL_OPTIONS: Record<CanvasNodeKind, SelectOption<CanvasModelId>[]> = {
     },
   ],
   image: [
+    { value: 'Kwai-Kolors/Kolors', label: 'Kolors', description: '硅基流动 · 快手可图', icon: <ImageIcon className="h-4 w-4" /> },
     {
       value: 'cogview-3-flash',
       label: 'CogView-3-Flash',

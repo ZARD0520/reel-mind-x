@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, AlertTriangle, ArrowUp, Check, Clapperboard, Loader2, LogOut, Mic, Plus, Trash2, User, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, ArrowUp, Check, Clapperboard, Loader2, LogOut, Plus, Trash2, User, X } from 'lucide-react';
 import type { AuthSession, Canvas, User as ReelUser } from '@reel/contracts';
 import { ApiError, api } from '../lib/api';
 import type { CanvasChatReference } from '../features/canvas/chat-types';
@@ -11,6 +11,7 @@ import { InlineReferenceInput, type InlineReferenceInputHandle } from '../featur
 import { useToast } from '../components/ui/Toast';
 import { AssetsView } from '../features/home/components/AssetsView';
 import { CreditWallet } from '../components/CreditWallet';
+import { VoiceInputButton } from '../features/home/components/VoiceInputButton';
 
 type AuthMode = 'login' | 'register';
 type FieldErrors = Partial<Record<'name' | 'email' | 'password', string>>;
@@ -268,6 +269,7 @@ export function HomePage() {
   const qc = useQueryClient();
   const activeView = location.pathname === '/assets' ? 'assets' : location.pathname === '/project' ? 'workspace' : 'home';
   const [prompt, setPrompt] = useState('');
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const [placeholderLength, setPlaceholderLength] = useState(0);
   const [isDeletingPlaceholder, setIsDeletingPlaceholder] = useState(false);
   const [chatAttachments, setChatAttachments] = useState<{ reference: CanvasChatReference; file?: File }[]>([]);
@@ -355,7 +357,7 @@ export function HomePage() {
 
   const handlePromptSubmit = () => {
     const initialAgentPrompt = prompt.trim();
-    if (!initialAgentPrompt || createCanvas.isPending) return;
+    if (!initialAgentPrompt || createCanvas.isPending || voiceBusy) return;
     handleCreateCanvas(undefined, initialAgentPrompt, chatAttachments);
   };
 
@@ -501,12 +503,11 @@ export function HomePage() {
               <div className="mt-1 flex items-center justify-between">
                 <ChatAttachMenu uploads={chatAttachments.map((attachment) => attachment.reference)} draftIds={new Set(referenceIds(prompt))} onPick={handleAttachPick} onUploaded={handleUploaded} onConfirmPicks={handleConfirmPicks} disabled={createCanvas.isPending} />
                 <div className="flex items-center gap-2">
-                  <button type="button" disabled className="flex h-9 w-9 items-center justify-center rounded-full text-[#b9b9ba] opacity-75" title="语音输入即将支持" aria-label="语音输入即将支持">
-                    <Mic className="h-[17px] w-[17px]" />
-                  </button>
+                  <VoiceInputButton authenticated={!!me.data} disabled={createCanvas.isPending} onLogin={() => setIsAuthOpen(true)} onBusyChange={setVoiceBusy}
+                    onText={text => { setPrompt(current => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${text}`); composerRef.current?.focus(); }} />
                   <button
                     type="submit"
-                    disabled={!prompt.trim() || createCanvas.isPending}
+                    disabled={!prompt.trim() || createCanvas.isPending || voiceBusy}
                     className="flex h-9 w-9 items-center justify-center rounded-full bg-[#f7f7f2] text-[#090909] transition-all hover:scale-[1.03] hover:bg-white active:scale-95 disabled:cursor-not-allowed disabled:bg-white/[0.12] disabled:text-white/35"
                     title="创建工作流"
                     aria-label="发送"

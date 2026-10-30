@@ -38,6 +38,13 @@ async function requestVoid(path: string, init?: RequestInit): Promise<void> {
 }
 
 export const api = {
+  audio: {
+    transcribe: (file: Blob, filename: string, signal?: AbortSignal) => {
+      const body = new FormData();
+      body.append('file', file, filename);
+      return request<{ text: string }>('/audio/transcriptions', { method: 'POST', body, signal });
+    },
+  },
   generationTasks: {
     create: (body: Omit<CreateGenerationTaskInput, 'references' | 'imageAssetIds' | 'maxLength' | 'count'> & Partial<Pick<CreateGenerationTaskInput, 'references' | 'imageAssetIds' | 'maxLength' | 'count'>>) => request<GenerationTask>('/generation-tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     list: (canvasId: string) => request<GenerationTask[]>(`/generation-tasks?canvasId=${encodeURIComponent(canvasId)}`),
