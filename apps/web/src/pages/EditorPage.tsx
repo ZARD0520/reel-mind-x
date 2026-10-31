@@ -11,7 +11,8 @@ import { Timeline } from '../features/editor/components/Timeline';
 import { PREVIEW_FPS } from '../features/editor/constants';
 import { ApiError } from '../lib/api';
 
-export function EditorPage() {
+export type EditorPageProps = { allowUpload?: boolean; allowAiGeneration?: boolean; allowAiMix?: boolean };
+export function EditorPage({ allowUpload = true, allowAiGeneration = true, allowAiMix = true }: EditorPageProps = {}) {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -19,6 +20,8 @@ export function EditorPage() {
   const { data: project, isLoading, error } = useProject(id);
   const { data: assets = [] } = useAssets(id);
   const updateProject = useUpdateProject(id);
+  const dependencyOnly = !!project?.timeline.canvasSource;
+  const sourceCanvas = project?.timeline.canvasSource?.canvasId ?? sourceCanvasId;
 
   const { timeline, selectedClipId, setTimeline, replaceTimeline, selectClip } = useEditorStore();
   const removeClip = useEditorStore((s) => s.removeClip);
@@ -153,7 +156,7 @@ export function EditorPage() {
 
   const handleBack = async () => {
     await saveLatestTimeline();
-    navigate(sourceCanvasId ? `/canvas/${encodeURIComponent(sourceCanvasId)}` : '/', {
+    navigate(sourceCanvas ? `/canvas/${encodeURIComponent(sourceCanvas)}` : '/', {
       replace: true,
     });
   };
@@ -178,14 +181,14 @@ export function EditorPage() {
         onRedo={redo}
         onBack={handleBack}
         onRename={(name) => updateProject.mutate({ name })}
-        onOpenAiMix={() => setAiMixOpen(true)}
+        onOpenAiMix={allowAiMix && !dependencyOnly ? () => setAiMixOpen(true) : undefined}
         durationSec={durationSec}
         width={timeline?.settings.width ?? 1920}
         height={timeline?.settings.height ?? 1080}
         onBeforeExport={saveLatestTimeline}
       />
       <div className="flex min-h-0 flex-1">
-        <LeftPanel projectId={id} />
+        <LeftPanel projectId={id} allowUpload={allowUpload && !dependencyOnly} allowAiGeneration={allowAiGeneration && !dependencyOnly} allowAssetDelete={!dependencyOnly} layout={dependencyOnly ? 'compact' : 'sidebar'} />
         <PreviewCanvas
           projectId={id}
           currentFrame={currentFrame}
@@ -204,7 +207,7 @@ export function EditorPage() {
         onSeek={handleSeek}
         onSelectClip={selectClip}
       />
-      <AiMixDialog
+      {allowAiMix && !dependencyOnly && <AiMixDialog
         open={aiMixOpen}
         projectId={id}
         assets={assets}
@@ -218,7 +221,7 @@ export function EditorPage() {
           updateProject.mutate({ timeline: draftTimeline });
           setAiMixOpen(false);
         }}
-      />
+      />}
     </div>
   );
 }

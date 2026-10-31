@@ -120,9 +120,10 @@ export class AssetsService {
   private async assertProjectOwned(userId: string, projectId: string): Promise<void> {
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, userId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, timeline: true },
     });
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+    if ((project.timeline as { canvasSource?: unknown } | null)?.canvasSource) throw new BadRequestException('智能剪辑只接受画布节点引用的素材，请在画布中上传后引用');
   }
 
   async findOne(userId: string, id: string): Promise<Asset> {
@@ -132,8 +133,10 @@ export class AssetsService {
   }
 
   async list(userId: string, projectId: string): Promise<Asset[]> {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId, deletedAt: null }, select: { timeline: true } });
+    const source = (project?.timeline as { canvasSource?: { assets: { assetId: string }[] } } | null)?.canvasSource;
     const rows = await this.prisma.asset.findMany({
-      where: { userId, projectId },
+      where: { userId, projectId, ...(source ? { id: { in: source.assets.map(item => item.assetId) } } : {}) },
       orderBy: { createdAt: 'desc' },
     });
     return rows.map((row) => this.toAsset(row));

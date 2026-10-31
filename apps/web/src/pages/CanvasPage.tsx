@@ -50,6 +50,7 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useNodeId,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -116,7 +117,7 @@ import { generationFeedbackMessage, generationTasksPollingInterval, recoverGener
 import { acceptsDependency, acceptsDependencyInput } from '../features/canvas/dependency-rules';
 import { useCanvasHistory } from '../features/canvas/useCanvasHistory';
 
-type WorkflowNodeKind = CanvasNodeKind | 'audio';
+type WorkflowNodeKind = CanvasNodeKind | 'audio' | 'edit';
 type GenerationCount = 1 | 2 | 4;
 type GenerationCountValue = `${GenerationCount}`;
 
@@ -139,6 +140,7 @@ const NODE_SEARCH_FILTERS: { value: NodeSearchKind; label: string }[] = [
   { value: 'text', label: '文本' },
   { value: 'image', label: '图片' },
   { value: 'video', label: '视频' },
+  { value: 'edit', label: '智能剪辑' },
   { value: 'audio', label: '音频' },
 ];
 
@@ -179,8 +181,11 @@ type WorkflowNodeData = {
 };
 
 type WorkflowNode = Node<WorkflowNodeData, 'workflow'>;
+type MediaWorkflowNode = WorkflowNode & { data: WorkflowNodeData & { kind: Exclude<WorkflowNodeKind, 'edit'> } };
+function isMediaNode(node: WorkflowNode): node is MediaWorkflowNode { return node.data.kind !== 'edit'; }
 
 const nodeTemplates: Record<WorkflowNodeKind, Omit<WorkflowNodeData, 'title'>> = {
+  edit: { kind: 'edit', content: '' },
   text: { kind: 'text', content: '' },
   image: { kind: 'image', content: '', aspectRatio: DEFAULT_IMAGE_ASPECT_RATIO },
   audio: { kind: 'audio', content: '' },
@@ -194,13 +199,21 @@ const nodeTemplates: Record<WorkflowNodeKind, Omit<WorkflowNodeData, 'title'>> =
 };
 
 const nodeLabels: Record<WorkflowNodeKind, string> = {
+  edit: '智能剪辑',
   text: '文本',
   image: '图片',
   video: '视频',
   audio: '音频',
 };
 
+function dependentNodeModel(source: WorkflowNodeKind, target: WorkflowNodeKind) {
+  if (target === 'edit' || target === 'audio') return undefined;
+  // Image references require a model that supports image-to-image input.
+  return normalizeCanvasModel(target, source === 'image' && target === 'image' ? 'Kwai-Kolors/Kolors' : undefined);
+}
+
 const nodeIcons = {
+  edit: Scissors,
   text: AlignLeft,
   image: ImageIcon,
   video: Film,
@@ -384,10 +397,27 @@ function MagneticConnectionHandle({
   selected: boolean;
 }) {
   const isTarget = type === 'target';
-  const label = isTarget ? '连接到此节点' : '从此节点创建连线';
+  const label = isTarget ? '连接到此节点' : '添加下游节点';
+  const nodeId = useNodeId();
+  const dependency = useContext(DependencySelectionContext);
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
 
   return (
     <div
+      onPointerDownCapture={event => { pointerStart.current = { x: event.clientX, y: event.clientY }; }}
+      onClick={event => {
+        if (isTarget || !nodeId) return;
+        event.stopPropagation();
+        if (pointerStart.current && Math.hypot(event.clientX - pointerStart.current.x, event.clientY - pointerStart.current.y) > 4) return;
+        dependency.addFromSource(nodeId, event.clientX, event.clientY);
+      }}
+      onKeyDown={event => {
+        if (isTarget || !nodeId || !['Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const bounds = event.currentTarget.getBoundingClientRect();
+        dependency.addFromSource(nodeId, bounds.right, bounds.top + bounds.height / 2);
+      }}
       onPointerMove={followConnectionHandle}
       onPointerLeave={resetConnectionHandle}
       // 磁吸容器以节点边缘为中心、横跨内外各 56px，沿边缘方向 224px（原 112px 的 2 倍面积）。
@@ -414,6 +444,8 @@ function MagneticConnectionHandle({
         position={isTarget ? Position.Left : Position.Right}
         aria-label={label}
         title={label}
+        role={isTarget ? undefined : 'button'}
+        tabIndex={isTarget ? undefined : 0}
         style={{
           top: 0,
           left: isTarget ? '50%' : '0%',
@@ -421,7 +453,7 @@ function MagneticConnectionHandle({
           height: '100%',
           transform: 'none',
         }}
-        className="!z-10 !cursor-crosshair !border-0 !bg-transparent !opacity-0 !rounded-none"
+        className="!z-10 cursor-crosshair !border-0 !bg-transparent !opacity-0 !rounded-none"
       />
       <Handle
         type={type}
@@ -434,7 +466,7 @@ function MagneticConnectionHandle({
           height: '100%',
           transform: 'none',
         }}
-        className="!z-10 !cursor-crosshair !border-0 !bg-transparent !opacity-0 !rounded-none"
+        className="!z-10 cursor-crosshair !border-0 !bg-transparent !opacity-0 !rounded-none"
       />
     </div>
   );
@@ -449,6 +481,7 @@ type DependencySelectionContextValue = {
   start: (targetId: string) => void;
   cancel: () => void;
   remove: (edgeId: string) => void;
+  addFromSource: (sourceId: string, x: number, y: number) => void;
 };
 
 const DependencySelectionContext = createContext<DependencySelectionContextValue>({
@@ -458,12 +491,13 @@ const DependencySelectionContext = createContext<DependencySelectionContextValue
   start: () => undefined,
   cancel: () => undefined,
   remove: () => undefined,
+  addFromSource: () => undefined,
 });
 
 function normalizeNode(node: CanvasGraph['nodes'][number]): WorkflowNode {
   const rawData = node.data as Partial<WorkflowNodeData>;
   const kind: WorkflowNodeKind =
-    rawData.kind === 'image' || rawData.kind === 'video' || rawData.kind === 'audio' ? rawData.kind : 'text';
+    rawData.kind === 'image' || rawData.kind === 'video' || rawData.kind === 'audio' || rawData.kind === 'edit' ? rawData.kind : 'text';
   return {
     id: node.id,
     type: 'workflow',
@@ -559,7 +593,7 @@ function serializeCanvasGraph(
 }
 
 function toChatReferences(nodes: WorkflowNode[]): CanvasChatReference[] {
-  return nodes.filter((node) => node.data.kind !== 'audio').map((node) => ({
+  return nodes.filter((node) => node.data.kind !== 'audio' && node.data.kind !== 'edit').map((node) => ({
     id: node.id,
     kind: node.data.kind as CanvasNodeKind,
     title: node.data.title.trim().slice(0, 200) || nodeLabels[node.data.kind],
@@ -594,7 +628,7 @@ function NodeGenerationPrompt({
 }: {
   nodeId: string;
   canvasId: string;
-  kind: WorkflowNodeKind;
+  kind: Exclude<WorkflowNodeKind, 'edit'>;
   data: WorkflowNodeData;
 }) {
   const { updateNodeData, setEdges } = useReactFlow<WorkflowNode, Edge>();
@@ -634,7 +668,7 @@ function NodeGenerationPrompt({
       const referenceNodes = selectedReferenceIds
         .filter((source) => dependencySelection.edges.some((edge) => edge.target === nodeId && edge.source === source))
         .map((source) => dependencySelection.nodes.find((node) => node.id === source))
-        .filter((node): node is WorkflowNode => !!node && acceptsDependency(node.data.kind, kind, model));
+        .filter((node): node is MediaWorkflowNode => !!node && isMediaNode(node) && acceptsDependency(node.data.kind, kind, model));
       if (referenceNodes.some((node) => node.data.kind === 'audio')) throw new GenerationPreparationError('当前视频模型暂不支持音频参考，请移除音频引用后再试');
       const references: AssetReference[] = referenceNodes.map((node) => ({ kind: node.data.kind, name: node.data.title, content: node.data.kind === 'text' ? node.data.content || node.data.prompt || node.data.title : undefined, url: node.data.url ?? undefined, assetId: node.data.assetId }));
       const frames = supportsImageReference ? referenceNodes.filter((node) => node.data.kind === 'image') : [];
@@ -691,13 +725,13 @@ function NodeGenerationPrompt({
       node: dependencySelection.nodes.find((node) => node.id === edge.source),
     }))
     .filter(
-      (dependency): dependency is { edge: Edge; node: WorkflowNode } =>
-        !!dependency.node,
+      (dependency): dependency is { edge: Edge; node: MediaWorkflowNode } =>
+        !!dependency.node && isMediaNode(dependency.node),
     );
 
   const selectedReferenceNodes = selectedReferenceIds
     .map((referenceNodeId) => referenceDependencies.find(({ node }) => node.id === referenceNodeId))
-    .filter((dependency): dependency is { edge: Edge; node: WorkflowNode } => !!dependency)
+    .filter((dependency): dependency is { edge: Edge; node: MediaWorkflowNode } => !!dependency)
     .map(({ node }) => node)
     .filter(node => acceptsDependency(node.data.kind, kind, model));
   const videoImageReferenceIds = selectedReferenceNodes
@@ -880,7 +914,33 @@ function NodeGenerationPrompt({
   );
 }
 
-function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
+const SmartEditContext = createContext<{ open: (id: string) => void; pending: boolean }>({ open: () => undefined, pending: false });
+
+function SmartEditCard({ id, data, selected }: NodeProps<WorkflowNode>) {
+  const dependency = useContext(DependencySelectionContext);
+  const edit = useContext(SmartEditContext);
+  const sources = dependency.edges.filter(edge => edge.target === id).map(edge => ({ edge, node: dependency.nodes.find(node => node.id === edge.source) }));
+  const ready = sources.length > 0 && sources.every(({ node }) => node?.data.assetId && node.data.status === 'ready');
+  const { updateNodeData } = useReactFlow<WorkflowNode, Edge>();
+  return <div data-dependency-candidate={dependency.targetId ? 'false' : undefined} className={`workflow-card w-[360px] ${dependency.targetId ? 'opacity-45' : ''}`}>
+    <div className="workflow-node-title mb-2 flex h-7 items-center gap-2 px-2 text-base font-semibold"><Scissors className="h-[18px] w-[18px]" /><input aria-label="智能剪辑名称" className="nodrag nopan min-w-0 flex-1 bg-transparent outline-none" value={data.title} onChange={event => updateNodeData(id, { title: event.target.value })} /></div>
+    <MagneticConnectionHandle type="target" selected={selected} />
+    <div className={`rounded-[24px] border bg-[#202020] p-5 shadow-xl ${selected ? 'border-white' : 'border-white/15'}`}>
+      <div className="mb-4 flex items-center justify-between"><span className="text-sm text-[#b9b9ba]">引用素材 · {sources.length}</span><button type="button" aria-label="添加剪辑素材" onClick={() => dependency.start(id)} className="nodrag nopan rounded-lg p-2 hover:bg-white/10"><Plus className="h-4 w-4" /></button></div>
+      <div data-node-scroll className="reel-scroll nodrag nopan nowheel max-h-52 space-y-2 overflow-y-auto overscroll-contain">
+        {sources.map(({ edge, node }) => <div key={edge.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-sm"><span className="min-w-0 flex-1 truncate">{node?.data.title ?? '来源缺失'}</span><span className="text-xs text-[#77777b]">{node?.data.status === 'ready' ? nodeLabels[node.data.kind] : '未就绪'}</span><button type="button" aria-label={`移除剪辑素材 ${node?.data.title ?? ''}`} onClick={() => dependency.remove(edge.id)} className="rounded p-1 hover:bg-white/10"><X className="h-3.5 w-3.5" /></button></div>)}
+        {!sources.length && <p className="py-6 text-center text-xs leading-6 text-[#77777b]">连接图片、视频或音频节点<br />将引用素材组合为成片</p>}
+      </div>
+      <button type="button" disabled={!ready || edit.pending} onClick={() => edit.open(id)} className="nodrag nopan mt-4 flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#f7f7f2] text-sm font-medium text-[#111] disabled:cursor-not-allowed disabled:opacity-35">{edit.pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}打开剪辑</button>
+    </div>
+  </div>;
+}
+
+function WorkflowCard(props: NodeProps<WorkflowNode>) {
+  return props.data.kind === 'edit' ? <SmartEditCard {...props} /> : <MediaWorkflowCard {...props as NodeProps<MediaWorkflowNode>} />;
+}
+
+function MediaWorkflowCard({ id, data, selected }: NodeProps<MediaWorkflowNode>) {
   const canvasId = useContext(CanvasIdContext);
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -1108,7 +1168,8 @@ function WorkflowCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     );
   return (
     <div
-      className={`workflow-card group cursor-grab active:cursor-grabbing transition-[width,opacity,filter] duration-200 ${isSelectingDependency && !isDependencyCandidate ? 'pointer-events-none opacity-20 grayscale' : ''} ${isDependencyCandidate ? 'cursor-copy drop-shadow-[0_0_14px_rgba(255,255,255,0.16)]' : ''}`}
+      data-dependency-candidate={isSelectingDependency ? String(isDependencyCandidate) : undefined}
+      className={`workflow-card group cursor-grab active:cursor-grabbing transition-[width,opacity,filter] duration-200 ${isSelectingDependency && !isDependencyCandidate ? 'opacity-45' : ''} ${isDependencyCandidate ? 'cursor-pointer' : ''}`}
       style={{ width: nodeWidth }}
       onContextMenu={(event) => event.preventDefault()}
     >
@@ -1312,12 +1373,10 @@ function IconButton({
 
 function InfiniteCanvas({
   canvas,
-  onDependencySelectionChange,
   onChatNodesChange,
   focusRequest,
 }: {
   canvas: Canvas;
-  onDependencySelectionChange: (active: boolean) => void;
   onChatNodesChange: (nodes: CanvasChatReference[]) => void;
   focusRequest: { id: string; sequence: number } | null;
 }) {
@@ -1356,6 +1415,7 @@ function InfiniteCanvas({
   const [instance, setInstance] = useState<ReactFlowInstance<WorkflowNode, Edge> | null>(null);
   const [zoom, setZoom] = useState(Math.round(canvas.graph.viewport.zoom * 100));
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [dependentMenu, setDependentMenu] = useState<{ sourceId: string; x: number; y: number } | null>(null);
   const addMenuCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelAddMenuClose = () => {
     if (addMenuCloseTimer.current) clearTimeout(addMenuCloseTimer.current);
@@ -1400,6 +1460,7 @@ function InfiniteCanvas({
       event.preventDefault();
       setDependencyTargetId(null);
       setShowAddMenu(false);
+      setDependentMenu(null);
       if (key === 'y' || event.shiftKey) redo();
       else undo();
     };
@@ -1430,13 +1491,13 @@ function InfiniteCanvas({
 
   useEffect(() => {
     const wrapper = wrapperRef.current;
-    if (!wrapper || dependencyTargetId) return;
+    if (!wrapper) return;
     // React Flow 给可拖动节点添加 nopan；普通节点上的滚轮转交画布。
     // 可滚动提示词和引用列表保留内容滚动。
     const forwardWheel = (event: WheelEvent) => {
       if (!(event.target instanceof Element)) return;
       if (!event.target.closest('.react-flow__node, .react-flow__node-toolbar')) return;
-      const prompt = event.target.closest<HTMLElement>('[data-node-prompt-input]');
+      const prompt = event.target.closest<HTMLElement>('[data-node-prompt-input], [data-node-scroll]');
       if (prompt && !event.ctrlKey && (prompt.scrollHeight > prompt.clientHeight || prompt.scrollWidth > prompt.clientWidth)) {
         // Keep two-finger scrolling inside overflowing prompts, including at their edges.
         event.stopPropagation();
@@ -1456,7 +1517,7 @@ function InfiniteCanvas({
     };
     wrapper.addEventListener('wheel', forwardWheel, { capture: true, passive: false });
     return () => wrapper.removeEventListener('wheel', forwardWheel, true);
-  }, [dependencyTargetId]);
+  }, []);
   const [nodeActionMenu, setNodeActionMenu] = useState<{
     nodeId: string;
     x: number;
@@ -1499,51 +1560,28 @@ function InfiniteCanvas({
   saveGraphRef.current = saveGraph.mutate;
 
 
-  const editVideo = useMutation<Project, Error, string>({
+  const editComposition = useMutation<Project, Error, string>({
     mutationFn: async (nodeId) => {
-      const node = nodes.find((candidate) => candidate.id === nodeId);
-      if (!node || node.data.kind !== 'video') throw new Error('视频节点不存在');
-      if (!node.data.assetId || node.data.status !== 'ready') {
-        throw new Error('视频尚未生成完成，暂时无法编辑');
-      }
-
-      if (node.data.editorProjectId) {
-        try {
-          return (await api.projects.get(node.data.editorProjectId)) as Project;
-        } catch (error) {
-          if (!(error instanceof ApiError) || error.status !== 404) throw error;
-        }
-      }
-
-      const project = (await api.projects.createFromCanvasVideo({
-        assetId: node.data.assetId,
-        name: `${node.data.title} 剪辑`,
-      })) as Project;
-      const nextNodes = nodes.map((candidate) =>
-        candidate.id === nodeId
-          ? { ...candidate, data: { ...candidate.data, editorProjectId: project.id } }
-          : candidate,
-      );
-      setNodes(nextNodes);
-      await saveGraph.mutateAsync(serializeCanvasGraph(nextNodes, edges, viewportRef.current));
+      await saveGraph.mutateAsync(serializeCanvasGraph(nodes, edges, viewportRef.current));
+      const project = await api.projects.openCanvasEdit({ canvasId: canvas.id, nodeId }) as Project;
+      // The server persists this association atomically with project creation.
+      setNodes(current => current.map(node => node.id === nodeId ? { ...node, data: { ...node.data, editorProjectId: project.id } } : node));
       return project;
     },
-    onMutate: () => setNodeActionError(null),
-    onSuccess: (project) => {
-      setNodeActionMenu(null);
+    onSuccess: (project, nodeId) => {
+      queryClient.setQueryData<Canvas>(['canvas', canvas.id], current => current ? { ...current, graph: { ...current.graph, nodes: current.graph.nodes.map(node => node.id === nodeId ? { ...node, data: { ...node.data, editorProjectId: project.id } } : node) } } : current);
+      queryClient.setQueryData(['project', project.id], project);
+      void queryClient.invalidateQueries({ queryKey: ['assets', project.id] });
       navigate(`/editor/${project.id}?canvasId=${encodeURIComponent(canvas.id)}`);
     },
-    onError: (error) => setNodeActionError(generationErrorMessage(error)),
+    onError: error => toast.error(generationErrorMessage(error)),
   });
 
-  useEffect(() => {
-    onDependencySelectionChange(dependencyTargetId !== null);
-    return () => onDependencySelectionChange(false);
-  }, [dependencyTargetId, onDependencySelectionChange]);
 
   useEffect(() => {
     const cancelOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
+        setDependentMenu(null);
         setDependencyTargetId(null);
         setNodeActionMenu(null);
         setNodeActionError(null);
@@ -1679,6 +1717,32 @@ function InfiniteCanvas({
   );
 
   // 把资产库中的素材作为就绪节点加到画布视口中心
+  const dependentSource = dependentMenu ? nodes.find(node => node.id === dependentMenu.sourceId) : undefined;
+  const dependentKinds = (['text', 'image', 'video', 'edit', 'audio'] as const).filter(kind =>
+    dependentSource && acceptsDependency(dependentSource.data.kind, kind, dependentNodeModel(dependentSource.data.kind, kind)),
+  );
+  const addDependentNode = (kind: WorkflowNodeKind) => {
+    if (!dependentSource || !dependentKinds.includes(kind)) return;
+    const source = dependentSource;
+    const id = uuid();
+    const width = source.measured?.width ?? (source.data.kind === 'video' ? mediaNodeWidth(source.data.aspectRatio, DEFAULT_VIDEO_ASPECT_RATIO) : source.data.kind === 'image' ? mediaNodeWidth(source.data.aspectRatio) : 360);
+    const position = { x: source.position.x + width + 120, y: source.position.y };
+    // Keep repeated additions readable instead of stacking them on top of each other.
+    while (nodes.some(node => Math.abs(node.position.x - position.x) < 400 && Math.abs(node.position.y - position.y) < 400)) position.y += 440;
+    const reference = { id: source.id, title: source.data.title };
+    const next: WorkflowNode = {
+      id, type: 'workflow', position, selected: true,
+      data: {
+        ...nodeTemplates[kind], title: nodeLabels[kind],
+        ...(kind !== 'edit' ? { referenceNodeIds: [source.id], prompt: referenceToken(reference), ...(kind !== 'audio' ? { model: dependentNodeModel(source.data.kind, kind) } : {}) } : {}),
+      },
+    };
+    setNodes(current => [...current.map(node => ({ ...node, selected: false })), next]);
+    setEdges(current => addEdge({ id: uuid(), source: source.id, target: id, ...edgeDefaults }, current));
+    setShowEdges(true);
+    setDependentMenu(null);
+  };
+
   const addAssetNode = useCallback(
     (asset: Asset, uploaded = false) => {
       if (!instance || !wrapperRef.current) return;
@@ -1893,7 +1957,7 @@ function InfiniteCanvas({
   const selectionBounds = getNodesBounds(selectedNodes);
   const savableSelection = selectedNodes.filter((node) => node.data.kind === 'text'
     ? Boolean(node.data.content.trim()) : Boolean(node.data.assetId && node.data.status === 'ready'));
-  const downloadableSelection = selectedNodes.filter((node) => node.data.kind === 'text'
+  const downloadableSelection = selectedNodes.filter(isMediaNode).filter((node) => node.data.kind === 'text'
     ? Boolean(node.data.content.trim()) : Boolean(node.data.url || node.data.assetId && node.data.status === 'ready'));
 
   const duplicateSelection = () => {
@@ -1925,7 +1989,7 @@ function InfiniteCanvas({
     if (failures) toast.error(`${failures} 项素材下载失败，请重试`);
   };
   const downloadNode = async (node: WorkflowNode) => {
-    if (downloadingNode) return;
+    if (downloadingNode || !isMediaNode(node)) return;
     setNodeActionMenu(null);
     setDownloadingNode(node.id);
     try {
@@ -1940,9 +2004,15 @@ function InfiniteCanvas({
   return (
     <div
       ref={wrapperRef}
-      className={`canvas-workspace absolute inset-0 ${dependencyTargetId ? 'canvas-dependency-selecting' : ''} ${isPanKeyPressed && !dependencyTargetId ? 'canvas-panning' : ''}`}
+      className={`canvas-workspace absolute inset-0 ${dependencyTargetId ? 'canvas-dependency-selecting' : ''} ${isPanKeyPressed ? 'canvas-panning' : ''}`}
       onPointerDownCapture={(event) => {
         breakGroup();
+        if (dependencyTargetId && event.target instanceof Element && event.target.closest('.react-flow__node')) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        if (event.target instanceof Element && !event.target.closest('[data-dependent-node-menu]')) setDependentMenu(null);
         if (
           nodeActionMenu &&
           event.target instanceof Element &&
@@ -1950,6 +2020,14 @@ function InfiniteCanvas({
         ) {
           setNodeActionMenu(null);
         }
+      }}
+      onClickCapture={event => {
+        if (!dependencyTargetId || !(event.target instanceof Element)) return;
+        const node = event.target.closest<HTMLElement>('.react-flow__node');
+        if (!node?.dataset.id) return;
+        event.preventDefault();
+        event.stopPropagation();
+        chooseDependency(node.dataset.id);
       }}
     >
       <input ref={uploadInputRef} type="file" accept="image/*,video/*,audio/*" aria-label="上传画布素材" className="hidden" disabled={upload.isPending} onChange={(event) => {
@@ -1963,6 +2041,7 @@ function InfiniteCanvas({
         upload.mutate({ file, nodeId: uuid() });
       }} />
       <CanvasIdContext.Provider value={canvas.id}>
+        <SmartEditContext.Provider value={{ open: id => editComposition.mutate(id), pending: editComposition.isPending }}>
         <DependencySelectionContext.Provider
           value={{
             targetId: dependencyTargetId,
@@ -1976,6 +2055,14 @@ function InfiniteCanvas({
             remove: (edgeId) => {
               setEdges((currentEdges) => currentEdges.filter((edge) => edge.id !== edgeId));
             },
+            addFromSource: (sourceId, x, y) => {
+              if (dependencyTargetId || !wrapperRef.current) return;
+              const bounds = wrapperRef.current.getBoundingClientRect();
+              setShowAddMenu(false);
+              setShowNodeSearch(false);
+              setNodeActionMenu(null);
+              setDependentMenu({ sourceId, x: Math.max(8, Math.min(x - bounds.left + 12, bounds.width - 216)), y: Math.max(8, Math.min(y - bounds.top, bounds.height - 300)) });
+            },
           }}
         >
           <ReactFlow<WorkflowNode, Edge>
@@ -1986,7 +2073,7 @@ function InfiniteCanvas({
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            connectOnClick
+            connectOnClick={false}
             connectionRadius={64}
             connectionLineType={ConnectionLineType.Bezier}
             isValidConnection={isValidConnection}
@@ -2000,6 +2087,7 @@ function InfiniteCanvas({
             onNodeContextMenu={openNodeActionMenu}
             onInit={setInstance}
             onMove={(_, viewport) => {
+              setDependentMenu(null);
               viewportRef.current = viewport;
               setZoom(Math.round(viewport.zoom * 100));
             }}
@@ -2029,9 +2117,9 @@ function InfiniteCanvas({
             nodesDraggable={!dependencyTargetId && !isPanKeyPressed}
             zoomOnDoubleClick={false}
             nodesConnectable={!dependencyTargetId}
-            panOnDrag={dependencyTargetId ? false : isPanKeyPressed ? true : [1]}
-            panOnScroll={!dependencyTargetId}
-            zoomOnScroll={!dependencyTargetId}
+            panOnDrag={dependencyTargetId || isPanKeyPressed ? true : [1]}
+            panOnScroll
+            zoomOnScroll
             selectionOnDrag={!dependencyTargetId && !isPanKeyPressed}
             selectionMode={SelectionMode.Partial}
             onSelectionStart={() => setShowAddMenu(false)}
@@ -2075,7 +2163,7 @@ function InfiniteCanvas({
               color="#5a5a60"
               bgColor="#050505"
             />
-            {showMiniMap && !dependencyTargetId && (
+            {showMiniMap && (
               <MiniMap
                 pannable
                 zoomable
@@ -2093,7 +2181,17 @@ function InfiniteCanvas({
             )}
           </ReactFlow>
         </DependencySelectionContext.Provider>
+      </SmartEditContext.Provider>
       </CanvasIdContext.Provider>
+
+      {dependentMenu && dependentSource && !dependencyTargetId && (
+        <div data-dependent-node-menu role="menu" aria-label="添加下游节点" className="nodrag nopan nowheel absolute z-30 w-52 rounded-2xl border border-white/[0.13] bg-[#252525] p-2 shadow-[0_20px_55px_rgba(0,0,0,0.55)]" style={{ left: dependentMenu.x, top: dependentMenu.y }} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
+          {dependentKinds.map(kind => {
+            const Icon = nodeIcons[kind];
+            return <button key={kind} type="button" role="menuitem" onClick={() => addDependentNode(kind)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-[#efefec] hover:bg-white/[0.07]"><Icon className="h-4 w-4 text-[#b9b9ba]" />{kind === 'edit' ? '智能剪辑' : `${nodeLabels[kind]}节点`}</button>;
+          })}
+        </div>
+      )}
 
       {nodeActionMenu && (
         <div
@@ -2106,7 +2204,7 @@ function InfiniteCanvas({
             event.stopPropagation();
           }}
         >
-          {actionMenuNode && (
+          {actionMenuNode && actionMenuNode.data.kind !== 'edit' && (
             <button
               type="button"
               onClick={() => {
@@ -2149,28 +2247,6 @@ function InfiniteCanvas({
               保存到资产库
             </button>
           )}
-          {actionMenuNode?.data.kind === 'video' && (
-            <button
-              type="button"
-              onClick={() => editVideo.mutate(nodeActionMenu.nodeId)}
-              disabled={
-                editVideo.isPending ||
-                !actionMenuNode.data.assetId ||
-                actionMenuNode.data.status !== 'ready'
-              }
-              className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-sm text-[#dddddf] transition-colors hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              title={
-                actionMenuNode.data.status === 'ready' ? '进入剪辑页' : '视频生成完成后才能编辑'
-              }
-            >
-              {editVideo.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Scissors className="h-4 w-4" />
-              )}
-              编辑
-            </button>
-          )}
           <button
             type="button"
             onClick={() => duplicateNode(nodeActionMenu.nodeId)}
@@ -2202,7 +2278,7 @@ function InfiniteCanvas({
         </div>
       )}
 
-      {showNodeSearch && !dependencyTargetId && (
+      {showNodeSearch && (
         <div
           className="absolute inset-0 z-40 flex items-center justify-center bg-black/35 px-5 backdrop-blur-[2px]"
           onPointerDown={() => setShowNodeSearch(false)}
@@ -2301,7 +2377,7 @@ function InfiniteCanvas({
         </div>
       )}
 
-      {showAssetLibrary && !dependencyTargetId && (
+      {showAssetLibrary && (
         <AssetLibraryDialog
           onClose={() => setShowAssetLibrary(false)}
           onToast={toast.show}
@@ -2309,7 +2385,7 @@ function InfiniteCanvas({
         />
       )}
 
-      {saveToLibraryTarget && !dependencyTargetId && (
+      {saveToLibraryTarget && (
         <AssetFolderPickerDialog
           assetName={saveToLibraryTarget.title}
           save={(folderId) =>
@@ -2354,7 +2430,7 @@ function InfiniteCanvas({
         />
       )}
 
-      {showAssetHistory && !dependencyTargetId && (
+      {showAssetHistory && (
         <AssetHistoryDialog
           canvasId={canvas.id}
           onClose={() => setShowAssetHistory(false)}
@@ -2383,10 +2459,12 @@ function InfiniteCanvas({
       )}
 
       <aside
-        className={`absolute left-3 top-1/2 z-10 flex -translate-y-1/2 flex-col items-center gap-1 rounded-[24px] border border-white/[0.13] bg-[#252525] p-2 shadow-[0_18px_48px_rgba(0,0,0,0.48)] transition-opacity ${dependencyTargetId ? 'pointer-events-none opacity-20' : ''}`}
+        onPointerDownCapture={() => setDependencyTargetId(null)}
+        className={`absolute left-3 top-1/2 z-10 flex -translate-y-1/2 flex-col items-center gap-1 rounded-[24px] border border-white/[0.13] bg-[#252525] p-2 shadow-[0_18px_48px_rgba(0,0,0,0.48)] transition-opacity `}
       >
         <div
           onMouseEnter={() => {
+            setDependencyTargetId(null);
             cancelAddMenuClose();
             setAddMenuPosition(null);
             setShowNodeSearch(false);
@@ -2460,10 +2538,10 @@ function InfiniteCanvas({
         </IconButton>
       </aside>
 
-      {showAddMenu && !dependencyTargetId && (
+      {showAddMenu && (
         <div data-add-node-menu onMouseEnter={cancelAddMenuClose} onMouseLeave={addMenuPosition ? undefined : scheduleAddMenuClose} className={`absolute z-20 w-52 rounded-2xl border border-white/[0.13] bg-[#252525] p-2 shadow-[0_20px_55px_rgba(0,0,0,0.55)] ${addMenuPosition ? '' : 'left-[76px] top-1/2 -translate-y-[142px]'}`} style={addMenuPosition ? { left: addMenuPosition.x, top: addMenuPosition.y } : undefined}>
           <div className="px-3 pb-2 pt-1 text-xs text-[#77777b]">添加节点</div>
-          {(['text', 'image', 'video', 'audio'] as const).map((kind) => {
+          {(['text', 'image', 'video', 'edit', 'audio'] as const).map((kind) => {
             const Icon = nodeIcons[kind];
             return (
               <button
@@ -2476,9 +2554,11 @@ function InfiniteCanvas({
                   <Icon className="h-4 w-4" />
                 </span>
                 <span>
-                  <span className="block text-sm text-[#efefec]">{nodeLabels[kind]}节点</span>
+                  <span className="block text-sm text-[#efefec]">{kind === 'edit' ? '智能剪辑' : `${nodeLabels[kind]}节点`}</span>
                   <span className="mt-0.5 block text-[11px] text-[#77777b]">
-                    {kind === 'text'
+                    {kind === 'edit'
+                      ? '引用素材，剪辑成片'
+                      : kind === 'text'
                       ? '编写文本内容'
                       : kind === 'image'
                         ? '添加图片素材'
@@ -2498,7 +2578,7 @@ function InfiniteCanvas({
       )}
 
       <div
-        className={`absolute bottom-4 left-1/2 z-10 -translate-x-1/2 transition-opacity ${dependencyTargetId ? 'pointer-events-none opacity-20' : ''}`}
+        className={`absolute bottom-4 left-1/2 z-10 -translate-x-1/2 transition-opacity `}
       >
         <div className="flex h-12 items-center gap-1 rounded-2xl border border-white/[0.12] bg-[#252525] px-2 shadow-lg">
           <IconButton
@@ -2572,7 +2652,6 @@ export function CanvasPage() {
     : [];
   const [name, setName] = useState('');
   const [hasNameError, setHasNameError] = useState(false);
-  const [isDependencySelecting, setIsDependencySelecting] = useState(false);
   const [isAgentChatOpen, setIsAgentChatOpen] = useState(() => initialAgentPrompt.length > 0);
   const [isAgentChatFullscreen, setIsAgentChatFullscreen] = useState(false);
   const [chatNodes, setChatNodes] = useState<CanvasChatReference[]>([]);
@@ -2682,10 +2761,10 @@ export function CanvasPage() {
   return (
     <div className="flex h-full overflow-hidden overscroll-x-none bg-[#050505] text-[#f7f7f2]">
       <div className="relative h-full min-w-0 flex-1 overflow-hidden">
-        <InfiniteCanvas key={canvas.data.id} canvas={canvas.data} onDependencySelectionChange={setIsDependencySelecting} onChatNodesChange={setChatNodes} focusRequest={focusRequest} />
+        <InfiniteCanvas key={canvas.data.id} canvas={canvas.data} onChatNodesChange={setChatNodes} focusRequest={focusRequest} />
 
         <div
-          className={`absolute left-5 top-5 z-10 flex items-center gap-3 transition-opacity ${isDependencySelecting ? 'pointer-events-none opacity-20' : ''}`}
+          className={`absolute left-5 top-5 z-10 flex items-center gap-3 transition-opacity `}
         >
           <button
             type="button"
@@ -2721,7 +2800,7 @@ export function CanvasPage() {
           </div>
         </div>
 
-        <div className={`absolute right-5 top-5 z-10 transition-opacity ${isDependencySelecting ? 'pointer-events-none opacity-20' : ''}`}>
+        <div className={`absolute right-5 top-5 z-10 transition-opacity `}>
           <CreditWallet />
         </div>
 

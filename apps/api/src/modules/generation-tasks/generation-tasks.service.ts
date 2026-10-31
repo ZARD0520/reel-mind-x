@@ -93,9 +93,10 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
         })
       : await this.prisma.project.findFirst({
           where: { id: input.projectId, userId, deletedAt: null },
-          select: { id: true },
+          select: { id: true, timeline: true },
         });
     if (!scope) throw new NotFoundException('Generation scope not found');
+    if ('timeline' in scope && (scope.timeline as { canvasSource?: unknown } | null)?.canvasSource) throw new BadRequestException('智能剪辑不支持生成素材，请在画布中生成后引用');
     const model =
       input.model ??
       this.config.get(

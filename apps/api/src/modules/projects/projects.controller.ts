@@ -16,6 +16,7 @@ import type { AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/current-user.decorator';
 import {
   CreateProjectDto,
+  OpenCanvasEditDto,
   CreateProjectFromCanvasVideoDto,
   UpdateProjectDto,
 } from './projects.dto';
@@ -29,6 +30,11 @@ export class ProjectsController {
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() dto: CreateProjectDto): Promise<Project> {
     return this.projects.create(user.id, dto);
+  }
+
+  @Post('from-canvas-edit')
+  openCanvasEdit(@CurrentUser() user: AuthUser, @Body() dto: OpenCanvasEditDto): Promise<Project> {
+    return this.projects.openCanvasEdit(user.id, dto);
   }
 
   @Post('from-canvas-video')

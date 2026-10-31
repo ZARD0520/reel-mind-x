@@ -75,6 +75,8 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       }),
+    openCanvasEdit: (body: { canvasId: string; nodeId: string }) =>
+      request('/projects/from-canvas-edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     createFromCanvasVideo: (body: { assetId: string; name?: string }) =>
       request('/projects/from-canvas-video', {
         method: 'POST',

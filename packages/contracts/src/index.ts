@@ -373,7 +373,14 @@ export const ProjectSettingsSchema = z.object({
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 
 /** 可编辑的剪辑内容（前端编辑、PATCH 提交、worker 消费的核心载荷） */
+export const CanvasEditSourceSchema = z.object({
+  canvasId: z.string().uuid(),
+  nodeId: z.string().min(1),
+  assets: z.array(z.object({ sourceAssetId: z.string().uuid(), assetId: z.string().uuid() })),
+});
+
 export const TimelineSchema = z.object({
+  canvasSource: CanvasEditSourceSchema.optional(),
   settings: ProjectSettingsSchema,
   tracks: z.array(TrackSchema).default([]),
 });
@@ -402,6 +409,12 @@ export const CreateProjectFromCanvasVideoSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
 });
 export type CreateProjectFromCanvasVideoInput = z.infer<typeof CreateProjectFromCanvasVideoSchema>;
+
+export const OpenCanvasEditSchema = z.object({
+  canvasId: z.string().uuid(),
+  nodeId: z.string().min(1),
+});
+export type OpenCanvasEditInput = z.infer<typeof OpenCanvasEditSchema>;
 
 /** 更新项目入参：名称或整份剪辑状态（自动保存提交 timeline） */
 export const UpdateProjectSchema = z

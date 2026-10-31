@@ -187,14 +187,14 @@ export function EditorTopBar({
             </>
           )}
         </div>
-        <button
+        {onOpenAiMix && <button
           type="button"
           onClick={onOpenAiMix}
           className="flex items-center gap-1.5 rounded-lg border border-border-subtle bg-elevated px-3.5 py-2 text-fg-secondary hover:text-fg"
         >
           <Sparkles className="h-[15px] w-[15px] text-accent" />
           <span className="text-[13px] font-semibold">AI 混编</span>
-        </button>
+        </button>}
         <div className="relative">
           <button
             type="button"

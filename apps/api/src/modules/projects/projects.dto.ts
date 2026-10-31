@@ -2,6 +2,7 @@ import { createZodDto } from 'nestjs-zod';
 import {
   CreateProjectFromCanvasVideoSchema,
   CreateProjectSchema,
+  OpenCanvasEditSchema,
   UpdateProjectSchema,
 } from '@reel/contracts';
 
@@ -11,3 +12,5 @@ export class CreateProjectFromCanvasVideoDto extends createZodDto(
   CreateProjectFromCanvasVideoSchema,
 ) {}
 export class UpdateProjectDto extends createZodDto(UpdateProjectSchema) {}
+
+export class OpenCanvasEditDto extends createZodDto(OpenCanvasEditSchema) {}

@@ -29,7 +29,7 @@ function AssetThumb({
 }: {
   asset: Asset;
   onAdd: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
 }) {
   const Icon = asset.kind === 'audio' ? AudioLines : asset.kind === 'image' ? ImageIcon : Film;
   const isGenerating = asset.status === 'generating';
@@ -91,19 +91,27 @@ function AssetThumb({
         </span>
       </button>
       {/* 删除按钮：hover 时出现 */}
-      <button
+      {onDelete && <button
         type="button"
         onClick={(e) => { e.stopPropagation(); onDelete(); }}
         title="删除素材"
         className="absolute right-1 top-1 hidden h-5 w-5 items-center justify-center rounded bg-black/70 text-white hover:bg-red-500 group-hover:flex"
       >
         <X className="h-3 w-3" />
-      </button>
+      </button>}
     </div>
   );
 }
 
-export function LeftPanel({ projectId }: { projectId: string }) {
+export type LeftPanelProps = {
+  projectId: string;
+  allowUpload?: boolean;
+  allowAiGeneration?: boolean;
+  allowAssetDelete?: boolean;
+  layout?: 'sidebar' | 'compact';
+};
+
+export function LeftPanel({ projectId, allowUpload = true, allowAiGeneration = true, allowAssetDelete = true, layout = 'sidebar' }: LeftPanelProps) {
   const [active, setActive] = useState('media');
   const fileInput = useRef<HTMLInputElement>(null);
   const { data: assets = [] } = useAssets(projectId);
@@ -121,7 +129,7 @@ export function LeftPanel({ projectId }: { projectId: string }) {
 
   const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) upload.mutate(file);
+    if (file && allowUpload) upload.mutate(file);
     e.target.value = '';
   };
 
@@ -135,9 +143,9 @@ export function LeftPanel({ projectId }: { projectId: string }) {
   );
 
   return (
-    <div className="flex h-full border-r border-border-subtle bg-surface">
-      <nav className="flex w-[72px] flex-col items-center gap-1.5 bg-base py-3">
-        {TABS.map(({ key, label, icon: Icon }) => {
+    <div className={`flex h-full min-h-0 shrink-0 border-r border-border-subtle bg-surface ${layout === 'compact' ? 'w-[280px] flex-col' : ''}`}>
+      <nav className={`flex shrink-0 items-center gap-1.5 bg-base py-3 ${layout === 'compact' ? 'justify-center border-b border-border-subtle' : 'w-[72px] flex-col'}`}>
+        {TABS.filter(tab => layout !== 'compact' || ['media', 'audio', 'text'].includes(tab.key)).map(({ key, label, icon: Icon }) => {
           const isActive = key === active;
           return (
             <button
@@ -155,12 +163,12 @@ export function LeftPanel({ projectId }: { projectId: string }) {
         })}
       </nav>
 
-      <div className="flex w-[300px] flex-col gap-4 p-4">
+      <div className={`flex min-h-0 flex-1 flex-col gap-4 p-4 ${layout === 'compact' ? '' : 'w-[300px]'}`}>
         {active === 'text' ? (
           // 文本 tab：AI 生成 + 添加文本
           <div className="flex flex-col gap-4">
             {/* AI 生成文案 */}
-            <div className="flex flex-col gap-2">
+            {allowAiGeneration && <div className="flex flex-col gap-2">
               <h2 className="flex items-center gap-1.5 text-[13px] font-semibold">
                 <Sparkles className="h-[15px] w-[15px] text-accent" />
                 AI 生成
@@ -173,7 +181,7 @@ export function LeftPanel({ projectId }: { projectId: string }) {
                 <Sparkles className="h-[22px] w-[22px] text-accent" />
                 <span className="text-[12px] font-medium text-fg-secondary">AI 生成文案</span>
               </button>
-            </div>
+            </div>}
 
             <h2 className="text-[13px] font-semibold">本地文本</h2>
             <button
@@ -197,15 +205,15 @@ export function LeftPanel({ projectId }: { projectId: string }) {
           </div>
         ) : (
           <>
-            <input
+            {allowUpload && <input
               ref={fileInput}
               type="file"
               accept={acceptTypes}
               className="hidden"
               onChange={onPick}
-            />
+            />}
             {/* AI 生成图片/视频（音频暂不支持） */}
-            {!isAudioTab && (
+            {allowAiGeneration && !isAudioTab && (
               <div className="flex flex-col gap-2">
                 <h2 className="flex items-center gap-1.5 text-[13px] font-semibold">
                   <Sparkles className="h-[15px] w-[15px] text-accent" />
@@ -232,8 +240,9 @@ export function LeftPanel({ projectId }: { projectId: string }) {
               </div>
             )}
 
-            <h2 className="text-[13px] font-semibold">{isAudioTab ? '本地音频' : '本地素材'}</h2>
-            <button
+            <h2 className="text-[13px] font-semibold">{allowUpload ? (isAudioTab ? '本地音频' : '本地素材') : '引用素材'}</h2>
+            {!allowUpload && <p className="text-xs leading-5 text-fg-tertiary">素材来自智能剪辑节点的引用，可拖入时间轴。</p>}
+            {allowUpload && <button
               type="button"
               onClick={() => fileInput.current?.click()}
               disabled={upload.isPending}
@@ -247,10 +256,10 @@ export function LeftPanel({ projectId }: { projectId: string }) {
               <span className="text-[13px] font-medium text-fg-secondary">
                 {upload.isPending ? '上传中…' : isAudioTab ? '导入音频' : '导入素材'}
               </span>
-            </button>
+            </button>}
             {visibleAssets.length === 0 ? (
               <p className="text-[13px] text-fg-tertiary">
-                还没有{isAudioTab ? '音频' : '素材'}，点上方导入
+                {allowUpload ? `还没有${isAudioTab ? '音频' : '素材'}，点上方导入` : '暂无此类引用素材，请返回画布添加依赖'}
               </p>
             ) : (
               <div className="reel-scroll grid grid-cols-2 gap-2.5 overflow-y-auto pr-2">
@@ -259,7 +268,7 @@ export function LeftPanel({ projectId }: { projectId: string }) {
                     key={asset.id}
                     asset={asset}
                     onAdd={() => addAsset(asset)}
-                    onDelete={() => deleteAsset.mutate(asset.id)}
+                    onDelete={allowAssetDelete ? () => deleteAsset.mutate(asset.id) : undefined}
                   />
                 ))}
               </div>
@@ -269,20 +278,20 @@ export function LeftPanel({ projectId }: { projectId: string }) {
       </div>
 
       {/* AI 文案生成对话框 */}
-      <TextGenDialog
+      {allowAiGeneration && <TextGenDialog
         projectId={projectId}
         open={textGenOpen}
         onClose={() => setTextGenOpen(false)}
         onApply={applyGeneratedText}
-      />
+      />}
 
       {/* AI 图像/视频生成对话框 */}
-      <AiMediaGenDialog
+      {allowAiGeneration && <AiMediaGenDialog
         open={aiMediaType !== null}
         projectId={projectId}
         type={aiMediaType ?? 'image'}
         onClose={() => setAiMediaType(null)}
-      />
+      />}
     </div>
   );
 }
