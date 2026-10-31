@@ -242,7 +242,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
         hover.show(reference ?? { id: chip.dataset.nodeId!, title: part?.title ?? '', kind: 'text' }, chip, !!reference);
       }}
       onMouseOut={(event) => { const chip = hoveredChip(event.target); if (chip && !chip.contains(event.relatedTarget as Node | null)) hover.hide(); }}
-      className={`reel-scroll min-h-[56px] max-h-60 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-1 py-1 text-sm leading-7 text-[#f3f3f0] outline-none empty:before:pointer-events-none empty:before:text-[#68686d] empty:before:content-[attr(data-placeholder)] ${editorClassName ?? ''}`}
+      className={`reel-scroll min-h-[56px] max-h-60 w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words bg-transparent px-1 py-1 text-sm leading-7 text-[#f3f3f0] outline-none empty:before:pointer-events-none empty:before:text-[#68686d] empty:before:content-[attr(data-placeholder)] ${editorClassName ?? ''}`}
       onCompositionStart={() => { beforeCursor.current = selectionOffset(); composing.current = true; }} onCompositionEnd={() => { composing.current = false; const text = serialize(root.current!); commit(text); updateMention(text); }}
       onBeforeInput={() => { if (!composing.current) beforeCursor.current = selectionOffset(); }}
       onInput={(event) => { normalizeBreaks(root.current!); const text = serialize(root.current!); cursor.current = selectionOffset(); if (!composing.current) commit(text, (event.nativeEvent as InputEvent).inputType === 'insertText'); if (!composing.current) updateMention(text); }}

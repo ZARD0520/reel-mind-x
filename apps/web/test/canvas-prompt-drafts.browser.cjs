@@ -105,6 +105,22 @@ const { randomUUID } = require('node:crypto');
     await input().press('Control+y');
     await expect(input().locator('[data-node-id="text"]')).toHaveCount(0);
     await expect.poll(() => graph.nodes.find(item => item.id === 'image').data.prompt).toBe('rain  ');
+    // Two-finger scrolling stays in an overflowing prompt, including at its boundary.
+    await node('text').click();
+    const scrollInput = input();
+    await scrollInput.fill(Array.from({ length: 30 }, (_, index) => `第 ${index + 1} 行提示词`).join('\n'));
+    await expect.poll(() => scrollInput.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
+    await scrollInput.evaluate(el => { el.scrollTop = 0; });
+    const viewport = page.locator('.react-flow__viewport');
+    const transform = await viewport.evaluate(el => el.style.transform);
+    await scrollInput.hover();
+    await page.mouse.wheel(0, 160);
+    await expect.poll(() => scrollInput.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+    expect(await viewport.evaluate(el => el.style.transform)).toBe(transform);
+    await scrollInput.evaluate(el => { el.scrollTop = el.scrollHeight; });
+    await page.mouse.wheel(0, 200);
+    await page.waitForTimeout(250);
+    expect(await viewport.evaluate(el => el.style.transform)).toBe(transform);
     if (submissions || errors.length) throw new Error(errors.join('\n') || 'Unexpected generation request');
     console.log('PASS: text/image/video prompt drafts survive switching and reload; cleared drafts remain empty; no generation is submitted; prompt shortcuts restore text and reference chips');
   } finally {

@@ -125,7 +125,7 @@ export function CreditWallet({ enabled = true }: { enabled?: boolean }) {
                   </button>
                 </div>
               )}
-              <div className="min-h-0 overflow-auto border-y border-white/[0.08]">
+              <div className="reel-scroll min-h-0 overflow-auto border-y border-white/[0.08]">
                 <table className="w-full text-left text-xs">
                   <thead className="sticky top-0 bg-[#2b2b2b] text-[#a4a4a8]">
                     <tr>

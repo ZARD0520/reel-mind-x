@@ -1431,11 +1431,17 @@ function InfiniteCanvas({
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper || dependencyTargetId) return;
-    // React Flow 给可拖动节点添加 nopan；将节点和提示词上的滚轮交给画布处理。
-    // 引用列表（listbox）除外：滚轮应滚动列表本身，而不是转发给画布。
+    // React Flow 给可拖动节点添加 nopan；普通节点上的滚轮转交画布。
+    // 可滚动提示词和引用列表保留内容滚动。
     const forwardWheel = (event: WheelEvent) => {
       if (!(event.target instanceof Element)) return;
       if (!event.target.closest('.react-flow__node, .react-flow__node-toolbar')) return;
+      const prompt = event.target.closest<HTMLElement>('[data-node-prompt-input]');
+      if (prompt && !event.ctrlKey && (prompt.scrollHeight > prompt.clientHeight || prompt.scrollWidth > prompt.clientWidth)) {
+        // Keep two-finger scrolling inside overflowing prompts, including at their edges.
+        event.stopPropagation();
+        return;
+      }
       if (event.target.closest('.workflow-node-editor, [role="dialog"], [role="tooltip"], [role="listbox"]')) return;
       const pane = wrapper.querySelector('.react-flow__pane');
       if (!pane) return;
