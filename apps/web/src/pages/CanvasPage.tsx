@@ -114,6 +114,7 @@ import { uuid } from '../lib/uuid';
 import { useToast } from '../components/ui/Toast';
 import { generationFeedbackMessage, generationTasksPollingInterval, recoverGenerationTasks } from '../features/canvas/generation-recovery';
 import { acceptsDependency, acceptsDependencyInput } from '../features/canvas/dependency-rules';
+import { useCanvasHistory } from '../features/canvas/useCanvasHistory';
 
 type WorkflowNodeKind = CanvasNodeKind | 'audio';
 type GenerationCount = 1 | 2 | 4;
@@ -1280,11 +1281,13 @@ function IconButton({
   label,
   children,
   active = false,
+  showTooltip = true,
   onClick,
 }: {
   label: string;
   children: React.ReactNode;
   active?: boolean;
+  showTooltip?: boolean;
   onClick?: () => void;
 }) {
   return (
@@ -1297,12 +1300,12 @@ function IconButton({
       >
         {children}
       </button>
-      <span
+      {showTooltip && <span
         role="tooltip"
         className="pointer-events-none absolute left-full top-1/2 z-30 ml-2 -translate-y-1/2 whitespace-nowrap rounded-lg border border-white/[0.13] bg-[#2c2c2c] px-2 py-1 text-xs text-[#e1e1e3] opacity-0 shadow-[0_10px_28px_rgba(0,0,0,0.45)] transition-opacity group-hover/ib:opacity-100"
       >
         {label}
-      </span>
+      </span>}
     </div>
   );
 }
@@ -1332,6 +1335,7 @@ function InfiniteCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(
     canvas.graph.edges.filter((edge) => !canvas.graph.nodes.some((node) => node.id === edge.target && node.data.uploaded === true)).map(normalizeEdge),
   );
+  const { undo, redo, breakGroup } = useCanvasHistory(nodes, edges, setNodes, setEdges);
   const generationTasks = useQuery({
     queryKey: ['generation-tasks', canvas.id],
     queryFn: () => api.generationTasks.list(canvas.id),
@@ -1352,6 +1356,18 @@ function InfiniteCanvas({
   const [instance, setInstance] = useState<ReactFlowInstance<WorkflowNode, Edge> | null>(null);
   const [zoom, setZoom] = useState(Math.round(canvas.graph.viewport.zoom * 100));
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const addMenuCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelAddMenuClose = () => {
+    if (addMenuCloseTimer.current) clearTimeout(addMenuCloseTimer.current);
+    addMenuCloseTimer.current = null;
+  };
+  const scheduleAddMenuClose = () => {
+    cancelAddMenuClose();
+    addMenuCloseTimer.current = setTimeout(() => setShowAddMenu(false), 180);
+  };
+  useEffect(() => () => {
+    if (addMenuCloseTimer.current) clearTimeout(addMenuCloseTimer.current);
+  }, []);
   const [addMenuPosition, setAddMenuPosition] = useState<{ x: number; y: number; flow: { x: number; y: number } } | null>(null);
   const [batchLibraryNodes, setBatchLibraryNodes] = useState<WorkflowNode[] | null>(null);
   const [downloadingSelection, setDownloadingSelection] = useState(false);
@@ -1372,6 +1388,24 @@ function InfiniteCanvas({
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [dependencyTargetId, setDependencyTargetId] = useState<string | null>(null);
   const [isPanKeyPressed, setIsPanKeyPressed] = useState(false);
+
+  useEffect(() => {
+    const onHistoryKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable], [role="dialog"]')) return;
+      // Dialogs rendered in a portal must not send shortcuts through to the canvas.
+      if (event.target instanceof Element && event.target !== document.body && !wrapperRef.current?.contains(event.target)) return;
+      const key = event.key.toLowerCase();
+      if (key !== 'z' && key !== 'y') return;
+      event.preventDefault();
+      setDependencyTargetId(null);
+      setShowAddMenu(false);
+      if (key === 'y' || event.shiftKey) redo();
+      else undo();
+    };
+    window.addEventListener('keydown', onHistoryKey);
+    return () => window.removeEventListener('keydown', onHistoryKey);
+  }, [undo, redo]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1902,6 +1936,7 @@ function InfiniteCanvas({
       ref={wrapperRef}
       className={`canvas-workspace absolute inset-0 ${dependencyTargetId ? 'canvas-dependency-selecting' : ''} ${isPanKeyPressed && !dependencyTargetId ? 'canvas-panning' : ''}`}
       onPointerDownCapture={(event) => {
+        breakGroup();
         if (
           nodeActionMenu &&
           event.target instanceof Element &&
@@ -2344,9 +2379,20 @@ function InfiniteCanvas({
       <aside
         className={`absolute left-3 top-1/2 z-10 flex -translate-y-1/2 flex-col items-center gap-1 rounded-[24px] border border-white/[0.13] bg-[#252525] p-2 shadow-[0_18px_48px_rgba(0,0,0,0.48)] transition-opacity ${dependencyTargetId ? 'pointer-events-none opacity-20' : ''}`}
       >
+        <div
+          onMouseEnter={() => {
+            cancelAddMenuClose();
+            setAddMenuPosition(null);
+            setShowNodeSearch(false);
+            setShowAssetLibrary(false);
+            setShowAssetHistory(false);
+            setShowAddMenu(true);
+          }}
+          onMouseLeave={scheduleAddMenuClose}
+        >
         <IconButton
           label="添加节点"
-          active={showAddMenu}
+          showTooltip={false}
           onClick={() => {
             setAddMenuPosition(null);
             setShowNodeSearch(false);
@@ -2355,8 +2401,9 @@ function InfiniteCanvas({
             setShowAddMenu((value) => !value);
           }}
         >
-          <Plus className="h-6 w-6" />
+          <Plus className={`h-6 w-6 transition-transform duration-200 ${showAddMenu && !addMenuPosition ? 'rotate-45' : ''}`} />
         </IconButton>
+        </div>
         <IconButton
           label="节点搜索"
           active={showNodeSearch}
@@ -2408,7 +2455,7 @@ function InfiniteCanvas({
       </aside>
 
       {showAddMenu && !dependencyTargetId && (
-        <div data-add-node-menu className={`absolute z-20 w-52 rounded-2xl border border-white/[0.13] bg-[#252525] p-2 shadow-[0_20px_55px_rgba(0,0,0,0.55)] ${addMenuPosition ? '' : 'left-[76px] top-1/2 -translate-y-[142px]'}`} style={addMenuPosition ? { left: addMenuPosition.x, top: addMenuPosition.y } : undefined}>
+        <div data-add-node-menu onMouseEnter={cancelAddMenuClose} onMouseLeave={addMenuPosition ? undefined : scheduleAddMenuClose} className={`absolute z-20 w-52 rounded-2xl border border-white/[0.13] bg-[#252525] p-2 shadow-[0_20px_55px_rgba(0,0,0,0.55)] ${addMenuPosition ? '' : 'left-[76px] top-1/2 -translate-y-[142px]'}`} style={addMenuPosition ? { left: addMenuPosition.x, top: addMenuPosition.y } : undefined}>
           <div className="px-3 pb-2 pt-1 text-xs text-[#77777b]">添加节点</div>
           {(['text', 'image', 'video', 'audio'] as const).map((kind) => {
             const Icon = nodeIcons[kind];
@@ -2629,7 +2676,7 @@ export function CanvasPage() {
   return (
     <div className="flex h-full overflow-hidden overscroll-x-none bg-[#050505] text-[#f7f7f2]">
       <div className="relative h-full min-w-0 flex-1 overflow-hidden">
-        <InfiniteCanvas canvas={canvas.data} onDependencySelectionChange={setIsDependencySelecting} onChatNodesChange={setChatNodes} focusRequest={focusRequest} />
+        <InfiniteCanvas key={canvas.data.id} canvas={canvas.data} onDependencySelectionChange={setIsDependencySelecting} onChatNodesChange={setChatNodes} focusRequest={focusRequest} />
 
         <div
           className={`absolute left-5 top-5 z-10 flex items-center gap-3 transition-opacity ${isDependencySelecting ? 'pointer-events-none opacity-20' : ''}`}

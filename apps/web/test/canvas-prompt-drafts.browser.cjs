@@ -14,7 +14,7 @@ const { randomUUID } = require('node:crypto');
       nodes: kinds.map((kind, index) => ({ id: kind,
         position: { x: 100 + index * 550, y: 120 },
         data: { kind, title: `测试${kind}`, content: '', prompt: '', status: 'idle' },
-      })), edges: [], viewport: { x: 0, y: 0, zoom: 0.65 },
+      })), edges: [{ id: 'text-image', source: 'text', target: 'image' }], viewport: { x: 0, y: 0, zoom: 0.65 },
     };
     let submissions = 0;
     await page.route('**/api/**', async (route) => {
@@ -64,8 +64,49 @@ const { randomUUID } = require('node:crypto');
     await page.reload();
     await node('image').click();
     await expect(input('image')).toHaveText('');
+    // Rich editable prompts own their history; shortcuts must not undo canvas nodes.
+    for (const kind of kinds) {
+      await node(kind).click();
+      const editor = input();
+      const original = await editor.innerText();
+      await editor.fill('新的提示词');
+      await editor.press('Control+z');
+      await expect(editor).toHaveText(original);
+      await editor.press('Control+Shift+z');
+      await expect(editor).toHaveText('新的提示词');
+      await editor.press('Meta+z');
+      await expect(editor).toHaveText(original);
+      await editor.press('Control+y');
+      await expect(editor).toHaveText('新的提示词');
+      await editor.fill('');
+      await editor.press('Control+z');
+      await expect(editor).toHaveText('新的提示词');
+      await editor.press('Control+y');
+      await expect(editor).toHaveText('');
+      await editor.fill('new branch');
+      await editor.press('Control+y');
+      await expect(editor).toHaveText('new branch');
+      await expect(page.locator('.react-flow__node')).toHaveCount(3);
+    }
+    await node('image').click();
+    await input().fill('rain ');
+    await input().press('End');
+    await input().pressSequentially('@');
+    await page.getByRole('option', { name: /测试text/ }).click();
+    await expect(input().locator('[data-node-id="text"]')).toHaveCount(1);
+    await input().press('Control+z');
+    await expect(input().locator('[data-node-id="text"]')).toHaveCount(0);
+    await input().press('Control+Shift+z');
+    await expect(input().locator('[data-node-id="text"]')).toHaveCount(1);
+    await input().getByRole('button', { name: /移除提示词引用/ }).click();
+    await expect(input().locator('[data-node-id="text"]')).toHaveCount(0);
+    await input().press('Control+z');
+    await expect(input().locator('[data-node-id="text"]')).toHaveCount(1);
+    await input().press('Control+y');
+    await expect(input().locator('[data-node-id="text"]')).toHaveCount(0);
+    await expect.poll(() => graph.nodes.find(item => item.id === 'image').data.prompt).toBe('rain  ');
     if (submissions || errors.length) throw new Error(errors.join('\n') || 'Unexpected generation request');
-    console.log('PASS: text/image/video prompt drafts survive switching and reload; cleared drafts remain empty; no generation is submitted');
+    console.log('PASS: text/image/video prompt drafts survive switching and reload; cleared drafts remain empty; no generation is submitted; prompt shortcuts restore text and reference chips');
   } finally {
     await browser.close();
   }

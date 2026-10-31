@@ -55,13 +55,51 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
   const [highlighted, setHighlighted] = useState(0);
   const hover = useReferenceHoverPreview(variant);
   const [, refreshInput] = useState(0);
-  function commit(text: string) {
+  // Reference chips rebuild the editable DOM, so the browser's native undo stack
+  // cannot reliably restore it. Keep serialized text and caret positions instead.
+  type EditState = { text: string; cursor: number };
+  const edits = useRef({ current: value, past: [] as EditState[], future: [] as EditState[], time: 0, typing: false });
+  const beforeCursor = useRef(value.length);
+  useLayoutEffect(() => {
+    if (edits.current.current === value) return;
+    edits.current = { current: value, past: [], future: [], time: 0, typing: false };
+  }, [value]);
+  function commit(text: string, typing = false) {
     if (maxLength && readableReferences(text).length > maxLength && readableReferences(text).length > readableReferences(value).length) {
       cursor.current = Math.min(cursor.current, value.length);
       refreshInput(revision => revision + 1);
       return;
     }
+    const history = edits.current;
+    if (text !== history.current) {
+      const now = Date.now();
+      if (!typing || !history.typing || now - history.time > 600) {
+        history.past.push({ text: history.current, cursor: beforeCursor.current });
+        if (history.past.length > 100) history.past.shift();
+      }
+      history.future = [];
+      history.current = text;
+      history.time = now;
+      history.typing = typing;
+    }
     onChange(text);
+  }
+
+  function restoreEdit(redo: boolean) {
+    if (disabled) return;
+    const history = edits.current;
+    const source = redo ? history.future : history.past;
+    const target = redo ? history.past : history.future;
+    const state = source.pop();
+    if (!state) return;
+    target.push({ text: history.current, cursor: selectionOffset() });
+    history.current = state.text;
+    history.typing = false;
+    cursor.current = state.cursor;
+    onChange(state.text);
+    setMention(null);
+    hover.close();
+    refreshInput(revision => revision + 1);
   }
   const limited = !!maxReferences && referenceIds(value).length >= maxReferences;
   const matches = mention ? candidates.filter((item) => (!limited || referenceIds(value).includes(item.id)) && `${item.title} ${item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}`.toLowerCase().includes(mention.query.toLowerCase())).slice(0, 8) : [];
@@ -167,6 +205,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
     const offset = focused ? selectionOffset() : value.length;
     const start = focused ? (mention?.start ?? offset) : value.length;
     const end = focused ? (mention?.end ?? offset) : value.length;
+    beforeCursor.current = offset;
     const token = referenceToken(reference);
     cursor.current = start + token.length + 1;
     commit(value.slice(0, start) + token + ' ' + value.slice(end));
@@ -204,9 +243,10 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
       }}
       onMouseOut={(event) => { const chip = hoveredChip(event.target); if (chip && !chip.contains(event.relatedTarget as Node | null)) hover.hide(); }}
       className={`reel-scroll min-h-[56px] max-h-60 w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent px-1 py-1 text-sm leading-7 text-[#f3f3f0] outline-none empty:before:pointer-events-none empty:before:text-[#68686d] empty:before:content-[attr(data-placeholder)] ${editorClassName ?? ''}`}
-      onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; const text = serialize(root.current!); commit(text); updateMention(text); }}
-      onInput={() => { normalizeBreaks(root.current!); const text = serialize(root.current!); cursor.current = selectionOffset(); if (!composing.current) commit(text); if (!composing.current) updateMention(text); }}
-      onMouseDown={(event) => { if (event.target instanceof Element && event.target.closest('[data-remove-reference]')) event.preventDefault(); }}
+      onCompositionStart={() => { beforeCursor.current = selectionOffset(); composing.current = true; }} onCompositionEnd={() => { composing.current = false; const text = serialize(root.current!); commit(text); updateMention(text); }}
+      onBeforeInput={() => { if (!composing.current) beforeCursor.current = selectionOffset(); }}
+      onInput={(event) => { normalizeBreaks(root.current!); const text = serialize(root.current!); cursor.current = selectionOffset(); if (!composing.current) commit(text, (event.nativeEvent as InputEvent).inputType === 'insertText'); if (!composing.current) updateMention(text); }}
+      onMouseDown={(event) => { edits.current.typing = false; if (event.target instanceof Element && event.target.closest('[data-remove-reference]')) event.preventDefault(); }}
       onClick={(event) => {
         const remove = event.target instanceof Element && event.target.closest('[data-remove-reference]');
         const chip = remove && hoveredChip(event.target);
@@ -214,16 +254,23 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
           let offset = 0;
           for (const child of root.current!.childNodes) { if (child === chip) break; offset += serialize(child).length; }
           cursor.current = offset;
-          onChange(value.slice(0, offset) + value.slice(offset + (chip.dataset.reference?.length ?? 0)));
+          beforeCursor.current = selectionOffset();
+          commit(value.slice(0, offset) + value.slice(offset + (chip.dataset.reference?.length ?? 0)));
           hover.close();
           setMention(null);
         } else updateMention();
-      }} onKeyUp={(event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) updateMention(); }}
+      }} onKeyUp={(event) => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) { edits.current.typing = false; updateMention(); } }}
       onBlur={() => { cursor.current = selectionOffset(); setMention(null); }}
-      onPaste={(event) => { event.preventDefault(); document.execCommand('insertText', false, event.clipboardData.getData('text/plain')); }}
+      onPaste={(event) => { event.preventDefault(); edits.current.typing = false; document.execCommand('insertText', false, event.clipboardData.getData('text/plain')); edits.current.typing = false; }}
       onKeyDown={(event) => {
         event.stopPropagation();
         if (event.nativeEvent.isComposing || composing.current || event.nativeEvent.keyCode === 229) return;
+        const key = event.key.toLowerCase();
+        if ((event.metaKey || event.ctrlKey) && !event.altKey && (key === 'z' || key === 'y')) {
+          event.preventDefault();
+          restoreEdit(key === 'y' || event.shiftKey);
+          return;
+        }
         if (mention && matches.length && ['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) {
           event.preventDefault();
           if (event.key === 'Enter') insert(matches[Math.min(highlighted, matches.length - 1)]!);
