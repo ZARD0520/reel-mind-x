@@ -29,6 +29,7 @@ import {
 } from './render.errors';
 import type { RenderAsset } from './render-graph';
 import { renderTimeline } from './render-runner';
+import { finishRender } from './canvas-export';
 
 type PreparedCheckpoint = {
   audioByAssetId: Record<string, boolean>;
@@ -450,27 +451,7 @@ export class RenderProcessor extends WorkerHost {
       const publicUrl = this.config.get('PUBLIC_URL', { infer: true });
       const outputUrl = `${publicUrl}/files/users/${userId}/exports/${renderJobId}.mp4`;
       await this.cleanupOldExports(userId, renderJobId);
-      await this.prisma.renderJob.update({
-        where: { id: renderJobId },
-        data: {
-          status: 'completed',
-          stage: 'completed',
-          checkpoint: 'rendered',
-          progress: 100,
-          outputUrl,
-          outputPath,
-          error: null,
-          errorDetail: null,
-          failureCode: null,
-          failureCategory: null,
-          failureLevel: null,
-          failureStage: null,
-          retryable: false,
-          cancelRequested: false,
-          nextRetryAt: null,
-          finishedAt: new Date(),
-        },
-      });
+      await finishRender(this.prisma, { id: renderJobId, userId, snapshot: timelineSource, timeline, outputPath, outputUrl, fileName: current.fileName });
       await job.updateProgress(100);
       this.logger.log(`Render job ${renderJobId} completed: ${outputUrl}`);
       return { ok: true, outputUrl };

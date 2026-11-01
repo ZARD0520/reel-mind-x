@@ -108,10 +108,11 @@ export type LeftPanelProps = {
   allowUpload?: boolean;
   allowAiGeneration?: boolean;
   allowAssetDelete?: boolean;
+  allowTextCreation?: boolean;
   layout?: 'sidebar' | 'compact';
 };
 
-export function LeftPanel({ projectId, allowUpload = true, allowAiGeneration = true, allowAssetDelete = true, layout = 'sidebar' }: LeftPanelProps) {
+export function LeftPanel({ projectId, allowUpload = true, allowAiGeneration = true, allowAssetDelete = true, allowTextCreation = true, layout = 'sidebar' }: LeftPanelProps) {
   const [active, setActive] = useState('media');
   const fileInput = useRef<HTMLInputElement>(null);
   const { data: assets = [] } = useAssets(projectId);
@@ -144,8 +145,8 @@ export function LeftPanel({ projectId, allowUpload = true, allowAiGeneration = t
 
   return (
     <div className={`flex h-full min-h-0 shrink-0 border-r border-border-subtle bg-surface ${layout === 'compact' ? 'w-[280px] flex-col' : ''}`}>
-      <nav className={`flex shrink-0 items-center gap-1.5 bg-base py-3 ${layout === 'compact' ? 'justify-center border-b border-border-subtle' : 'w-[72px] flex-col'}`}>
-        {TABS.filter(tab => layout !== 'compact' || ['media', 'audio', 'text'].includes(tab.key)).map(({ key, label, icon: Icon }) => {
+      <nav className={`flex shrink-0 items-center gap-1.5 bg-surface py-3 ${layout === 'compact' ? 'justify-center border-b border-border-subtle' : 'w-[72px] flex-col'}`}>
+        {TABS.filter(tab => (layout !== 'compact' || ['media', 'audio', 'text'].includes(tab.key))).map(({ key, label, icon: Icon }) => {
           const isActive = key === active;
           return (
             <button
@@ -164,7 +165,7 @@ export function LeftPanel({ projectId, allowUpload = true, allowAiGeneration = t
       </nav>
 
       <div className={`flex min-h-0 flex-1 flex-col gap-4 p-4 ${layout === 'compact' ? '' : 'w-[300px]'}`}>
-        {active === 'text' ? (
+        {active === 'text' && allowTextCreation ? (
           // 文本 tab：AI 生成 + 添加文本
           <div className="flex flex-col gap-4">
             {/* AI 生成文案 */}
@@ -186,7 +187,7 @@ export function LeftPanel({ projectId, allowUpload = true, allowAiGeneration = t
             <h2 className="text-[13px] font-semibold">本地文本</h2>
             <button
               type="button"
-              onClick={() => useEditorStore.getState().addTextClip('双击编辑文本')}
+              onClick={() => { if (allowTextCreation) useEditorStore.getState().addTextClip('双击编辑文本'); }}
               className="flex h-24 flex-col items-center justify-center gap-2 rounded-[10px] border border-border-subtle bg-input hover:border-white/[0.24]"
             >
               <Plus className="h-[26px] w-[26px] text-accent" />
@@ -195,6 +196,12 @@ export function LeftPanel({ projectId, allowUpload = true, allowAiGeneration = t
             <div className="flex-1 text-center text-[13px] text-fg-tertiary">
               点击添加文本到时间轴，然后拖拽调整位置和持续时间。
             </div>
+          </div>
+        ) : active === 'text' ? (
+          <div className="reel-scroll flex min-h-0 flex-col gap-4 overflow-y-auto">
+            <h2 className="text-[13px] font-semibold">引用文本</h2>
+            {assets.filter(asset => asset.kind === 'text').map(asset => <button key={asset.id} type="button" onClick={() => { for (const text of asset.content?.match(/[\s\S]{1,2000}/g) ?? []) useEditorStore.getState().addTextClip(text, asset.id); }} className="flex w-full cursor-pointer flex-col gap-2 rounded-xl border border-border-subtle bg-input p-3 text-left hover:border-white/25" title={`添加引用文本：${asset.name}`}><span className="text-sm font-medium">{asset.name}</span><span className="line-clamp-4 whitespace-pre-wrap text-xs text-fg-secondary">{asset.content}</span></button>)}
+            {!assets.some(asset => asset.kind === 'text') && <p className="text-[13px] text-fg-tertiary">暂无此类引用素材，请返回画布添加依赖</p>}
           </div>
         ) : !showImport ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
@@ -241,7 +248,6 @@ export function LeftPanel({ projectId, allowUpload = true, allowAiGeneration = t
             )}
 
             <h2 className="text-[13px] font-semibold">{allowUpload ? (isAudioTab ? '本地音频' : '本地素材') : '引用素材'}</h2>
-            {!allowUpload && <p className="text-xs leading-5 text-fg-tertiary">素材来自智能剪辑节点的引用，可拖入时间轴。</p>}
             {allowUpload && <button
               type="button"
               onClick={() => fileInput.current?.click()}

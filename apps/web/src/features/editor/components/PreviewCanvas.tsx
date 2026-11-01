@@ -286,7 +286,7 @@ export function PreviewCanvas({
         />
       )}
       {/* 比例选择器 */}
-      <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2">
+      <div className="flex items-center gap-2 border-b border-border-subtle bg-surface px-4 py-2">
         <span className="text-xs text-fg-tertiary">画布比例</span>
         {ASPECT_RATIOS.map((ar) => {
           const arValue = (ar.w / ar.h).toFixed(3);

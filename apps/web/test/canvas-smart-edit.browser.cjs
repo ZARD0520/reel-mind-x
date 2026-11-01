@@ -10,8 +10,9 @@ const { randomUUID: uuid } = require('node:crypto');
     let graph = { version: 1, viewport: { x: 120, y: 150, zoom: 0.8 }, nodes: [
       { id: 'video', type: 'workflow', position: { x: 0, y: 0 }, data: { kind: 'video', title: '视频素材', assetId: uuid(), status: 'ready' } },
       { id: 'image', type: 'workflow', position: { x: 700, y: 0 }, data: { kind: 'image', title: '图片素材', assetId: uuid(), status: 'ready' } },
+      { id: 'text', type: 'workflow', position: { x: 700, y: 650 }, data: { kind: 'text', title: '文本素材', content: '这是画布引用的文字' } },
     ], edges: [] };
-    const assets = graph.nodes.map(node => ({ id: uuid(), projectId, kind: node.data.kind, name: node.data.title, status: 'ready', source: 'upload', url: null, durationInFrames: 150, width: 1920, height: 1080, createdAt: new Date().toISOString() }));
+    const assets = graph.nodes.map(node => ({ id: uuid(), projectId, kind: node.data.kind, name: node.data.title, content: node.data.content ?? null, status: 'ready', source: 'upload', url: null, durationInFrames: 150, width: 1920, height: 1080, createdAt: new Date().toISOString() }));
     let project;
     let opens = 0;
     const baseTimeline = { settings: { width: 1920, height: 1080, fps: 30 }, tracks: [] };
@@ -29,10 +30,10 @@ const { randomUUID: uuid } = require('node:crypto');
       } else if (path === '/api/projects/from-canvas-edit') {
         const body = route.request().postDataJSON();
         expect(body.canvasId).toBe(canvasId);
-        expect(graph.edges.filter(edge => edge.target === body.nodeId)).toHaveLength(2);
+        expect(graph.edges.filter(edge => edge.target === body.nodeId)).toHaveLength(3);
         opens++;
         graph.nodes.find(node => node.id === body.nodeId).data.editorProjectId = projectId;
-        project = { id: projectId, name: '智能剪辑', timeline: { ...baseTimeline, canvasSource: { canvasId, nodeId: body.nodeId, assets: assets.map((asset, i) => ({ assetId: asset.id, sourceAssetId: graph.nodes[i].data.assetId })) } } };
+        project = { id: projectId, name: '智能剪辑', timeline: { ...baseTimeline, canvasSource: { canvasId, nodeId: body.nodeId, assets: assets.map((asset, i) => ({ assetId: asset.id, sourceAssetId: graph.nodes[i].data.assetId, sourceNodeId: graph.nodes[i].id })) } } };
         json = project;
       } else if (path === `/api/projects/${projectId}`) {
         if (method === 'PATCH') project = { ...project, ...route.request().postDataJSON() };
@@ -58,10 +59,17 @@ const { randomUUID: uuid } = require('node:crypto');
     await video.click();
     await editNode.getByRole('button', { name: '添加剪辑素材' }).click();
     await page.locator('.react-flow__node[data-id="image"]').click();
+    await editNode.getByRole('button', { name: '添加剪辑素材' }).click();
+    await page.locator('.react-flow__node[data-id="text"]').click();
     await expect(editNode.getByRole('button', { name: '打开剪辑' })).toBeEnabled();
     await editNode.getByRole('button', { name: '打开剪辑' }).click();
     await expect(page).toHaveURL(new RegExp(`/editor/${projectId}`));
     await expect(page.getByText('引用素材', { exact: true })).toBeVisible();
+    await expect(page.getByRole('navigation')).toHaveCSS('width', '72px');
+    await expect(page.getByRole('navigation')).toHaveCSS('flex-direction', 'column');
+    const panelColor = await page.getByRole('navigation').evaluate(el => getComputedStyle(el.parentElement).backgroundColor);
+    await expect(page.getByRole('navigation')).toHaveCSS('background-color', panelColor);
+    await expect(page.getByText('画布比例', { exact: true }).locator('..')).toHaveCSS('background-color', panelColor);
     await expect(page.getByRole('button', { name: '导入素材', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '生成图片', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: '生成视频', exact: true })).toHaveCount(0);
@@ -69,9 +77,12 @@ const { randomUUID: uuid } = require('node:crypto');
     await expect(page.getByRole('button', { name: /AI 混编/ })).toHaveCount(0);
     await expect(page.getByTitle('删除素材')).toHaveCount(0);
     await expect(page.getByText('图片素材', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: '文本', exact: true }).click();
+    await page.getByRole('navigation').getByRole('button', { name: '文本', exact: true }).click();
+    await expect(page.getByText('引用文本', { exact: true })).toBeVisible();
+    await page.getByTitle('添加引用文本：文本素材', { exact: true }).click();
+    await expect.poll(() => project.timeline.tracks.some(track => track.kind === 'text' && track.textClips.some(clip => clip.text === '这是画布引用的文字' && clip.sourceAssetId === assets[2].id))).toBe(true);
     await expect(page.getByRole('button', { name: 'AI 生成文案' })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: '添加文本', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '添加文本', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: '返回', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/canvas/${canvasId}`));
     await expect(page.getByLabel('智能剪辑名称')).toBeVisible();
@@ -83,6 +94,8 @@ const { randomUUID: uuid } = require('node:crypto');
     await expect(page.getByRole('button', { name: '导入素材', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '生成图片', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '生成视频', exact: true })).toBeVisible();
+    await page.getByRole('navigation').getByRole('button', { name: '文本', exact: true }).click();
+    await expect(page.getByRole('button', { name: '添加文本', exact: true })).toBeVisible();
     expect(errors).toEqual([]);
     console.log('PASS: smart edit node placement, dependencies, navigation, restricted editor, reopen, and standalone capabilities');
   } finally { await browser.close(); }

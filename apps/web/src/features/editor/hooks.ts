@@ -90,7 +90,7 @@ export function useExport(projectId: string) {
   }, [dismissedJobId, latest.data]);
 
   const create = useMutation({
-    mutationFn: (opts: { fileName?: string; quality?: RenderQuality }) =>
+    mutationFn: (opts: { fileName?: string; quality?: RenderQuality; canvasId?: string }) =>
       api.render.create({ projectId, ...opts }) as Promise<RenderJob>,
     onSuccess: (job) => {
       setDismissedJobId(null);
@@ -110,6 +110,12 @@ export function useExport(projectId: string) {
     },
   });
 
+  useEffect(() => {
+    if (job?.status !== 'completed' || !job.canvasId) return;
+    qc.removeQueries({ queryKey: ['canvas', job.canvasId], exact: true, type: 'inactive' });
+    void qc.invalidateQueries({ queryKey: ['canvases'] });
+  }, [job?.id, job?.status, job?.canvasId, qc]);
+
   const cancel = useMutation({
     mutationFn: (id: string) => api.render.cancel(id) as Promise<RenderJob>,
     onSuccess: (cancelledJob) => {
@@ -125,7 +131,7 @@ export function useExport(projectId: string) {
   };
 
   return {
-    start: (opts: { fileName?: string; quality?: RenderQuality }) => {
+    start: (opts: { fileName?: string; quality?: RenderQuality; canvasId?: string }) => {
       create.reset();
       create.mutate(opts);
     },

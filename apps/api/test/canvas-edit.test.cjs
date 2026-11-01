@@ -26,10 +26,13 @@ async function fixture(run) {
       project: {
         count: async () => projects.size,
         findFirst: async ({ where }) => projects.get(where.id) ?? null,
-        create: async ({ data }) => { const p = { ...data, createdAt: new Date(), updatedAt: new Date() }; projects.set(p.id, p); return p; },
+        create: async ({ data }) => { const p = { id: data.id ?? uuid(), ...data, createdAt: new Date(), updatedAt: new Date() }; projects.set(p.id, p); return p; },
         update: async ({ where, data }) => { const p = { ...projects.get(where.id), ...data }; projects.set(p.id, p); return p; },
       },
       asset: {
+        findFirst: async ({ where }) => sources.find(asset => asset.id === where.id) ?? null,
+        create: async ({ data }) => { assets.set(data.id, data); return data; },
+        update: async ({ where, data }) => { const asset = { ...assets.get(where.id), ...data }; assets.set(where.id, asset); return asset; },
         findMany: async ({ where }) => where.id ? sources.filter(s => where.id.in.includes(s.id)) : [...assets.values()].filter(a => a.projectId === where.projectId),
         createMany: async ({ data }) => data.forEach(a => assets.set(a.id, a)),
         deleteMany: async ({ where }) => { for (const [id, asset] of assets) if (asset.projectId === where.projectId && !where.id.notIn.includes(id)) assets.delete(id); },
@@ -86,3 +89,37 @@ test('restricted asset lists expose only current dependencies, while ordinary pr
   await service.list('user', 'project');
   assert.equal(query.where.id, undefined);
 });
+
+test('all project creation paths allow more than three projects per user', () => fixture(async f => {
+  // A quota check must not be consulted by ordinary or canvas-based creation.
+  f.prisma.project.count = async () => { throw new Error('Removed project quota must not run'); };
+  for (let i = 0; i < 5; i++) {
+    const project = await f.service.create(f.userId, { name: `剪辑 ${i}` });
+    assert.ok(project.id);
+  }
+  const old = await f.service.createFromCanvasVideo(f.userId, { assetId: f.sources[0].id });
+  assert.ok(old.id);
+  const smart = await f.service.openCanvasEdit(f.userId, { canvasId: f.canvasId, nodeId: 'edit' });
+  assert.ok(smart.id);
+}));
+
+
+test('manual canvas text is imported, refreshed and detached through node dependencies', () => fixture(async f => {
+  f.graph.nodes.push({ id: 'text', type: 'workflow', position: { x: 0, y: 0 }, data: { kind: 'text', title: '引用文案', content: '来自画布的文字' } });
+  f.graph.edges.splice(0, f.graph.edges.length, { id: 'text-edit', source: 'text', target: 'edit' });
+  const project = await f.service.openCanvasEdit(f.userId, { canvasId: f.canvasId, nodeId: 'edit' });
+  const mapping = project.timeline.canvasSource.assets[0];
+  assert.equal(mapping.sourceNodeId, 'text');
+  assert.equal(f.assets.get(mapping.assetId).content, '来自画布的文字');
+  f.graph.nodes.find(node => node.id === 'text').data.content = '修改后的画布文字';
+  const reopened = await f.service.openCanvasEdit(f.userId, { canvasId: f.canvasId, nodeId: 'edit' });
+  assert.equal(reopened.timeline.canvasSource.assets[0].assetId, mapping.assetId);
+  assert.equal(f.assets.get(mapping.assetId).content, '修改后的画布文字');
+  const { TextClipSchema } = require('@reel/contracts');
+  reopened.timeline.tracks.push({ id: uuid(), kind: 'text', muted: false, hidden: false, clips: [], textClips: [TextClipSchema.parse({ id: uuid(), sourceAssetId: mapping.assetId, text: '采用的引用文案', start: 0, durationInFrames: 150 })] });
+  await f.service.update(f.userId, reopened.id, { timeline: reopened.timeline });
+  f.graph.edges.splice(0, 1, { id: 'video-edit', source: 'source0', target: 'edit' });
+  const disconnected = await f.service.openCanvasEdit(f.userId, { canvasId: f.canvasId, nodeId: 'edit' });
+  assert.equal(disconnected.timeline.canvasSource.assets.some(asset => asset.sourceNodeId === 'text'), false);
+  assert.equal(disconnected.timeline.tracks.find(track => track.kind === 'text').textClips.length, 0);
+}));

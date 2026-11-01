@@ -11,6 +11,7 @@ import {
 import type { Prisma } from '@reel/db';
 import { Queue } from 'bullmq';
 import * as fs from 'fs';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   JobNames,
@@ -22,6 +23,7 @@ import {
 import { queueFailure } from './render.errors';
 
 type RenderRow = {
+  timelineSnapshot?: Prisma.JsonValue | null;
   id: string;
   projectId: string;
   status: string;
@@ -153,7 +155,8 @@ export class RenderService implements OnModuleInit {
           detail: row.errorDetail,
         }
       : null;
-    return RenderJobSchema.parse({ ...row, failure });
+    return RenderJobSchema.parse({
+      canvasId: (row.timelineSnapshot as { canvasExport?: { canvasId: string } } | null)?.canvasExport?.canvasId, ...row, failure });
   }
 
   private async addQueueJob(input: {
@@ -199,6 +202,11 @@ export class RenderService implements OnModuleInit {
     });
     if (!project) throw new NotFoundException(`Project ${input.projectId} not found`);
 
+    if (input.canvasId) {
+      const canvas = await this.prisma.canvas.findFirst({ where: { id: input.canvasId, userId }, select: { id: true } });
+      if (!canvas) throw new NotFoundException('来源画布不存在');
+    }
+    const snapshot = { ...(project.timeline as Record<string, unknown>), ...(input.canvasId ? { canvasExport: { canvasId: input.canvasId, assetId: randomUUID(), nodeId: randomUUID() } } : {}) };
     const base = safeBaseName(input.fileName?.trim() || project.name);
     const fileName = `${base}.mp4`;
     const row = await this.prisma.renderJob.create({
@@ -212,7 +220,7 @@ export class RenderService implements OnModuleInit {
         maxAttempts: RENDER_MAX_ATTEMPTS,
         checkpoint: 'none',
         fileName,
-        timelineSnapshot: project.timeline as Prisma.InputJsonValue,
+        timelineSnapshot: snapshot as Prisma.InputJsonValue,
       },
     });
 

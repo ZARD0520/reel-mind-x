@@ -776,7 +776,7 @@ function NodeGenerationPrompt({
       onDoubleClick={(event) => event.stopPropagation()}
     >
       <div className="mb-1 flex min-h-8 items-center gap-1.5 px-2">
-        <div className="reel-scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+        <div data-node-scroll data-prompt-reference-list className="reel-scroll nowheel flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overscroll-contain">
           {referenceDependencies.map(({ edge, node }) => {
             const ReferenceIcon = nodeIcons[node.data.kind];
             const frameIndex = videoImageReferenceIds.indexOf(node.id);
@@ -916,11 +916,15 @@ function NodeGenerationPrompt({
 
 const SmartEditContext = createContext<{ open: (id: string) => void; pending: boolean }>({ open: () => undefined, pending: false });
 
+function isReadyForEditing(node?: WorkflowNode) {
+  return !!node && (node.data.kind === 'text' ? !!node.data.content.trim() && node.data.status !== 'generating' : !!node.data.assetId && node.data.status === 'ready');
+}
+
 function SmartEditCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const dependency = useContext(DependencySelectionContext);
   const edit = useContext(SmartEditContext);
   const sources = dependency.edges.filter(edge => edge.target === id).map(edge => ({ edge, node: dependency.nodes.find(node => node.id === edge.source) }));
-  const ready = sources.length > 0 && sources.every(({ node }) => node?.data.assetId && node.data.status === 'ready');
+  const ready = sources.length > 0 && sources.every(({ node }) => isReadyForEditing(node));
   const { updateNodeData } = useReactFlow<WorkflowNode, Edge>();
   return <div data-dependency-candidate={dependency.targetId ? 'false' : undefined} className={`workflow-card w-[360px] ${dependency.targetId ? 'opacity-45' : ''}`}>
     <div className="workflow-node-title mb-2 flex h-7 items-center gap-2 px-2 text-base font-semibold"><Scissors className="h-[18px] w-[18px]" /><input aria-label="智能剪辑名称" className="nodrag nopan min-w-0 flex-1 bg-transparent outline-none" value={data.title} onChange={event => updateNodeData(id, { title: event.target.value })} /></div>
@@ -928,8 +932,8 @@ function SmartEditCard({ id, data, selected }: NodeProps<WorkflowNode>) {
     <div className={`rounded-[24px] border bg-[#202020] p-5 shadow-xl ${selected ? 'border-white' : 'border-white/15'}`}>
       <div className="mb-4 flex items-center justify-between"><span className="text-sm text-[#b9b9ba]">引用素材 · {sources.length}</span><button type="button" aria-label="添加剪辑素材" onClick={() => dependency.start(id)} className="nodrag nopan rounded-lg p-2 hover:bg-white/10"><Plus className="h-4 w-4" /></button></div>
       <div data-node-scroll className="reel-scroll nodrag nopan nowheel max-h-52 space-y-2 overflow-y-auto overscroll-contain">
-        {sources.map(({ edge, node }) => <div key={edge.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-sm"><span className="min-w-0 flex-1 truncate">{node?.data.title ?? '来源缺失'}</span><span className="text-xs text-[#77777b]">{node?.data.status === 'ready' ? nodeLabels[node.data.kind] : '未就绪'}</span><button type="button" aria-label={`移除剪辑素材 ${node?.data.title ?? ''}`} onClick={() => dependency.remove(edge.id)} className="rounded p-1 hover:bg-white/10"><X className="h-3.5 w-3.5" /></button></div>)}
-        {!sources.length && <p className="py-6 text-center text-xs leading-6 text-[#77777b]">连接图片、视频或音频节点<br />将引用素材组合为成片</p>}
+        {sources.map(({ edge, node }) => <div key={edge.id} className="flex items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-sm"><span className="min-w-0 flex-1 truncate">{node?.data.title ?? '来源缺失'}</span><span className="text-xs text-[#77777b]">{node && isReadyForEditing(node) ? nodeLabels[node.data.kind] : '未就绪'}</span><button type="button" aria-label={`移除剪辑素材 ${node?.data.title ?? ''}`} onClick={() => dependency.remove(edge.id)} className="rounded p-1 hover:bg-white/10"><X className="h-3.5 w-3.5" /></button></div>)}
+        {!sources.length && <p className="py-6 text-center text-xs leading-6 text-[#77777b]">连接文本、图片、视频或音频节点<br />将引用素材组合为成片</p>}
       </div>
       <button type="button" disabled={!ready || edit.pending} onClick={() => edit.open(id)} className="nodrag nopan mt-4 flex h-10 w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#f7f7f2] text-sm font-medium text-[#111] disabled:cursor-not-allowed disabled:opacity-35">{edit.pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}打开剪辑</button>
     </div>
@@ -1501,6 +1505,11 @@ function InfiniteCanvas({
       if (prompt && !event.ctrlKey && (prompt.scrollHeight > prompt.clientHeight || prompt.scrollWidth > prompt.clientWidth)) {
         // Keep two-finger scrolling inside overflowing prompts, including at their edges.
         event.stopPropagation();
+        if (prompt.hasAttribute('data-prompt-reference-list')) {
+          event.preventDefault();
+          const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? prompt.clientWidth : 1;
+          prompt.scrollLeft += (event.deltaX || event.deltaY) * unit;
+        }
         return;
       }
       if (event.target.closest('.workflow-node-editor, [role="dialog"], [role="tooltip"], [role="listbox"]')) return;

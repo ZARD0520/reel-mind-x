@@ -100,7 +100,7 @@ interface EditorState {
   /** 更新项目设置（分辨率、fps 等）。入历史。 */
   updateSettings: (patch: Partial<Pick<Timeline['settings'], 'width' | 'height' | 'fps'>>) => void;
   /** 添加文本片段到时间轴，放在画布中心，默认 5s。入历史。 */
-  addTextClip: (text: string) => void;
+  addTextClip: (text: string, sourceAssetId?: string) => void;
   /** 更新文本片段属性（内容/样式/位置/时间）。不入历史（高频调用，结束时 commitHistory）。 */
   updateTextClip: (id: string, patch: Partial<Omit<TextClip, 'id' | 'style'>> & { style?: Partial<TextClip['style']> }) => void;
   /** 删除文本片段。入历史。 */
@@ -547,9 +547,10 @@ export const useEditorStore = create<EditorState>((set) => ({
       };
     }),
 
-  addTextClip: (text) =>
+  addTextClip: (text, sourceAssetId) =>
     set((state) => {
       if (!state.timeline) return state;
+      if (state.timeline.canvasSource && (!sourceAssetId || !state.timeline.canvasSource.assets.some(asset => asset.assetId === sourceAssetId))) return state;
       const fps = state.timeline.settings.fps;
       const newId = uuid();
       const duration = fps * 5;
@@ -560,6 +561,7 @@ export const useEditorStore = create<EditorState>((set) => ({
         ? (textTrack.textClips ?? []).reduce((max, tc) => Math.max(max, tc.start + tc.durationInFrames), 0)
         : 0;
       const newText: TextClip = {
+        sourceAssetId,
         id: newId,
         text,
         start: startFrame,

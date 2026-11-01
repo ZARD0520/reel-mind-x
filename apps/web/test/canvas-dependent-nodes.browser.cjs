@@ -21,7 +21,7 @@ const { randomUUID: uuid } = require('node:crypto');
     await page.goto(`${process.env.E2E_BASE_URL ?? 'http://127.0.0.1:5173'}/canvas/${id}`);
     const menu = page.getByRole('menu', { name: '添加下游节点' });
     const source = kind => page.locator(`.react-flow__node[data-id="${kind}"]`).getByRole('button', { name: '添加下游节点', exact: true });
-    const options = { text: ['文本节点', '图片节点', '视频节点', '音频节点'], image: ['文本节点', '图片节点', '视频节点', '智能剪辑'], video: ['文本节点', '智能剪辑'], audio: ['视频节点', '智能剪辑'] };
+    const options = { text: ['文本节点', '图片节点', '视频节点', '智能剪辑', '音频节点'], image: ['文本节点', '图片节点', '视频节点', '智能剪辑'], video: ['文本节点', '智能剪辑'], audio: ['视频节点', '智能剪辑'] };
     for (const [kind, labels] of Object.entries(options)) {
       await source(kind).click();
       await expect(menu).toBeVisible();

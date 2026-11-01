@@ -11,6 +11,8 @@ import {
   Sparkles,
   Undo2,
   Upload,
+  ChevronDown,
+  Workflow,
   X,
 } from 'lucide-react';
 import { useExport } from '../hooks';
@@ -18,6 +20,7 @@ import type { RenderFailureCategory, RenderJob, RenderStage } from '@reel/contra
 
 interface EditorTopBarProps {
   projectId: string;
+  sourceCanvasId?: string;
   projectName?: string;
   isSaving?: boolean;
   canUndo?: boolean;
@@ -38,6 +41,7 @@ interface EditorTopBarProps {
 
 export function EditorTopBar({
   projectId,
+  sourceCanvasId,
   projectName,
   isSaving,
   canUndo,
@@ -57,6 +61,8 @@ export function EditorTopBar({
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportMenu, setExportMenu] = useState(false);
+  const [destination, setDestination] = useState<'local' | 'canvas'>('local');
   const [exportName, setExportName] = useState('');
   const [exportQuality, setExportQuality] = useState<'high' | 'medium' | 'low'>('high');
   const [confirmed, setConfirmed] = useState(false);
@@ -72,17 +78,22 @@ export function EditorTopBar({
   // 弹窗两阶段：未确认 → 显示设置（名称/质量）；确认后 → 显示进度/结果。
   const showSettings = exportOpen && !confirmed;
 
-  const openExport = () => {
+  const openExport = (target?: 'local' | 'canvas') => {
+    setExportMenu(false);
+    if (target) {
+      setDestination(target);
+      if (job && !exporting) reset();
+    } else if (job) setDestination(job.canvasId ? 'canvas' : 'local');
     setExportName(job?.fileName?.replace(/\.mp4$/i, '') || projectName || '未命名项目');
     setExportQuality(job?.quality ?? 'high');
-    setConfirmed(!!job);
+    setConfirmed(!!job && (!target || exporting));
     setExportOpen(true);
   };
   const confirmExport = () => {
     setConfirmed(true);
     void (async () => {
       await onBeforeExport?.(); // 先落库最新 timeline
-      start({ fileName: exportName.trim() || undefined, quality: exportQuality });
+      start({ fileName: exportName.trim() || undefined, quality: exportQuality, ...(destination === 'canvas' ? { canvasId: sourceCanvasId } : {}) });
     })();
   };
   const closeExport = () => {
@@ -92,7 +103,7 @@ export function EditorTopBar({
   const retryExport = () => {
     void (async () => {
       await onBeforeExport?.();
-      start({ fileName: exportName.trim() || undefined, quality: exportQuality });
+      start({ fileName: exportName.trim() || undefined, quality: exportQuality, ...(destination === 'canvas' ? { canvasId: sourceCanvasId } : {}) });
     })();
   };
 
@@ -198,7 +209,7 @@ export function EditorTopBar({
         <div className="relative">
           <button
             type="button"
-            onClick={openExport}
+            onClick={() => { if (sourceCanvasId && !exporting) { setExportOpen(false); setExportMenu(value => !value); } else openExport(); }}
             disabled={starting || recovering}
             className="flex items-center gap-1.5 rounded-lg bg-[#f7f7f2] px-[18px] py-2 text-[#151515] hover:bg-white disabled:opacity-70"
           >
@@ -210,12 +221,20 @@ export function EditorTopBar({
             <span className="text-[13px] font-semibold">
               {recovering ? '恢复中…' : exporting ? '查看导出' : '导出'}
             </span>
+            {sourceCanvasId && !exporting && <ChevronDown className="h-3.5 w-3.5" />}
           </button>
 
+          {exportMenu && <>
+            <div className="fixed inset-0 z-40" onClick={() => setExportMenu(false)} />
+            <div role="menu" aria-label="导出方式" className="absolute right-0 top-[calc(100%+8px)] z-50 w-44 rounded-xl border border-white/15 bg-surface p-1.5 shadow-xl">
+              <button type="button" role="menuitem" onClick={() => openExport('local')} className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-white/10"><Download className="h-4 w-4" />导出到本地</button>
+              <button type="button" role="menuitem" onClick={() => openExport('canvas')} className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm hover:bg-white/10"><Workflow className="h-4 w-4" />导出到画布</button>
+            </div>
+          </>}
           {exportOpen && (
             <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] rounded-xl border border-white/[0.14] bg-[#242424] p-4 shadow-xl">
               <div className="mb-3 flex items-center justify-between">
-                <span className="text-sm font-semibold">导出视频</span>
+                <span className="text-sm font-semibold">{destination === 'canvas' ? '导出到画布' : '导出到本地'}</span>
                 <button
                   type="button"
                   onClick={closeExport}
@@ -245,6 +264,7 @@ export function EditorTopBar({
                   onCancel={cancel}
                   onRetry={retryExport}
                   onNewExport={createAnotherExport}
+                  canvasId={job?.canvasId}
                 />
               )}
             </div>
@@ -358,7 +378,9 @@ function ExportBody({
   onCancel,
   onRetry,
   onNewExport,
+  canvasId,
 }: {
+  canvasId?: string;
   job: RenderJob | null;
   starting: boolean;
   startError: Error | null;
@@ -498,7 +520,8 @@ function ExportBody({
   // completed
   return (
     <div className="flex flex-col gap-3">
-      <ProgressView label="完成" percent={100} />
+      <ProgressView label={canvasId ? '已导出到画布' : '完成'} percent={100} />
+      {canvasId && <a href={`/canvas/${canvasId}`} className="flex items-center justify-center gap-2 rounded-lg bg-[#f7f7f2] px-3 py-2 text-sm font-semibold text-[#151515]"><Workflow className="h-4 w-4" />返回画布查看</a>}
       <a
         href={job.outputUrl ?? '#'}
         target="_blank"

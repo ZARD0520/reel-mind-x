@@ -323,6 +323,7 @@ export type TextStyle = z.infer<typeof TextStyleSchema>;
 
 /** 文本片段：独立于 Clip，直接挂在 Timeline 根 */
 export const TextClipSchema = z.object({
+  sourceAssetId: z.string().uuid().optional(),
   id: z.string().uuid(),
   /** 文本内容（支持多行，\n分隔） */
   text: z.string().min(1).max(2000),
@@ -376,7 +377,7 @@ export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 export const CanvasEditSourceSchema = z.object({
   canvasId: z.string().uuid(),
   nodeId: z.string().min(1),
-  assets: z.array(z.object({ sourceAssetId: z.string().uuid(), assetId: z.string().uuid() })),
+  assets: z.array(z.object({ sourceAssetId: z.string().uuid().optional(), sourceNodeId: z.string().optional(), assetId: z.string().uuid() })),
 });
 
 export const TimelineSchema = z.object({
@@ -488,6 +489,7 @@ export type RenderQuality = z.infer<typeof RenderQualitySchema>;
 
 /** 创建导出任务的入参。 */
 export const CreateRenderSchema = z.object({
+  canvasId: z.string().uuid().optional(),
   projectId: z.string().uuid(),
   /** 下载文件名（不含扩展名）；省略则用项目名 */
   fileName: z.string().max(120).optional(),
@@ -555,6 +557,7 @@ export type RenderFailure = z.infer<typeof RenderFailureSchema>;
 
 /** 渲染任务：worker 用 project 的 timeline 跑 FFmpeg 合成 */
 export const RenderJobSchema = z.object({
+  canvasId: z.string().uuid().optional(),
   id: z.string().uuid(),
   projectId: z.string().uuid(),
   status: RenderStatusSchema,

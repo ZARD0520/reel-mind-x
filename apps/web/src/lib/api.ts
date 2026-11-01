@@ -226,7 +226,7 @@ export const api = {
     remove: (id: string) => requestVoid(`/asset-folders/${id}`, { method: 'DELETE' }),
   },
   render: {
-    create: (body: { projectId: string; fileName?: string; quality?: string }) =>
+    create: (body: { projectId: string; fileName?: string; quality?: string; canvasId?: string }) =>
       request('/render', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

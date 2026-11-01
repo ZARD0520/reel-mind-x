@@ -11,8 +11,8 @@ import { Timeline } from '../features/editor/components/Timeline';
 import { PREVIEW_FPS } from '../features/editor/constants';
 import { ApiError } from '../lib/api';
 
-export type EditorPageProps = { allowUpload?: boolean; allowAiGeneration?: boolean; allowAiMix?: boolean };
-export function EditorPage({ allowUpload = true, allowAiGeneration = true, allowAiMix = true }: EditorPageProps = {}) {
+export type EditorPageProps = { allowUpload?: boolean; allowAiGeneration?: boolean; allowAiMix?: boolean; allowTextCreation?: boolean };
+export function EditorPage({ allowUpload = true, allowAiGeneration = true, allowAiMix = true, allowTextCreation = true }: EditorPageProps = {}) {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -173,6 +173,7 @@ export function EditorPage({ allowUpload = true, allowAiGeneration = true, allow
     <div className="flex h-full flex-col bg-base text-fg">
       <EditorTopBar
         projectId={id}
+        sourceCanvasId={sourceCanvas ?? undefined}
         projectName={project?.name}
         isSaving={updateProject.isPending}
         canUndo={canUndo}
@@ -188,7 +189,7 @@ export function EditorPage({ allowUpload = true, allowAiGeneration = true, allow
         onBeforeExport={saveLatestTimeline}
       />
       <div className="flex min-h-0 flex-1">
-        <LeftPanel projectId={id} allowUpload={allowUpload && !dependencyOnly} allowAiGeneration={allowAiGeneration && !dependencyOnly} allowAssetDelete={!dependencyOnly} layout={dependencyOnly ? 'compact' : 'sidebar'} />
+        <LeftPanel projectId={id} allowUpload={allowUpload && !dependencyOnly} allowAiGeneration={allowAiGeneration && !dependencyOnly} allowAssetDelete={!dependencyOnly} allowTextCreation={allowTextCreation && !dependencyOnly} />
         <PreviewCanvas
           projectId={id}
           currentFrame={currentFrame}

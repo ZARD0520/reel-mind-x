@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -22,8 +21,6 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class ProjectsService {
-  private readonly maxActiveProjects = 3;
-
   constructor(private readonly prisma: PrismaService) {}
 
   private toProject(row: {
@@ -40,10 +37,6 @@ export class ProjectsService {
     const timeline = TimelineSchema.parse(input.timeline ?? { settings: {} });
     delete timeline.canvasSource;
     const row = await this.prisma.$transaction(async (tx) => {
-      const activeProjectCount = await tx.project.count({ where: { userId, deletedAt: null } });
-      if (activeProjectCount >= this.maxActiveProjects) {
-        throw new ConflictException('每个用户最多只能创建 3 个剪辑');
-      }
       return tx.project.create({
         data: { userId, name: input.name, timeline: timeline as Prisma.InputJsonValue },
       });
@@ -66,12 +59,6 @@ export class ProjectsService {
     });
     if (!source) throw new NotFoundException('画布视频不存在或尚未生成完成');
     if (!source.localPath) throw new BadRequestException('画布视频文件不可用，请重新生成');
-    const activeProjectCount = await this.prisma.project.count({
-      where: { userId, deletedAt: null },
-    });
-    if (activeProjectCount >= this.maxActiveProjects) {
-      throw new ConflictException('每个用户最多只能创建 3 个剪辑');
-    }
 
     const projectId = randomUUID();
     const assetId = randomUUID();
@@ -112,10 +99,6 @@ export class ProjectsService {
 
     try {
       const row = await this.prisma.$transaction(async (tx) => {
-        const activeProjectCount = await tx.project.count({ where: { userId, deletedAt: null } });
-        if (activeProjectCount >= this.maxActiveProjects) {
-          throw new ConflictException('每个用户最多只能创建 3 个剪辑');
-        }
         const project = await tx.project.create({
           data: {
             id: projectId,
@@ -160,21 +143,20 @@ export class ProjectsService {
         const node = graph.nodes.find(item => item.id === input.nodeId && item.data.kind === 'edit');
         if (!node) throw new NotFoundException('智能剪辑节点不存在');
         const dependencies = graph.edges.filter(edge => edge.target === node.id).map(edge => graph.nodes.find(item => item.id === edge.source));
-        if (!dependencies.length) throw new BadRequestException('请先引用图片、视频或音频节点');
-        if (dependencies.some(item => !item || !['image', 'video', 'audio'].includes(String(item.data.kind)) || item.data.status !== 'ready' || !item.data.assetId)) {
+        if (!dependencies.length) throw new BadRequestException('请先引用文本、图片、视频或音频节点');
+        if (dependencies.some(item => !item || !['text', 'image', 'video', 'audio'].includes(String(item.data.kind)) || (item.data.kind === 'text' ? !String(item.data.content ?? '').trim() || item.data.status === 'generating' : item.data.status !== 'ready' || !item.data.assetId))) {
           throw new BadRequestException('引用的素材尚未就绪，请等待生成或上传完成');
         }
-        const sourceIds = [...new Set(dependencies.map(item => String(item!.data.assetId)))];
+        const sourceIds = [...new Set(dependencies.filter(item => item!.data.kind !== 'text').map(item => String(item!.data.assetId)))];
         const sources = await tx.asset.findMany({ where: { id: { in: sourceIds }, userId, status: 'ready', kind: { in: ['image', 'video', 'audio'] } } });
         if (sources.length !== sourceIds.length) throw new BadRequestException('引用素材不可用，请重新选择');
         const existing = typeof node.data.editorProjectId === 'string'
           ? await tx.project.findFirst({ where: { id: node.data.editorProjectId, userId, deletedAt: null } }) : null;
         const previous = existing ? TimelineSchema.parse(existing.timeline) : null;
         if (existing && (previous?.canvasSource?.canvasId !== input.canvasId || previous.canvasSource.nodeId !== node.id)) throw new BadRequestException('剪辑项目不属于当前节点');
-        if (!existing && await tx.project.count({ where: { userId, deletedAt: null } }) >= this.maxActiveProjects) throw new ConflictException('每个用户最多只能创建 3 个剪辑');
         const projectId = existing?.id ?? randomUUID();
         const imported = await tx.asset.findMany({ where: { userId, projectId } });
-        const mapping: { sourceAssetId: string; assetId: string }[] = [];
+        const mapping: { sourceAssetId?: string; sourceNodeId?: string; assetId: string }[] = [];
         const additions: Prisma.AssetUncheckedCreateInput[] = [];
         for (const sourceId of sourceIds) {
           const source = sources.find(asset => asset.id === sourceId)!;
@@ -189,6 +171,19 @@ export class ProjectsService {
           copied.push(localPath);
           mapping.push({ sourceAssetId: sourceId, assetId });
           additions.push({ id: assetId, userId, projectId, kind: source.kind, source: source.source, status: 'ready', name: source.name, url: `/files/users/${userId}/${path.basename(path.dirname(sourceFile))}/${filename}`, localPath, durationInFrames: source.durationInFrames, width: source.width, height: source.height, prompt: source.prompt, model: source.model, references: source.references as Prisma.InputJsonValue });
+        }
+        const textUpdates: { id: string; name: string; content: string }[] = [];
+        for (const dependency of dependencies) {
+          if (dependency!.data.kind !== 'text') continue;
+          const source = dependency!;
+          const old = previous?.canvasSource?.assets.find(item => item.sourceNodeId === source.id);
+          const existingAsset = old && imported.find(asset => asset.id === old.assetId);
+          const assetId = existingAsset ? existingAsset.id : randomUUID();
+          const content = String(source.data.content);
+          const name = String(source.data.title || '文本').slice(0, 200);
+          mapping.push({ sourceNodeId: source.id, assetId });
+          if (existingAsset) textUpdates.push({ id: assetId, content, name });
+          else additions.push({ id: assetId, userId, projectId, kind: 'text', source: 'ai', status: 'ready', name, content });
         }
         const allowed = new Set(mapping.map(item => item.assetId));
         const firstVisual = sources.find(asset => asset.kind !== 'audio');
@@ -208,12 +203,13 @@ export class ProjectsService {
           if (visual.clips.length) timeline.tracks.unshift({ ...visual, muted: false, hidden: false });
         } else {
           // Preserve manual edits; disconnected dependencies are removed from the composition.
-          timeline.tracks = timeline.tracks.map(track => ({ ...track, clips: track.clips.filter(clip => allowed.has(clip.assetId)) }));
+          timeline.tracks = timeline.tracks.map(track => ({ ...track, clips: track.clips.filter(clip => allowed.has(clip.assetId)), ...(track.textClips ? { textClips: track.textClips.filter(clip => clip.sourceAssetId && allowed.has(clip.sourceAssetId)) } : {}) }));
         }
         const data = { timeline: timeline as unknown as Prisma.InputJsonValue };
         const project = existing ? await tx.project.update({ where: { id: projectId }, data })
           : await tx.project.create({ data: { ...data, id: projectId, userId, name: String(node.data.title || '智能剪辑').slice(0, 200) } });
         if (additions.length) await tx.asset.createMany({ data: additions });
+        for (const { id, ...data } of textUpdates) await tx.asset.update({ where: { id }, data });
         // Keep historical asset records for in-flight renders; the library only exposes the current source allowlist.
         node.data.editorProjectId = projectId;
         await tx.canvas.update({ where: { id: input.canvasId }, data: { graph: graph as unknown as Prisma.InputJsonValue } });
@@ -244,7 +240,7 @@ export class ProjectsService {
     const existing = await this.findOne(userId, id);
     if (input.timeline && existing.timeline.canvasSource) {
       const allowed = new Set(existing.timeline.canvasSource.assets.map(item => item.assetId));
-      if (input.timeline.tracks.some(track => track.clips.some(clip => !allowed.has(clip.assetId)))) throw new BadRequestException('智能剪辑只能使用节点引用的素材');
+      if (input.timeline.tracks.some(track => track.clips.some(clip => !allowed.has(clip.assetId)) || track.textClips?.some(clip => !clip.sourceAssetId || !allowed.has(clip.sourceAssetId)))) throw new BadRequestException('智能剪辑只能使用节点引用的素材');
       input.timeline.canvasSource = existing.timeline.canvasSource;
     } else if (input.timeline) delete input.timeline.canvasSource;
     const row = await this.prisma.project.update({
