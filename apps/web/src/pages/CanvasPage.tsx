@@ -926,8 +926,32 @@ function SmartEditCard({ id, data, selected }: NodeProps<WorkflowNode>) {
   const sources = dependency.edges.filter(edge => edge.target === id).map(edge => ({ edge, node: dependency.nodes.find(node => node.id === edge.source) }));
   const ready = sources.length > 0 && sources.every(({ node }) => isReadyForEditing(node));
   const { updateNodeData } = useReactFlow<WorkflowNode, Edge>();
+  const [titleDraft, setTitleDraft] = useState(data.title);
+  const titleSync = useRef(data.title);
+  const titleComposing = useRef(false);
+  useEffect(() => {
+    if (!titleComposing.current && data.title !== titleSync.current) {
+      titleSync.current = data.title;
+      setTitleDraft(data.title);
+    }
+  }, [data.title]);
+  const commitTitle = (title: string) => {
+    setTitleDraft(title);
+    if (titleComposing.current) return;
+    titleSync.current = title;
+    updateNodeData(id, { title });
+  };
   return <div data-dependency-candidate={dependency.targetId ? 'false' : undefined} className={`workflow-card w-[360px] ${dependency.targetId ? 'opacity-45' : ''}`}>
-    <div className="workflow-node-title mb-2 flex h-7 items-center gap-2 px-2 text-base font-semibold"><Scissors className="h-[18px] w-[18px]" /><input aria-label="智能剪辑名称" className="nodrag nopan min-w-0 flex-1 bg-transparent outline-none" value={data.title} onChange={event => updateNodeData(id, { title: event.target.value })} /></div>
+    <div className="workflow-node-title mb-2 flex h-7 items-center gap-2 px-2 text-base font-semibold"><Scissors className="h-[18px] w-[18px]" /><input
+      aria-label="智能剪辑名称"
+      className="nodrag nopan min-w-0 flex-1 bg-transparent outline-none"
+      maxLength={200}
+      value={titleDraft}
+      onChange={event => commitTitle(event.target.value)}
+      onCompositionStart={() => { titleComposing.current = true; }}
+      onCompositionEnd={event => { titleComposing.current = false; commitTitle(event.currentTarget.value); }}
+      onBlur={event => { titleComposing.current = false; commitTitle(event.currentTarget.value.trim() || '智能剪辑'); }}
+    /></div>
     <MagneticConnectionHandle type="target" selected={selected} />
     <div className={`rounded-[24px] border bg-[#202020] p-5 shadow-xl ${selected ? 'border-white' : 'border-white/15'}`}>
       <div className="mb-4 flex items-center justify-between"><span className="text-sm text-[#b9b9ba]">引用素材 · {sources.length}</span><button type="button" aria-label="添加剪辑素材" onClick={() => dependency.start(id)} className="nodrag nopan rounded-lg p-2 hover:bg-white/10"><Plus className="h-4 w-4" /></button></div>
