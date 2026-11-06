@@ -9,7 +9,7 @@ import { CanvasChatReferenceSchema, type CanvasChatReference } from './canvas-ch
 import { CreditsService } from '../credits/credits.service';
 import type { Env } from '../../config/env';
 
-const CHAT_MODEL = 'glm-4v-flash';
+const CHAT_MODEL = 'glm-4.6v-flash';
 
 function readablePrompt(content: string): string {
   return content.replace(/@\[([^\]]*)\]\(node:([^)]*)\)/g, (token, title: string) => {
