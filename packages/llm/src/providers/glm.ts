@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import { LlmError } from '../types';
 import { SseDecoder } from '@reel/contracts';
+import { streamPromptTools } from './prompt-tools';
 
 /** GLM chat/completions 响应体（仅取用到的字段） */
 interface GlmResponse {
@@ -132,6 +133,10 @@ export class GlmProvider implements LlmProvider {
 
   async *chatStreamEvents(messages: ChatMessage[], options: ChatOptions = {}): AsyncIterable<ChatStreamEvent> {
     const model = options.model ?? this.model;
+    if (model === 'glm-4.1v-thinking-flash' && options.tools?.length) {
+      yield* streamPromptTools((history, params) => this.chatStreamEvents(history, params), messages, options);
+      return;
+    }
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -155,7 +160,10 @@ export class GlmProvider implements LlmProvider {
               : m.content,
           })),
           stream: true,
-          ...(options.tools?.length ? { tools: options.tools, tool_choice: 'auto', thinking: { type: 'disabled' } } : {}),
+          ...(options.tools?.length ? {
+            tools: options.tools, tool_choice: 'auto',
+            ...(model === 'glm-4.1v-thinking-flash' ? {} : { thinking: { type: 'disabled' } }),
+          } : {}),
           ...(options.temperature !== undefined && { temperature: options.temperature }),
           ...(clampMaxTokens(model, options.maxTokens) !== undefined && {
             max_tokens: clampMaxTokens(model, options.maxTokens),

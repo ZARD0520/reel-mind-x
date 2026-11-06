@@ -14,6 +14,7 @@ type Props = {
   referenceItems?: CanvasChatReference[];
   onChange: (value: string) => void;
   onReference?: (reference: CanvasChatReference) => boolean;
+  onFocusReference?: (nodeId: string) => void;
   onSubmit: () => void;
   placeholder: string;
   label: string;
@@ -45,7 +46,7 @@ function serialize(node: Node): string {
     `${index && child.nodeName === 'DIV' ? '\n' : ''}${serialize(child)}`).join('');
 }
 
-export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props>(function InlineReferenceInput({ value, candidates, referenceItems = candidates, onChange, onReference, onSubmit, placeholder, label, disabled, maxReferences, maxLength, variant = 'node', editorClassName }, ref) {
+export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props>(function InlineReferenceInput({ value, candidates, referenceItems = candidates, onChange, onReference, onFocusReference, onSubmit, placeholder, label, disabled, maxReferences, maxLength, variant = 'node', editorClassName }, ref) {
   const root = useRef<HTMLDivElement>(null);
   const iconTemplates = useRef<HTMLSpanElement>(null);
   const editMenu = usePromptEditMenu(root, disabled);
@@ -258,7 +259,14 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
           commit(value.slice(0, offset) + value.slice(offset + (chip.dataset.reference?.length ?? 0)));
           hover.close();
           setMention(null);
-        } else updateMention();
+        } else {
+          const referenceChip = hoveredChip(event.target);
+          if (!remove && referenceChip?.dataset.nodeId && onFocusReference) {
+            hover.close();
+            setMention(null);
+            onFocusReference(referenceChip.dataset.nodeId);
+          } else updateMention();
+        }
       }} onKeyUp={(event) => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) { edits.current.typing = false; updateMention(); } }}
       onBlur={() => { cursor.current = selectionOffset(); setMention(null); }}
       onPaste={(event) => { event.preventDefault(); edits.current.typing = false; document.execCommand('insertText', false, event.clipboardData.getData('text/plain')); edits.current.typing = false; }}

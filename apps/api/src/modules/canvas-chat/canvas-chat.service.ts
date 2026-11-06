@@ -8,9 +8,11 @@ import { MAX_REFERENCE_IMAGES, readLocalImageAsDataUrl } from '../llm/asset-imag
 import { CanvasChatReferenceSchema, type CanvasChatReference } from './canvas-chat.dto';
 import { CreditsService } from '../credits/credits.service';
 import type { Env } from '../../config/env';
+import { chatErrorMessage } from '@reel/contracts';
 import { CanvasAgentService, CREATIVE_AGENT_PROMPT } from '../canvas-agent/canvas-agent.service';
+import { chatAgentModel, PRIMARY_AGENT_MODEL } from '../canvas-agent/model-retry';
 
-const CHAT_MODEL = 'glm-4.6v-flash';
+const CHAT_MODEL = PRIMARY_AGENT_MODEL;
 
 function readablePrompt(content: string): string {
   return content.replace(/@\[([^\]]*)\]\(node:([^)]*)\)/g, (token, title: string) => {
@@ -27,6 +29,7 @@ function referenceContext(references: CanvasChatReference[]): string {
   const items = references.map((item, index) =>
     [
       `${index + 1}. ${item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}节点「${item.title}」`,
+      `引用 ID：${item.id}`,
       item.content ? `内容：${item.content.slice(0, 4000)}` : '',
       item.prompt ? `生成提示词：${item.prompt}` : '',
       item.description ? `素材信息：${item.description}` : '',
@@ -94,7 +97,7 @@ export class CanvasChatService {
     });
     return {
       ...conversation,
-      agentRuns: await this.prisma.canvasAgentRun.findMany({ where: { conversationId }, orderBy: { createdAt: 'asc' }, select: { id: true, status: true, events: true, error: true } }),
+      agentRuns: (await this.prisma.canvasAgentRun.findMany({ where: { conversationId }, orderBy: { createdAt: 'asc' }, select: { id: true, status: true, events: true, error: true } })).map(run => ({ ...run, error: run.error ? chatErrorMessage(run.error) : null })),
       messages: messages.map((message) => ({
         ...message,
         references: CanvasChatReferenceSchema.array().catch([]).parse(message.references),
@@ -109,6 +112,17 @@ export class CanvasChatService {
       data: { title },
       select: { id: true, title: true, createdAt: true, updatedAt: true },
     });
+  }
+
+  async saveErrorTurn(userId: string, canvasId: string, conversationId: string, content: string, references: CanvasChatReference[], error: unknown) {
+    await this.requireConversation(userId, canvasId, conversationId);
+    const message = chatErrorMessage(error);
+    await this.prisma.$transaction(async tx => {
+      await tx.canvasChatMessage.create({ data: { conversationId, role: 'user', content, references: references as Prisma.InputJsonValue } });
+      await tx.canvasChatMessage.create({ data: { conversationId, role: 'assistant', content: message } });
+      await tx.canvasConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
+    });
+    return this.get(userId, canvasId, conversationId);
   }
 
   async remove(userId: string, canvasId: string, conversationId: string): Promise<void> {
@@ -260,7 +274,7 @@ export class CanvasChatService {
   private async makeTitle(prompt: string, answer: string): Promise<string> {
     const fallback = [...prompt.replace(/\s+/g, ' ').trim()].slice(0, 24).join('') || '新对话';
     try {
-      const result = await this.llm.chat(
+      const result = await chatAgentModel(this.llm,
         [
           {
             role: 'system',

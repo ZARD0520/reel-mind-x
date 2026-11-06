@@ -12,6 +12,9 @@ const { randomUUID } = require('node:crypto');
     const conversation = { id: randomUUID(), title: '分镜创作', messages: [], agentRuns: [] };
     let submitted;
     let generationRequests = 0;
+    let scenario = 'success';
+    const rawError = 'GLM API 调用失败 (429): {"error":{"code":"1305","message":"private provider diagnostics"}}';
+    const friendlyError = '当前业务模型繁忙，请稍后再试。';
     await page.route('**/api/**', async route => {
       const request = route.request();
       const pathname = new URL(request.url()).pathname;
@@ -24,6 +27,16 @@ const { randomUUID } = require('node:crypto');
       else if (pathname.endsWith(`/conversations/${conversation.id}`)) json = conversation;
       else if (pathname.endsWith('/messages')) {
         submitted = request.postDataJSON();
+        if (scenario === 'legacy-error') {
+          await route.fulfill({ contentType: 'text/event-stream', body: `event: error\ndata: ${JSON.stringify({ message: rawError })}\n\n` });
+          return;
+        }
+        if (scenario === 'persisted-error') {
+          conversation.messages.push({ id: randomUUID(), role: 'user', content: submitted.content, references: [] }, { id: randomUUID(), role: 'assistant', content: friendlyError, references: [] });
+          conversation.agentRuns.push({ id: randomUUID(), status: 'failed', error: rawError, events: [{ id: 'failed-tool', runId: 'failed-run', name: 'create_nodes', title: '创建节点', status: 'failed', result: { message: rawError } }] });
+          await route.fulfill({ contentType: 'text/event-stream', body: `event: delta\ndata: ${JSON.stringify({ text: 'partial response' })}\n\nevent: replace\ndata: ${JSON.stringify({ text: friendlyError })}\n\nevent: done\ndata: ${JSON.stringify(conversation)}\n\n` });
+          return;
+        }
         expect(submitted.selectedNodeIds).toContain('story');
         const created = ['出门', '迷路', '相遇', '回家'].map((title, index) => ({ id: `shot-${index}`, type: 'workflow', position: { x: 750 + index * 500, y: 160 }, data: { kind: 'image', title, prompt: `分镜：${title}`, status: 'idle' } }));
         graph = { ...graph, nodes: [...graph.nodes, ...created], edges: created.map(node => ({ id: `story-${node.id}`, source: 'story', target: node.id })) };
@@ -59,7 +72,32 @@ const { randomUUID } = require('node:crypto');
     await expect(page.locator('.react-flow__node')).toHaveCount(5);
     await page.getByRole('button', { name: '打开 Agent Chat', exact: true }).click();
     await expect(page.getByLabel('Agent 执行记录')).toContainText('建立连接 · 已完成');
+    const drawer = page.locator('aside[aria-hidden="false"]');
+    const composer = drawer.getByRole('textbox');
+    scenario = 'persisted-error';
+    await composer.fill('让模型处理一个新问题');
+    await drawer.locator('button[aria-label="发送消息"]').click();
+    const errorMessage = drawer.getByText(friendlyError, { exact: true });
+    await expect(errorMessage).toBeVisible();
+    await expect(errorMessage).toHaveCSS('color', 'rgb(222, 222, 219)');
+    await expect(drawer).not.toContainText('GLM API');
+    await expect(drawer).not.toContainText('private provider diagnostics');
+    await expect(drawer).not.toContainText('partial response');
+    await expect(drawer.locator('[role="alert"]')).toHaveCount(0);
+    await expect(drawer.locator('button[aria-label="发送消息"] svg.animate-spin')).toHaveCount(0);
+    await page.reload();
+    await page.getByRole('button', { name: '打开 Agent Chat', exact: true }).click();
+    await expect(drawer.getByText(friendlyError, { exact: true })).toHaveCount(1);
+    await expect(drawer).not.toContainText('private provider diagnostics');
+    scenario = 'legacy-error';
+    await composer.fill('再试一次');
+    await drawer.locator('button[aria-label="发送消息"]').click();
+    await expect(drawer.getByText(friendlyError, { exact: true })).toHaveCount(2);
+    await expect(drawer).toContainText('再试一次');
+    await expect(drawer).not.toContainText('GLM API');
+    await expect(composer).toHaveText('');
+    await expect(drawer.locator('[role="alert"]')).toHaveCount(0);
     expect(errors).toEqual([]);
-    console.log('PASS: selected-node context, agent progress, canvas updates, autosave safety and persisted results; no generation submitted');
+    console.log('PASS: canvas agent updates, normal-color error turns, private error sanitization, persistence and legacy stream fallback');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

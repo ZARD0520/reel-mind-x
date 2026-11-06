@@ -7,6 +7,7 @@ import { AgentOperations } from './AgentOperations';
 import { CanvasChatComposer } from './CanvasChatComposer';
 import { CanvasChatHistory } from './CanvasChatHistory';
 import { CanvasChatMessage } from './CanvasChatMessage';
+import { chatErrorMessage } from '@reel/contracts/chat-errors';
 
 export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPrompt, initialReferences, userName, onInitialPromptConsumed, onFocusNode, onToggleFullscreen, onClose, agentBridge }: {
   agentBridge?: MutableRefObject<CanvasAgentBridge | null>;
@@ -28,7 +29,7 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [chat.detail.data?.messages.length, chat.pending?.answer, chat.pending?.operations]);
+  }, [chat.detail.data?.messages.length, chat.pending?.answer, chat.pending?.operations, chat.failedTurns.length, chat.error]);
 
   return (
     <aside aria-hidden={!open} className={`relative z-30 h-full shrink-0 overflow-hidden bg-[#111111] transition-[width,border-color] duration-300 ease-out ${open ? fullscreen ? 'w-full border-l border-white/[0.10]' : 'w-[min(420px,86vw)] border-l border-white/[0.10]' : 'w-0 border-l border-transparent'}`}>
@@ -43,23 +44,28 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
 
         <div className="reel-scroll min-h-0 flex-1 overflow-y-auto px-5 py-5">
           {chat.detail.isLoading && chat.activeId && !chat.pending && <div className="flex justify-center pt-8"><Loader2 className="h-5 w-5 animate-spin text-[#99999d]" /></div>}
-          {!chat.detail.data?.messages.length && !chat.pending && !chat.detail.isLoading && <div className="flex h-full flex-col items-center justify-center text-center"><h2 className="text-xl font-semibold text-[#dededb]">Hi～{userName}</h2><p className="mt-2 text-sm text-[#89898d]">今天想创作点什么？</p></div>}
+          {!chat.detail.data?.messages.length && !chat.pending && !chat.failedTurns.length && !chat.error && !chat.detail.isLoading && <div className="flex h-full flex-col items-center justify-center text-center"><h2 className="text-xl font-semibold text-[#dededb]">Hi～{userName}</h2><p className="mt-2 text-sm text-[#89898d]">今天想创作点什么？</p></div>}
           <div className="mx-auto flex max-w-3xl flex-col gap-5">
             {chat.detail.data?.messages.map((message) => <CanvasChatMessage key={message.id} role={message.role} content={message.content} references={message.references} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />)}
-            {!chat.pending && chat.detail.data?.agentRuns?.map(run => <div key={run.id}><AgentOperations operations={run.events} runStatus={run.status} />{run.error && <p className="mt-2 text-xs text-red-400">执行中断：{run.error}。已完成的画布操作已保留。</p>}</div>)}
+            {!chat.pending && chat.detail.data?.agentRuns?.map(run => <div key={run.id}><AgentOperations operations={run.events} runStatus={run.status} />{run.error && !chat.failedTurns.length && !chat.detail.data?.messages.some(message => message.role === 'assistant' && message.content === chatErrorMessage(run.error)) && <CanvasChatMessage role="assistant" content={chatErrorMessage(run.error)} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />}</div>)}
+            {chat.failedTurns.map(turn => <div key={turn.key} className="flex flex-col gap-5">
+              <CanvasChatMessage role="user" content={turn.prompt} references={turn.references} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />
+              <CanvasChatMessage role="assistant" content={turn.answer} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />
+            </div>)}
+            {chat.error && <CanvasChatMessage role="assistant" content={chatErrorMessage(chat.error)} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />}
             {chat.pending && <>
               <CanvasChatMessage role="user" content={chat.pending.prompt} references={chat.pending.references} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />
               <AgentOperations operations={chat.pending.operations} />
+              {chat.pending.status && <div role="status" className="flex items-center gap-2 text-xs text-[#99999d]"><Loader2 className="h-4 w-4 animate-spin" />{chat.pending.status}</div>}
               {chat.pending.answer
                 ? <CanvasChatMessage key={chat.pending.key} role="assistant" content={chat.pending.answer} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} typing complete={!!chat.pending.completed} onTypingComplete={chat.finishTurn} onTypingProgress={() => bottomRef.current?.scrollIntoView({ block: 'end' })} />
-                : <div className="flex items-center gap-2 text-sm text-[#99999d]"><Loader2 className="h-4 w-4 animate-spin" />思考中...</div>}
+                : !chat.pending.status && <div className="flex items-center gap-2 text-sm text-[#99999d]"><Loader2 className="h-4 w-4 animate-spin" />思考中...</div>}
             </>}
             <div ref={bottomRef} />
           </div>
         </div>
 
         <div className="shrink-0 px-4 pb-4">
-          {chat.error && <p role="alert" className="mb-2 px-1 text-xs text-red-400">{chat.error}</p>}
           <CanvasChatComposer chat={chat} nodes={nodes} canvasId={canvasId} onFocusNode={onFocusNode} />
         </div>
       </div>

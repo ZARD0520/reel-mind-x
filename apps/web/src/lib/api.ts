@@ -1,4 +1,5 @@
 import { SseDecoder } from '@reel/contracts/sse';
+import { chatErrorMessage } from '@reel/contracts/chat-errors';
 import type { AssetReference, CreateGenerationTaskInput, GenerationTask } from '@reel/contracts';
 import type { CanvasChatReference, Conversation } from '../features/canvas/chat-types';
 
@@ -122,7 +123,7 @@ export const api = {
       }),
     remove: (canvasId: string, conversationId: string) =>
       requestVoid(`/canvases/${canvasId}/conversations/${conversationId}`, { method: 'DELETE' }),
-    sendStream: async (canvasId: string, conversationId: string, content: string, references: CanvasChatReference[], onDelta: (text: string) => void, signal?: AbortSignal, agent?: { selectedNodeIds: string[]; onTool: (tool: import('../features/canvas/chat-types').AgentToolProgress) => void; onCanvas: (graph: import('@reel/contracts').CanvasGraph) => void }): Promise<Conversation> => {
+    sendStream: async (canvasId: string, conversationId: string, content: string, references: CanvasChatReference[], onDelta: (text: string) => void, signal?: AbortSignal, agent?: { selectedNodeIds: string[]; onTool: (tool: import('../features/canvas/chat-types').AgentToolProgress) => void; onCanvas: (graph: import('@reel/contracts').CanvasGraph) => void; onStatus?: (message: string) => void; onReplace?: (text: string) => void }): Promise<Conversation> => {
       const path = `/canvases/${canvasId}/conversations/${conversationId}/messages`;
       const response = await fetch(`${BASE}${path}`, {
         method: 'POST',
@@ -153,7 +154,9 @@ export const api = {
             if (event.event === 'done') completed = data as Conversation;
             if (event.event === 'tool') agent?.onTool(data as unknown as import('../features/canvas/chat-types').AgentToolProgress);
             if (event.event === 'canvas') agent?.onCanvas((data as unknown as { graph: import('@reel/contracts').CanvasGraph }).graph);
-            if (event.event === 'error') throw new Error((data as { message: string }).message);
+            if (event.event === 'status' && typeof (data as { message?: string }).message === 'string') agent?.onStatus?.((data as { message: string }).message);
+            if (event.event === 'replace') agent?.onReplace?.(chatErrorMessage((data as { text: string }).text));
+            if (event.event === 'error') throw new Error(chatErrorMessage((data as { message: string }).message));
           }
           if (done) break;
         }

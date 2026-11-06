@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { chatErrorMessage } from '@reel/contracts/chat-errors';
 import type { AgentToolProgress, CanvasAgentBridge, CanvasChatReference, Conversation, ConversationSummary } from './chat-types';
 
 type PendingTurn = {
@@ -11,6 +12,7 @@ type PendingTurn = {
   answer: string;
   completed: Conversation | null;
   operations: AgentToolProgress[];
+  status: string;
 };
 
 export function useCanvasChat(canvasId: string, initialPrompt: string, onInitialPromptConsumed: () => void, initialReferences: CanvasChatReference[] = [], agentBridge?: MutableRefObject<CanvasAgentBridge | null>) {
@@ -21,6 +23,7 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
   const [pending, setPending] = useState<PendingTurn | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [failedTurns, setFailedTurns] = useState<{ key: number; conversationId: string | null; prompt: string; references: CanvasChatReference[]; answer: string }[]>([]);
   const busyRef = useRef(false);
   const initialPromptStarted = useRef(false);
   const initialReferencesRef = useRef(initialReferences);
@@ -49,13 +52,14 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
     setError('');
     setDraft('');
     setReferences([]);
-    setPending({ key: ++turnCounter.current, prompt: text, references: selectedReferences, answer: '', completed: null, operations: [] });
+    setPending({ key: ++turnCounter.current, prompt: text, references: selectedReferences, answer: '', completed: null, operations: [], status: '' });
     const bridge = agentBridge?.current;
     let completed: Conversation | null = null;
+    let id = activeId;
+    const turnKey = turnCounter.current;
     try {
       if (agentBridge && !bridge) throw new Error('画布尚未就绪，请稍后重试');
       const context = await bridge?.prepare();
-      let id = activeId;
       if (!id) {
         const created = await api.canvasChat.create(canvasId) as ConversationSummary;
         id = created.id;
@@ -63,22 +67,22 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
         void queryClient.invalidateQueries({ queryKey: ['canvas-conversations', canvasId] });
       }
       const updated = await api.canvasChat.sendStream(canvasId, id, text, selectedReferences, (delta) => {
-        setPending((current) => current ? { ...current, answer: current.answer + delta } : current);
+        setPending((current) => current ? { ...current, status: '', answer: current.answer + delta } : current);
       }, undefined, {
         selectedNodeIds: context?.selectedNodeIds ?? [],
-        onTool: (tool) => setPending(current => current ? { ...current, operations: [...current.operations.filter(item => item.id !== tool.id), tool] } : current),
+        onTool: (tool) => setPending(current => current ? { ...current, status: '', operations: [...current.operations.filter(item => item.id !== tool.id), tool] } : current),
+        onStatus: (status) => setPending(current => current ? { ...current, status } : current),
+        onReplace: (answer) => setPending(current => current ? { ...current, status: '', answer } : current),
         onCanvas: (graph) => bridge?.apply(graph),
       });
       completed = updated;
     } catch (cause) {
       setPending(null);
-      setDraft(text);
-      setReferences(selectedReferences);
-      setError(cause instanceof Error ? cause.message : '发送失败，请重试');
+      setFailedTurns(current => [...current, { key: turnKey, conversationId: id, prompt: text, references: selectedReferences, answer: chatErrorMessage(cause) }]);
       void queryClient.invalidateQueries({ queryKey: ['canvas-conversation', canvasId] });
     } finally {
       try { await bridge?.release(); } catch { setError('画布同步失败，请刷新页面查看已执行结果'); }
-      if (completed) setPending((current) => current ? { ...current, completed } : current);
+      if (completed) setPending((current) => current ? { ...current, status: '', completed } : current);
       else { busyRef.current = false; setBusy(false); }
       void queryClient.invalidateQueries({ queryKey: ['credits'] });
     }
@@ -177,5 +181,5 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
   }, [activeId, canvasId, queryClient]);
 
   const title = detail.data?.title ?? list.data?.find((item) => item.id === activeId)?.title ?? '新对话';
-  return { activeId, list, detail, title, draft, setDraft, references, setReferences, pending, busy, error, send, finishTurn, createConversation, selectConversation, renameConversation, deleteConversation };
+  return { activeId, list, detail, title, draft, setDraft, references, setReferences, pending, failedTurns: failedTurns.filter(turn => turn.conversationId === activeId), busy, error, send, finishTurn, createConversation, selectConversation, renameConversation, deleteConversation };
 }

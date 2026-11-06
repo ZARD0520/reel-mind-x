@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Logger, Param, ParseUUIDPipe, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import { chatErrorMessage } from '@reel/contracts';
 import type { ServerResponse } from 'node:http';
 import { AuthGuard } from '../auth/auth.guard';
 import type { AuthUser } from '../auth/auth.types';
@@ -9,6 +10,7 @@ import { CanvasChatService } from './canvas-chat.service';
 @Controller('canvases/:canvasId/conversations')
 @UseGuards(AuthGuard)
 export class CanvasChatController {
+  private readonly logger = new Logger(CanvasChatController.name);
   constructor(private readonly chat: CanvasChatService) {}
 
   @Get()
@@ -74,7 +76,17 @@ export class CanvasChatController {
       }
     } catch (error) {
       if (!response.writableEnded && !abort.signal.aborted) {
-        response.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : '生成失败，请重试' })}\n\n`);
+        this.logger.error('Agent chat failed', error instanceof Error ? error.stack : undefined);
+        const message = chatErrorMessage(error);
+        try {
+          const conversation = await this.chat.saveErrorTurn(user.id, canvasId, conversationId, dto.content, dto.references, error);
+          if (!response.writableEnded && !abort.signal.aborted) {
+            response.write(`event: replace\ndata: ${JSON.stringify({ text: message })}\n\n`);
+            response.write(`event: done\ndata: ${JSON.stringify(conversation)}\n\n`);
+          }
+        } catch {
+          if (!response.writableEnded && !abort.signal.aborted) response.write(`event: error\ndata: ${JSON.stringify({ message })}\n\n`);
+        }
       }
     } finally {
       if (!response.writableEnded) response.end();

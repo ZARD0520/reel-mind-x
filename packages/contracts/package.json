@@ -24,6 +24,11 @@
       "browser": "./src/sse.ts",
       "default": "./dist/sse.js"
     },
+    "./chat-errors": {
+      "types": "./src/chat-errors.ts",
+      "browser": "./src/chat-errors.ts",
+      "default": "./dist/chat-errors.js"
+    },
     "./media-capabilities": {
       "types": "./src/media-capabilities.ts",
       "browser": "./src/media-capabilities.ts",

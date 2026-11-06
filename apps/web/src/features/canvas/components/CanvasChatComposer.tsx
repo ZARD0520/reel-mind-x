@@ -6,7 +6,7 @@ import { referenceIds, referenceToken } from '../inline-references';
 import { ChatAttachMenu } from './ChatAttachMenu';
 import { InlineReferenceInput, type InlineReferenceInputHandle } from './InlineReferenceInput';
 
-export function CanvasChatComposer({ chat, nodes, canvasId }: {
+export function CanvasChatComposer({ chat, nodes, canvasId, onFocusNode }: {
   chat: ReturnType<typeof useCanvasChat>;
   nodes: CanvasChatReference[];
   canvasId: string;
@@ -49,7 +49,7 @@ export function CanvasChatComposer({ chat, nodes, canvasId }: {
   }
 
   return <form onSubmit={(event) => { event.preventDefault(); submit(); }} className="relative mx-auto max-w-3xl rounded-2xl border border-white/[0.12] bg-[#1d1d1d] p-3 shadow-[0_14px_38px_rgba(0,0,0,0.28)] focus-within:border-white/[0.22]">
-    <InlineReferenceInput ref={inputRef} variant="chat" value={chat.draft} candidates={[...nodes, ...attachments]} maxReferences={8} onChange={(value) => { chat.setDraft(value); chat.setReferences(nodes.filter((node) => referenceIds(value).includes(node.id))); }} onSubmit={submit} placeholder="随意发挥你的想象，输入 @ 引用画布节点～" label="发送消息" />
+    <InlineReferenceInput ref={inputRef} variant="chat" value={chat.draft} candidates={[...nodes, ...attachments]} maxReferences={8} onFocusReference={(id) => { if (nodes.some(node => node.id === id)) onFocusNode(id); }} onChange={(value) => { chat.setDraft(value); chat.setReferences(nodes.filter((node) => referenceIds(value).includes(node.id))); }} onSubmit={submit} placeholder="随意发挥你的想象，输入 @ 引用画布节点～" label="发送消息" />
     <div className="mt-2 flex items-center justify-between">
       <ChatAttachMenu canvasId={canvasId} uploads={myUploads} draftIds={draftIds} onPick={handlePick} onUploaded={handleUploaded} onConfirmPicks={handleConfirmPicks} disabled={chat.busy} />
       <button type="submit" disabled={!chat.draft.trim() || chat.busy} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f3f3f0] text-[#111111] disabled:bg-white/[0.10] disabled:text-white/30" aria-label="发送消息">{chat.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}</button>

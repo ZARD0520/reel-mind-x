@@ -166,6 +166,11 @@ const { randomUUID } = require('node:crypto');
     await chat.pressSequentially('@Source');
     await chat.press('Enter');
     await expect(chat).toHaveText('compare Source with result');
+    // Clicking a draft reference restores the canvas navigation behavior.
+    await chat.locator('[data-node-id="source"]').click();
+    await expect(page.locator('.react-flow__node[data-id="source"]')).toHaveClass(/selected/);
+    await expect(chat).toHaveText('compare Source with result');
+    await chat.focus();
     await chat.press('Enter');
     await expect.poll(() => sent?.references?.map((item) => item.id)).toEqual(['source']);
     expect(sent.content).toBe('compare @[Source](node:source) with result');
@@ -202,7 +207,10 @@ const { randomUUID } = require('node:crypto');
     expect(await videoPreview.evaluate((element) => element.autoplay && element.muted && element.loop)).toBe(true);
     await page.mouse.move(10, 10);
     await expect(page.getByRole('tooltip', { name: /^\u9884\u89c8\uff1a/ })).toHaveCount(0);
+    // The remove button still removes the mention without locating its node.
+    await expect(page.locator('.react-flow__node[data-id="source"]')).toHaveClass(/selected/);
     await chat.locator('[data-node-id="photo"] button').click();
+    await expect(page.locator('.react-flow__node[data-id="source"]')).toHaveClass(/selected/);
     await expect(chat.locator('[data-node-id="photo"]')).toHaveCount(0);
     await expect(chips).toHaveCount(2);
     expect(errors).toEqual([]);

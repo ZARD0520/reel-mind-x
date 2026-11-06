@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { VIDEO_SIZES, validImageSizeForModel } from './media-capabilities';
 export * from './media-capabilities';
 export * from './credits';
+export * from './chat-errors';
 export { MODEL_BUSY_MESSAGE } from './generation';
 
 /**

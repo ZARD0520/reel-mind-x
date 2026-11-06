@@ -8,9 +8,8 @@ export function AgentOperations({ operations, runStatus }: { operations: AgentTo
     {latest.map(operation => {
       const interrupted = operation.status === 'running' && !!runStatus && runStatus !== 'running';
       return <div key={`${operation.runId}-${operation.id}`} className="flex items-start gap-2">
-      {operation.status === 'running' && !interrupted ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : operation.status === 'failed' || interrupted ? <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400" /> : <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />}
+      {operation.status === 'running' && !interrupted ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : operation.status === 'failed' || interrupted ? <AlertCircle className="h-3.5 w-3.5 shrink-0" /> : <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />}
       <span>{operation.title} · {interrupted ? '已中断' : operation.status === 'running' ? '执行中' : operation.status === 'failed' ? '失败' : '已完成'}
-        {operation.status === 'failed' && operation.result && <span className="mt-1 block break-words text-red-400">{typeof operation.result.message === 'string' ? operation.result.message : JSON.stringify(operation.result.message)}</span>}
       </span>
     </div>; })}
   </div>;
