@@ -77,6 +77,7 @@ model CanvasConversation {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   messages  CanvasChatMessage[]
+  agentRuns CanvasAgentRun[]
 
   @@index([canvasId, updatedAt])
   @@index([userId, updatedAt])
@@ -94,6 +95,20 @@ model CanvasChatMessage {
 
   @@index([conversationId, createdAt])
   @@map("canvas_chat_messages")
+}
+
+model CanvasAgentRun {
+  id             String @id @default(uuid())
+  conversationId String
+  conversation   CanvasConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  status         String @default("running")
+  events         Json @default("[]")
+  error          String? @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([conversationId, createdAt])
+  @@map("canvas_agent_runs")
 }
 
 model Asset {

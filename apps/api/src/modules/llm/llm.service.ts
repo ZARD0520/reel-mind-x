@@ -6,6 +6,7 @@ import {
   type ChatMessage,
   type ChatOptions,
   type ChatResult,
+  type ChatStreamEvent,
   type LlmProvider,
 } from '@reel/llm';
 import type { Env } from '../../config/env';
@@ -64,5 +65,9 @@ export class LlmService {
     const impl = this.providers.get(provider);
     if (!impl) throw new LlmError(`未注册的 LLM provider: ${provider}`);
     return impl.chatStream(messages, options);
+  }
+
+  chatStreamEvents(messages: ChatMessage[], options?: ChatOptions): AsyncIterable<ChatStreamEvent> {
+    return this.providers.get(this.defaultProvider)!.chatStreamEvents(messages, options);
   }
 }

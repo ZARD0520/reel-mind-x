@@ -600,7 +600,10 @@ test(
               yield '测试回答';
             },
           };
-          const chat = new CanvasChatService(prisma, llm, credits, config);
+          const agent = { run: async function* (_scope, _conversationId, messages, model, signal) {
+            for await (const text of llm.chatStream(messages, { model, signal })) yield { event: 'delta', data: { text } };
+          } };
+          const chat = new CanvasChatService(prisma, llm, credits, config, agent);
           const conversation = await chat.create(fixture.id, scope.id);
           const signal = new AbortController().signal;
           const events = [];

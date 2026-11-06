@@ -5,7 +5,11 @@
  */
 
 /** 对话角色 */
-export type ChatRole = 'system' | 'user' | 'assistant';
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
+
+export type ChatToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
+export type ChatTool = { type: 'function'; function: { name: string; description?: string; parameters: Record<string, unknown> } };
+export type ChatStreamEvent = { type: 'text'; text: string } | { type: 'tool_calls'; calls: ChatToolCall[] };
 
 /** 单条对话消息 */
 export interface ChatMessage {
@@ -16,6 +20,8 @@ export interface ChatMessage {
    * 纯文本模型会忽略；provider 负责映射为厂商的多模态消息格式。
    */
   images?: string[];
+  tool_calls?: ChatToolCall[];
+  tool_call_id?: string;
 }
 
 /** 生成参数（各 provider 自行映射到厂商字段） */
@@ -28,6 +34,7 @@ export interface ChatOptions {
   model?: string;
   /** 中断信号 */
   signal?: AbortSignal;
+  tools?: ChatTool[];
 }
 
 /** token 消耗统计 */
@@ -57,6 +64,7 @@ export interface LlmProvider {
   /** 发起一次对话补全 */
   chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResult>;
   chatStream(messages: ChatMessage[], options?: ChatOptions): AsyncIterable<string>;
+  chatStreamEvents(messages: ChatMessage[], options?: ChatOptions): AsyncIterable<ChatStreamEvent>;
 }
 
 /** provider 初始化配置 */

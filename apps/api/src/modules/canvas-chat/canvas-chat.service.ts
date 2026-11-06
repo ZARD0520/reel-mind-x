@@ -8,6 +8,7 @@ import { MAX_REFERENCE_IMAGES, readLocalImageAsDataUrl } from '../llm/asset-imag
 import { CanvasChatReferenceSchema, type CanvasChatReference } from './canvas-chat.dto';
 import { CreditsService } from '../credits/credits.service';
 import type { Env } from '../../config/env';
+import { CanvasAgentService, CREATIVE_AGENT_PROMPT } from '../canvas-agent/canvas-agent.service';
 
 const CHAT_MODEL = 'glm-4.6v-flash';
 
@@ -43,6 +44,7 @@ export class CanvasChatService {
     private readonly llm: LlmService,
     private readonly credits: CreditsService,
     private readonly config: ConfigService<Env, true>,
+    private readonly agent: CanvasAgentService,
   ) {}
 
   private async requireCanvas(userId: string, canvasId: string) {
@@ -92,6 +94,7 @@ export class CanvasChatService {
     });
     return {
       ...conversation,
+      agentRuns: await this.prisma.canvasAgentRun.findMany({ where: { conversationId }, orderBy: { createdAt: 'asc' }, select: { id: true, status: true, events: true, error: true } }),
       messages: messages.map((message) => ({
         ...message,
         references: CanvasChatReferenceSchema.array().catch([]).parse(message.references),
@@ -120,6 +123,7 @@ export class CanvasChatService {
     content: string,
     references: CanvasChatReference[],
     signal: AbortSignal,
+    selectedNodeIds: string[] = [],
   ) {
     const conversation = await this.requireConversation(userId, canvasId, conversationId);
     const history = await this.prisma.canvasChatMessage.findMany({
@@ -174,7 +178,7 @@ export class CanvasChatService {
       {
         role: 'system',
         content:
-          '你是一个协助用户进行创意构思和内容创作的助手。根据用户的问题自然、清晰地回答。引用的文本节点可直接阅读。' +
+          CREATIVE_AGENT_PROMPT + '\n当前选中的节点ID：' + JSON.stringify(selectedNodeIds) + '\n引用的文本节点可直接阅读。' +
           (referenceImages.length
             ? '用户引用的图片节点画面已作为图片附在本条消息中，可以直接查看、描述和分析。视频节点只能依据节点标题、文字内容或生成提示词回答。'
             : '注意：本条消息没有附带任何图片，你看不到任何画面。如果用户询问图片或视频的内容，请明确说明你无法看到画面，只能依据节点标题、文字内容或生成提示词推断，不要编造画面细节。'),
@@ -199,9 +203,9 @@ export class CanvasChatService {
     );
     let settled = false;
     try {
-      for await (const text of this.llm.chatStream(messages, { model: CHAT_MODEL, signal })) {
-        answer += text;
-        yield { event: 'delta', data: { text } };
+      for await (const event of this.agent.run({ userId, canvasId, selectedNodeIds }, conversationId, messages, CHAT_MODEL, signal)) {
+        if (event.event === 'delta') answer += String(event.data.text ?? '');
+        yield event;
       }
       answer = answer.trim();
       if (!answer || signal.aborted) throw new Error('Generation was interrupted');

@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef } from 'react';
+import type { MutableRefObject } from 'react';
 import { Loader2, Maximize2, Minimize2, X } from 'lucide-react';
 import { useCanvasChat } from '../useCanvasChat';
-import type { CanvasChatReference } from '../chat-types';
+import type { CanvasAgentBridge, CanvasChatReference } from '../chat-types';
+import { AgentOperations } from './AgentOperations';
 import { CanvasChatComposer } from './CanvasChatComposer';
 import { CanvasChatHistory } from './CanvasChatHistory';
 import { CanvasChatMessage } from './CanvasChatMessage';
 
-export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPrompt, initialReferences, userName, onInitialPromptConsumed, onFocusNode, onToggleFullscreen, onClose }: {
+export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPrompt, initialReferences, userName, onInitialPromptConsumed, onFocusNode, onToggleFullscreen, onClose, agentBridge }: {
+  agentBridge?: MutableRefObject<CanvasAgentBridge | null>;
   canvasId: string;
   nodes: CanvasChatReference[];
   open: boolean;
@@ -19,13 +22,13 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
   onToggleFullscreen: () => void;
   onClose: () => void;
 }) {
-  const chat = useCanvasChat(canvasId, initialPrompt, onInitialPromptConsumed, initialReferences);
+  const chat = useCanvasChat(canvasId, initialPrompt, onInitialPromptConsumed, initialReferences, agentBridge);
   const availableNodeIds = useMemo(() => new Set(nodes.map((node) => node.id)), [nodes]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [chat.detail.data?.messages.length, chat.pending?.answer]);
+  }, [chat.detail.data?.messages.length, chat.pending?.answer, chat.pending?.operations]);
 
   return (
     <aside aria-hidden={!open} className={`relative z-30 h-full shrink-0 overflow-hidden bg-[#111111] transition-[width,border-color] duration-300 ease-out ${open ? fullscreen ? 'w-full border-l border-white/[0.10]' : 'w-[min(420px,86vw)] border-l border-white/[0.10]' : 'w-0 border-l border-transparent'}`}>
@@ -43,8 +46,10 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
           {!chat.detail.data?.messages.length && !chat.pending && !chat.detail.isLoading && <div className="flex h-full flex-col items-center justify-center text-center"><h2 className="text-xl font-semibold text-[#dededb]">Hi～{userName}</h2><p className="mt-2 text-sm text-[#89898d]">今天想创作点什么？</p></div>}
           <div className="mx-auto flex max-w-3xl flex-col gap-5">
             {chat.detail.data?.messages.map((message) => <CanvasChatMessage key={message.id} role={message.role} content={message.content} references={message.references} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />)}
+            {!chat.pending && chat.detail.data?.agentRuns?.map(run => <div key={run.id}><AgentOperations operations={run.events} runStatus={run.status} />{run.error && <p className="mt-2 text-xs text-red-400">执行中断：{run.error}。已完成的画布操作已保留。</p>}</div>)}
             {chat.pending && <>
               <CanvasChatMessage role="user" content={chat.pending.prompt} references={chat.pending.references} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />
+              <AgentOperations operations={chat.pending.operations} />
               {chat.pending.answer
                 ? <CanvasChatMessage key={chat.pending.key} role="assistant" content={chat.pending.answer} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} typing complete={!!chat.pending.completed} onTypingComplete={chat.finishTurn} onTypingProgress={() => bottomRef.current?.scrollIntoView({ block: 'end' })} />
                 : <div className="flex items-center gap-2 text-sm text-[#99999d]"><Loader2 className="h-4 w-4 animate-spin" />思考中...</div>}

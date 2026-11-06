@@ -17,5 +17,14 @@ export type ConversationSummary = {
 };
 
 export type Conversation = ConversationSummary & {
+  agentRuns?: { id: string; status: string; events: AgentToolProgress[]; error?: string | null }[];
   messages: { id: string; role: 'user' | 'assistant'; content: string; references: CanvasChatReference[]; createdAt: string }[];
+};
+import type { CanvasGraph } from '@reel/contracts';
+
+export type AgentToolProgress = { id: string; name: string; title: string; status: 'running' | 'completed' | 'failed'; result?: Record<string, unknown>; runId: string };
+export type CanvasAgentBridge = {
+  prepare: () => Promise<{ selectedNodeIds: string[] }>;
+  apply: (graph: CanvasGraph) => void;
+  release: () => Promise<void>;
 };

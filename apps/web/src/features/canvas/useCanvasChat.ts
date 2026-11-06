@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { MutableRefObject } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import type { CanvasChatReference, Conversation, ConversationSummary } from './chat-types';
+import type { AgentToolProgress, CanvasAgentBridge, CanvasChatReference, Conversation, ConversationSummary } from './chat-types';
 
 type PendingTurn = {
   key: number;
@@ -9,9 +10,10 @@ type PendingTurn = {
   references: CanvasChatReference[];
   answer: string;
   completed: Conversation | null;
+  operations: AgentToolProgress[];
 };
 
-export function useCanvasChat(canvasId: string, initialPrompt: string, onInitialPromptConsumed: () => void, initialReferences: CanvasChatReference[] = []) {
+export function useCanvasChat(canvasId: string, initialPrompt: string, onInitialPromptConsumed: () => void, initialReferences: CanvasChatReference[] = [], agentBridge?: MutableRefObject<CanvasAgentBridge | null>) {
   const queryClient = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -47,8 +49,12 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
     setError('');
     setDraft('');
     setReferences([]);
-    setPending({ key: ++turnCounter.current, prompt: text, references: selectedReferences, answer: '', completed: null });
+    setPending({ key: ++turnCounter.current, prompt: text, references: selectedReferences, answer: '', completed: null, operations: [] });
+    const bridge = agentBridge?.current;
+    let completed: Conversation | null = null;
     try {
+      if (agentBridge && !bridge) throw new Error('画布尚未就绪，请稍后重试');
+      const context = await bridge?.prepare();
       let id = activeId;
       if (!id) {
         const created = await api.canvasChat.create(canvasId) as ConversationSummary;
@@ -58,19 +64,25 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
       }
       const updated = await api.canvasChat.sendStream(canvasId, id, text, selectedReferences, (delta) => {
         setPending((current) => current ? { ...current, answer: current.answer + delta } : current);
+      }, undefined, {
+        selectedNodeIds: context?.selectedNodeIds ?? [],
+        onTool: (tool) => setPending(current => current ? { ...current, operations: [...current.operations.filter(item => item.id !== tool.id), tool] } : current),
+        onCanvas: (graph) => bridge?.apply(graph),
       });
-      setPending((current) => current ? { ...current, completed: updated } : current);
+      completed = updated;
     } catch (cause) {
       setPending(null);
       setDraft(text);
       setReferences(selectedReferences);
       setError(cause instanceof Error ? cause.message : '发送失败，请重试');
-      busyRef.current = false;
-      setBusy(false);
+      void queryClient.invalidateQueries({ queryKey: ['canvas-conversation', canvasId] });
     } finally {
+      try { await bridge?.release(); } catch { setError('画布同步失败，请刷新页面查看已执行结果'); }
+      if (completed) setPending((current) => current ? { ...current, completed } : current);
+      else { busyRef.current = false; setBusy(false); }
       void queryClient.invalidateQueries({ queryKey: ['credits'] });
     }
-  }, [activeId, canvasId, queryClient, references]);
+  }, [activeId, canvasId, queryClient, references, agentBridge]);
 
   useEffect(() => {
     if (!initialPrompt.trim() || initialPromptStarted.current) return;

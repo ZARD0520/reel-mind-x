@@ -103,6 +103,8 @@ import { CanvasChatDrawer } from '../features/canvas/components/CanvasChatDrawer
 import { InlineReferenceInput, type InlineReferenceInputHandle } from '../features/canvas/components/InlineReferenceInput';
 import { readableReferences, referenceIds, referenceToken, splitReferences } from '../features/canvas/inline-references';
 import type { CanvasChatReference } from '../features/canvas/chat-types';
+import type { CanvasAgentBridge } from '../features/canvas/chat-types';
+import type { MutableRefObject } from 'react';
 import { Select, type SelectOption } from '../components/ui/Select';
 import { ReferencePreview } from '../components/ui/ReferencePreview';
 import {
@@ -1432,7 +1434,9 @@ function InfiniteCanvas({
   canvas,
   onChatNodesChange,
   focusRequest,
+  agentBridge,
 }: {
+  agentBridge: MutableRefObject<CanvasAgentBridge | null>;
   canvas: Canvas;
   onChatNodesChange: (nodes: CanvasChatReference[]) => void;
   focusRequest: { id: string; sequence: number } | null;
@@ -1444,6 +1448,12 @@ function InfiniteCanvas({
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const viewportRef = useRef<Viewport>(canvas.graph.viewport);
   const initializedRef = useRef(false);
+  const agentBusyRef = useRef(false);
+  const agentPreparedRef = useRef(false);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const lastSavedGraphRef = useRef(JSON.stringify(canvas.graph));
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>(
     canvas.graph.nodes.map(normalizeNode),
   );
@@ -1508,6 +1518,7 @@ function InfiniteCanvas({
 
   useEffect(() => {
     const onHistoryKey = (event: KeyboardEvent) => {
+      if (agentBusyRef.current) return;
       if (event.defaultPrevented || event.isComposing || !(event.ctrlKey || event.metaKey) || event.altKey) return;
       if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable], [role="dialog"]')) return;
       // Dialogs rendered in a portal must not send shortcuts through to the canvas.
@@ -1618,8 +1629,50 @@ function InfiniteCanvas({
     },
     onError: () => toast.error('画布保存失败，请稍后重试'),
   });
-  const saveGraphRef = useRef(saveGraph.mutate);
-  saveGraphRef.current = saveGraph.mutate;
+
+  useLayoutEffect(() => {
+    const apply = (graph: CanvasGraph) => {
+      const selected = new Set(nodes.filter(node => node.selected).map(node => node.id));
+      lastSavedGraphRef.current = JSON.stringify(graph);
+      setNodes(graph.nodes.map(node => ({ ...normalizeNode(node), selected: selected.has(node.id) })));
+      setEdges(graph.edges.map(normalizeEdge));
+      queryClient.setQueryData<Canvas>(['canvas', canvas.id], current => current ? { ...current, graph } : current);
+    };
+    agentBridge.current = {
+      prepare: async () => {
+        agentBusyRef.current = true;
+        setAgentBusy(true);
+        if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+        await saveQueueRef.current;
+        const graph = serializeCanvasGraph(nodes, edges, viewportRef.current);
+        await saveGraph.mutateAsync(graph);
+        lastSavedGraphRef.current = JSON.stringify(graph);
+        agentPreparedRef.current = true;
+        return { selectedNodeIds: nodes.filter(node => node.selected).map(node => node.id) };
+      },
+      apply,
+      release: async () => {
+        try {
+          if (agentPreparedRef.current) {
+            const latest = await api.canvases.get(canvas.id) as Canvas;
+            apply(latest.graph);
+            queryClient.setQueryData(['canvas', canvas.id], latest);
+          }
+        } finally {
+          agentPreparedRef.current = false;
+          agentBusyRef.current = false;
+          setAgentBusy(false);
+        }
+      },
+    };
+  });
+
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (agentBusy) wrapper?.setAttribute('inert', '');
+    else wrapper?.removeAttribute('inert');
+    return () => wrapper?.removeAttribute('inert');
+  }, [agentBusy]);
 
 
   const editComposition = useMutation<Project, Error, string>({
@@ -1666,11 +1719,20 @@ function InfiniteCanvas({
       initializedRef.current = true;
       return;
     }
+    if (agentBusyRef.current) return;
+    const graph = serializeCanvasGraph(nodes, edges, viewportRef.current);
+    if (JSON.stringify(graph) === lastSavedGraphRef.current) return;
     const timeout = window.setTimeout(() => {
-      saveGraphRef.current(serializeCanvasGraph(nodes, edges, viewportRef.current));
+      if (agentBusyRef.current) return;
+      saveQueueRef.current = saveQueueRef.current.catch(() => undefined).then(async () => {
+        if (agentBusyRef.current) return;
+        await saveGraph.mutateAsync(graph);
+        lastSavedGraphRef.current = JSON.stringify(graph);
+      }).catch(() => undefined);
     }, 800);
+    autosaveTimerRef.current = timeout;
     return () => window.clearTimeout(timeout);
-  }, [edges, nodes, viewportRevision]);
+  }, [edges, nodes, viewportRevision, agentBusy]);
 
   const isValidConnection = useCallback(
     (connection: Connection | Edge) => {
@@ -2102,6 +2164,7 @@ function InfiniteCanvas({
         setShowAddMenu(false);
         upload.mutate({ file, nodeId: uuid() });
       }} />
+      {agentBusy && <div role="status" className="absolute left-1/2 top-5 z-50 -translate-x-1/2 rounded-xl border border-white/15 bg-[#242424] px-4 py-2 text-xs text-[#b9b9bd]">Agent 正在处理画布…</div>}
       <CanvasIdContext.Provider value={canvas.id}>
         <SmartEditContext.Provider value={{ open: id => editComposition.mutate(id), pending: editComposition.isPending }}>
         <DependencySelectionContext.Provider
@@ -2717,6 +2780,7 @@ export function CanvasPage() {
   const [isAgentChatOpen, setIsAgentChatOpen] = useState(() => initialAgentPrompt.length > 0);
   const [isAgentChatFullscreen, setIsAgentChatFullscreen] = useState(false);
   const [chatNodes, setChatNodes] = useState<CanvasChatReference[]>([]);
+  const agentBridge = useRef<CanvasAgentBridge | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ id: string; sequence: number } | null>(null);
   const focusSequence = useRef(0);
   const focusTimer = useRef<number | null>(null);
@@ -2823,7 +2887,7 @@ export function CanvasPage() {
   return (
     <div className="flex h-full overflow-hidden overscroll-x-none bg-[#050505] text-[#f7f7f2]">
       <div className="relative h-full min-w-0 flex-1 overflow-hidden">
-        <InfiniteCanvas key={canvas.data.id} canvas={canvas.data} onChatNodesChange={setChatNodes} focusRequest={focusRequest} />
+        <InfiniteCanvas key={canvas.data.id} canvas={canvas.data} onChatNodesChange={setChatNodes} focusRequest={focusRequest} agentBridge={agentBridge} />
 
         <div
           className={`absolute left-5 top-5 z-10 flex items-center gap-3 transition-opacity `}
@@ -2883,6 +2947,7 @@ export function CanvasPage() {
       </div>
 
       <CanvasChatDrawer
+        agentBridge={agentBridge}
         key={canvas.data.id}
         canvasId={canvas.data.id}
         nodes={chatNodes}

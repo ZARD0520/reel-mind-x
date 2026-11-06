@@ -2,6 +2,8 @@ import type {
   ChatMessage,
   ChatOptions,
   ChatResult,
+  ChatStreamEvent,
+  ChatToolCall,
   LlmProvider,
   LlmProviderConfig,
 } from '../types';
@@ -123,6 +125,12 @@ export class GlmProvider implements LlmProvider {
   }
 
   async *chatStream(messages: ChatMessage[], options: ChatOptions = {}): AsyncIterable<string> {
+    for await (const event of this.chatStreamEvents(messages, options)) {
+      if (event.type === 'text') yield event.text;
+    }
+  }
+
+  async *chatStreamEvents(messages: ChatMessage[], options: ChatOptions = {}): AsyncIterable<ChatStreamEvent> {
     const model = options.model ?? this.model;
     let response: Response;
     try {
@@ -136,6 +144,8 @@ export class GlmProvider implements LlmProvider {
           model,
           messages: messages.map((m) => ({
             role: m.role,
+            ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+            ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
             // 与 chat 一致：视觉模型（GLM-4V 系列）要求 content 为 text/image_url 分段数组
             content: m.images?.length
               ? [
@@ -145,6 +155,7 @@ export class GlmProvider implements LlmProvider {
               : m.content,
           })),
           stream: true,
+          ...(options.tools?.length ? { tools: options.tools, tool_choice: 'auto', thinking: { type: 'disabled' } } : {}),
           ...(options.temperature !== undefined && { temperature: options.temperature }),
           ...(clampMaxTokens(model, options.maxTokens) !== undefined && {
             max_tokens: clampMaxTokens(model, options.maxTokens),
@@ -165,6 +176,7 @@ export class GlmProvider implements LlmProvider {
     const decoder = new TextDecoder();
     const sse = new SseDecoder();
     let finished = false;
+    const calls = new Map<number, ChatToolCall>();
     try {
       while (!finished) {
         const { done, value } = await reader.read();
@@ -176,7 +188,7 @@ export class GlmProvider implements LlmProvider {
             finished = true;
             break;
           }
-          let data: { choices?: Array<{ delta?: { content?: string } }>; error?: { message?: string } };
+          let data: { choices?: Array<{ finish_reason?: string; delta?: { content?: string; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> } }>; error?: { message?: string } };
           try {
             data = JSON.parse(event.data) as typeof data;
           } catch {
@@ -184,11 +196,27 @@ export class GlmProvider implements LlmProvider {
           }
           if (data.error) throw new LlmError(data.error.message || 'GLM 流式响应失败');
           const content = data.choices?.[0]?.delta?.content;
-          if (content) yield content;
+          if (content) yield { type: 'text', text: content };
+          for (const part of data.choices?.[0]?.delta?.tool_calls ?? []) {
+            if (!Number.isInteger(part.index) || part.index < 0 || part.index >= 20) throw new LlmError('模型返回的工具调用数量或索引无效');
+            const call = calls.get(part.index) ?? { id: '', type: 'function' as const, function: { name: '', arguments: '' } };
+            if (part.id) call.id = part.id;
+            if (part.function?.name) call.function.name += part.function.name;
+            if (call.function.name.length > 100) throw new LlmError('模型返回的工具名称无效');
+            if (part.function?.arguments) call.function.arguments += part.function.arguments;
+            if (call.function.arguments.length > 100000) throw new LlmError('工具参数超出大小限制');
+            calls.set(part.index, call);
+          }
+          if (data.choices?.[0]?.finish_reason === 'length') throw new LlmError('模型输出达到长度限制，请缩小本次任务范围');
         }
         if (done) break;
       }
       if (!finished) throw new LlmError('GLM 流式响应中断');
+      if (calls.size) {
+        const complete = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
+        if (complete.some(call => !call.id || !call.function.name)) throw new LlmError('模型返回的工具调用不完整');
+        yield { type: 'tool_calls', calls: complete };
+      }
     } finally {
       await reader.cancel().catch(() => undefined);
     }
