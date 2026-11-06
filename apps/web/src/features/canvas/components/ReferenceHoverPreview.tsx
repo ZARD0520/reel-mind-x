@@ -76,7 +76,7 @@ function ReferenceHoverPreview({ reference, anchor, available, variant, onMouseE
     className={`nodrag nopan nowheel fixed z-[10000] max-w-[calc(100vw-24px)] overflow-hidden ${variant === 'node'
       ? 'w-[200px] rounded-lg border border-white/15 bg-[#252525] p-2 text-white shadow-lg'
       : 'w-60 rounded-xl border border-white/[0.18] bg-[#202020] p-1.5 text-[#dededb] shadow-[0_16px_40px_rgba(0,0,0,0.55)]'}`} style={position}>
-    {!available ? <p className="text-xs leading-5">节点已删除</p> : reference.kind === 'text'
+    {!available ? <p className="text-xs leading-5">{variant === 'node' ? '该资产已失效' : '节点已删除'}</p> : reference.kind === 'text'
       ? <div className="reel-scroll max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-[#dedee0]">{readableReferences(reference.content || reference.prompt || '暂无文本内容')}</div>
       : source ? reference.kind === 'image'
         ? <img src={source} alt={reference.title} className={variant === 'node' ? 'max-h-32 w-full rounded object-contain' : 'h-36 w-full rounded-lg bg-black object-contain'} />

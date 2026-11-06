@@ -637,6 +637,13 @@ function NodeGenerationPrompt({
   const submissionRef = useRef(false);
   const dependencySelection = useContext(DependencySelectionContext);
   const promptInputRef = useRef<InlineReferenceInputHandle>(null);
+  const [promptExpanded, setPromptExpanded] = useState(false);
+  const promptPanelRef = useRef<HTMLFormElement>(null);
+  const previousPromptExpanded = useRef(false);
+  useLayoutEffect(() => {
+    if (promptExpanded || previousPromptExpanded.current) promptInputRef.current?.focus();
+    previousPromptExpanded.current = promptExpanded;
+  }, [promptExpanded]);
   const prompt = data.prompt ?? '';
   const [model, setModel] = useState<CanvasModelId>(normalizeCanvasModel(kind === 'audio' ? 'text' : kind, data.model));
   const [generationCount, setGenerationCount] = useState<GenerationCount>(
@@ -762,15 +769,27 @@ function NodeGenerationPrompt({
     const reference = candidates.find((item) => item.id === id);
     if (reference) promptInputRef.current?.insert(reference);
   };
-  const removeReferenceFromInput = (id: string) => {
-    const next = splitReferences(prompt).filter((part) => part.id !== id).map((part) => part.text).join('');
-    updateNodeData(nodeId, { prompt: next, referenceNodeIds: referenceIds(next) });
-  };
 
-  return (
+  const promptPanel = (
     <form
+      ref={promptPanelRef}
       onSubmit={submit}
-      className={`nodrag nopan nowheel rounded-2xl border border-white/[0.14] bg-[#242424] p-2.5 shadow-[0_18px_48px_rgba(0,0,0,0.48)] ${kind === 'video' ? 'w-[640px]' : kind === 'image' ? 'w-[460px]' : 'w-[360px]'}`}
+      role={promptExpanded ? 'dialog' : undefined}
+      aria-modal={promptExpanded ? true : undefined}
+      aria-label={promptExpanded ? '编辑节点提示词' : undefined}
+      className={`nodrag nopan nowheel rounded-2xl border border-white/[0.14] bg-[#242424] p-2.5 shadow-[0_18px_48px_rgba(0,0,0,0.48)] ${promptExpanded ? 'reel-scroll max-h-[90vh] w-[min(900px,calc(100vw-48px))] overflow-y-auto' : kind === 'video' ? 'w-[640px]' : kind === 'image' ? 'w-[460px]' : 'w-[360px]'}`}
+      onKeyDown={(event) => {
+        if (!promptExpanded) return;
+        event.stopPropagation();
+        if (event.key === 'Escape') { event.preventDefault(); setPromptExpanded(false); }
+        if (event.key === 'Tab') {
+          const controls = Array.from(promptPanelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"], [contenteditable="true"]') ?? []);
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }
+      }}
       onPointerDown={(event) => event.stopPropagation()}
       onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); }}
       onDoubleClick={(event) => event.stopPropagation()}
@@ -805,7 +824,6 @@ function NodeGenerationPrompt({
                   type="button"
                   onClick={(event) => {
                     event.stopPropagation();
-                    removeReferenceFromInput(node.id);
                     dependencySelection.remove(edge.id);
                   }}
                   className="-mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[#8f8f94] opacity-0 transition-opacity hover:bg-white/[0.08] hover:text-white group-hover/reference:opacity-100"
@@ -836,9 +854,15 @@ function NodeGenerationPrompt({
         >
           <Plus className="h-4 w-4" />
         </button>
+        <button type="button" onClick={() => setPromptExpanded((expanded) => !expanded)}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[#b8b8bd] hover:bg-white/[0.08] hover:text-white"
+          aria-label={promptExpanded ? '缩小提示词输入框' : '扩大提示词输入框'} title={promptExpanded ? '缩小' : '扩大'}>
+          {promptExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+        </button>
       </div>
       <div className="flex min-h-14 w-full px-2 py-1">
         <InlineReferenceInput ref={promptInputRef} value={prompt} candidates={candidates} referenceItems={referenceItems}
+          editorClassName={promptExpanded ? '!h-[50vh] !max-h-[60vh]' : undefined}
           onReference={acceptReference}
           onChange={(value) => updateNodeData(nodeId, { prompt: value, referenceNodeIds: referenceIds(value) })}
           onSubmit={() => { if (kind !== 'audio' && prompt.trim() && !isGenerating && !submissionRef.current) { submissionRef.current = true; generation.mutate({ prompt: prompt.trim(), count: generationCount, requestId: uuid() }); } }}
@@ -912,6 +936,11 @@ function NodeGenerationPrompt({
       </div>
     </form>
   );
+  return promptExpanded ? createPortal(<div className="nodrag nopan nowheel fixed inset-0 z-[9000] flex items-center justify-center bg-black/60 p-6"
+    onPointerDown={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) setPromptExpanded(false); }}
+    onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onContextMenu={(event) => event.stopPropagation()}>
+    {promptPanel}
+  </div>, document.body) : promptPanel;
 }
 
 const SmartEditContext = createContext<{ open: (id: string) => void; pending: boolean }>({ open: () => undefined, pending: false });

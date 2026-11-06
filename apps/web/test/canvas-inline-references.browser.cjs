@@ -111,6 +111,47 @@ const { randomUUID } = require('node:crypto');
     await input.press('Enter');
     await expect.poll(() => generation?.prompt).toBe('before 【Source】source content  after');
     expect(generation.references).toHaveLength(1);
+    await expect.poll(() => graph.nodes[0].data.status).toBe('generating');
+    graph.nodes[0].data.status = 'idle';
+    delete graph.nodes[0].data.generationStatus;
+    delete graph.nodes[0].data.generationTaskId;
+    await page.reload();
+    await page.locator('.react-flow__node[data-id="target"]').click();
+
+    // Expanding edits the same prompt and returns changes to the node editor.
+    const addButtonBounds = await page.getByRole('button', { name: '添加参考节点', exact: true }).boundingBox();
+    const expandButtonBounds = await page.getByRole('button', { name: '扩大提示词输入框' }).boundingBox();
+    expect(expandButtonBounds.x).toBeGreaterThan(addButtonBounds.x);
+    await page.getByRole('button', { name: '扩大提示词输入框' }).click();
+    const dialog = page.getByRole('dialog', { name: '编辑节点提示词' });
+    await expect(dialog.locator('[data-prompt-reference-list]')).toContainText('Source');
+    await expect(dialog.getByRole('button', { name: '添加参考节点', exact: true })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '选择生成数量' })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '生成图片', exact: true })).toBeVisible();
+    const expandedInput = dialog.getByRole('textbox');
+    await expect(expandedInput.locator('[data-node-id="source"]')).toHaveCount(1);
+    await expandedInput.press('End');
+    await expandedInput.pressSequentially(' expanded');
+    await dialog.getByRole('button', { name: '缩小提示词输入框' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(input).toContainText('expanded');
+    await page.getByRole('button', { name: '扩大提示词输入框' }).click();
+    await expandedInput.press('Escape');
+    await expect(dialog).toHaveCount(0);
+
+    // Removing the dependency preserves the mention as an invalid reference.
+    await page.getByRole('button', { name: '删除依赖 Source', exact: true }).click();
+    const invalid = input.locator('[data-node-id="source"]');
+    await expect(invalid).toHaveAttribute('data-inactive-reference', 'true');
+    await expect(invalid).toHaveAttribute('title', '该资产已失效');
+    await expect(invalid.locator('span').last()).toHaveClass(/line-through/);
+    await invalid.hover();
+    await expect(page.getByRole('tooltip', { name: '预览：Source' })).toContainText('该资产已失效');
+    await page.mouse.move(10, 10);
+    await expect.poll(() => graph.edges).toEqual([]);
+    await page.reload();
+    await page.locator('.react-flow__node[data-id="target"]').click();
+    await expect(input.locator('[data-node-id="source"]')).toHaveAttribute('data-inactive-reference', 'true');
 
     await page.getByRole('button', { name: '打开 Agent Chat', exact: true }).click();
     const chat = page.locator('aside [role="textbox"]');

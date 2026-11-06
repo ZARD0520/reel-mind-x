@@ -277,6 +277,18 @@ export function HomePage() {
   /** 首页上传的附件文件：延迟到画布创建后再上传，按引用 id 索引 */
   const fileByReferenceId = useRef(new Map<string, File>());
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  const userMenuButtonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!isUserMenuOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !userMenuRef.current?.contains(event.target) && !userMenuButtonRef.current?.contains(event.target)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', closeOutside, true);
+    return () => document.removeEventListener('pointerdown', closeOutside, true);
+  }, [isUserMenuOpen]);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const toast = useToast();
   const [canvasPendingDeletion, setCanvasPendingDeletion] = useState<Canvas | null>(null);
@@ -438,6 +450,7 @@ export function HomePage() {
             <button
               type="button"
               onClick={() => setIsUserMenuOpen((open) => !open)}
+              ref={userMenuButtonRef}
               className="flex h-9 w-9 items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.06] text-[#b9b9ba] transition-colors hover:bg-white/[0.10] hover:text-[#f7f7f2]"
               aria-label="打开用户菜单"
               aria-expanded={isUserMenuOpen}
@@ -445,7 +458,7 @@ export function HomePage() {
               <User className="h-[18px] w-[18px]" />
             </button>
             {isUserMenuOpen && (
-              <div className="absolute right-0 top-12 w-52 rounded-xl border border-white/[0.12] bg-[#171717] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
+              <div ref={userMenuRef} className="absolute right-0 top-12 w-52 rounded-xl border border-white/[0.12] bg-[#171717] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
                 <div className="truncate px-3 py-2 text-sm text-[#b9b9ba]">{greeting}</div>
                 <button type="button" onClick={() => logout.mutate()} className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-sm text-[#b9b9ba] transition-colors hover:bg-white/[0.08] hover:text-[#f7f7f2]">
                   <LogOut className="h-4 w-4" />退出登录

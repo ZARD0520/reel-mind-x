@@ -157,9 +157,9 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
         label.className = variant === 'node' ? 'min-w-0 max-w-36 truncate' : 'min-w-0 max-w-44 truncate';
         label.textContent = title;
         if (inactive) {
-          chip.className += ' opacity-40';
+          chip.className += ' !bg-white/[0.04] !text-red-400 opacity-60';
           label.className += ' line-through';
-          chip.title = '当前模型不支持此引用或节点已断开，此引用不会参与生成';
+          chip.title = '该资产已失效';
           chip.dataset.inactiveReference = 'true';
         } else {
           chip.removeAttribute('title');
@@ -239,7 +239,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
         if (!chip || chip.contains(event.relatedTarget as Node | null)) return;
         const reference = referenceItems.find((item) => item.id === chip.dataset.nodeId);
         const part = splitReferences(chip.dataset.reference ?? '')[0];
-        hover.show(reference ?? { id: chip.dataset.nodeId!, title: part?.title ?? '', kind: 'text' }, chip, !!reference);
+        hover.show(reference ?? { id: chip.dataset.nodeId!, title: part?.title ?? '', kind: 'text' }, chip, !!reference && !chip.dataset.inactiveReference);
       }}
       onMouseOut={(event) => { const chip = hoveredChip(event.target); if (chip && !chip.contains(event.relatedTarget as Node | null)) hover.hide(); }}
       className={`reel-scroll min-h-[56px] max-h-60 w-full overflow-y-auto overscroll-contain whitespace-pre-wrap break-words bg-transparent px-1 py-1 text-sm leading-7 text-[#f3f3f0] outline-none empty:before:pointer-events-none empty:before:text-[#68686d] empty:before:content-[attr(data-placeholder)] ${editorClassName ?? ''}`}
@@ -263,7 +263,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
       onBlur={() => { cursor.current = selectionOffset(); setMention(null); }}
       onPaste={(event) => { event.preventDefault(); edits.current.typing = false; document.execCommand('insertText', false, event.clipboardData.getData('text/plain')); edits.current.typing = false; }}
       onKeyDown={(event) => {
-        event.stopPropagation();
+        if (event.key !== 'Escape' || mention) event.stopPropagation();
         if (event.nativeEvent.isComposing || composing.current || event.nativeEvent.keyCode === 229) return;
         const key = event.key.toLowerCase();
         if ((event.metaKey || event.ctrlKey) && !event.altKey && (key === 'z' || key === 'y')) {
@@ -275,7 +275,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
           event.preventDefault();
           if (event.key === 'Enter') insert(matches[Math.min(highlighted, matches.length - 1)]!);
           else setHighlighted((index) => (index + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length);
-        } else if (event.key === 'Escape' && mention) { event.preventDefault(); setMention(null); }
+        } else if (event.key === 'Escape') { event.preventDefault(); if (mention) setMention(null);  }
         else if (event.key === 'Enter') { event.preventDefault(); if (event.shiftKey) document.execCommand('insertText', false, '\n'); else onSubmit(); }
       }} />
     {hover.preview}
