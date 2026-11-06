@@ -14,7 +14,8 @@ export async function* streamAgentModel(
   for (let attempt = 0; attempt < 2; attempt++) {
     let receivedOutput = false;
     try {
-      for await (const event of llm.chatStreamEvents(messages, { ...options, model: attempt === 0 ? options.model : FALLBACK_AGENT_MODEL })) {
+      const activeModel = attempt === 0 ? options.model : FALLBACK_AGENT_MODEL;
+      for await (const event of llm.chatStreamEvents(messages, { ...options, model: activeModel, ...(activeModel === FALLBACK_AGENT_MODEL ? { maxTokens: Math.max(16384, options.maxTokens ?? 0) } : {}) })) {
         receivedOutput = true;
         yield event;
       }

@@ -3,7 +3,7 @@ import type { MutableRefObject } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { chatErrorMessage } from '@reel/contracts/chat-errors';
-import type { AgentToolProgress, CanvasAgentBridge, CanvasChatReference, Conversation, ConversationSummary } from './chat-types';
+import type { AgentPlanProgress, AgentToolProgress, CanvasAgentBridge, CanvasChatReference, Conversation, ConversationSummary } from './chat-types';
 
 type PendingTurn = {
   key: number;
@@ -13,6 +13,7 @@ type PendingTurn = {
   completed: Conversation | null;
   operations: AgentToolProgress[];
   status: string;
+  plan?: AgentPlanProgress;
 };
 
 export function useCanvasChat(canvasId: string, initialPrompt: string, onInitialPromptConsumed: () => void, initialReferences: CanvasChatReference[] = [], agentBridge?: MutableRefObject<CanvasAgentBridge | null>) {
@@ -74,6 +75,7 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
         onStatus: (status) => setPending(current => current ? { ...current, status } : current),
         onReplace: (answer) => setPending(current => current ? { ...current, status: '', answer } : current),
         onCanvas: (graph) => bridge?.apply(graph),
+        onPlan: (plan) => setPending(current => current ? { ...current, plan } : current),
       });
       completed = updated;
     } catch (cause) {

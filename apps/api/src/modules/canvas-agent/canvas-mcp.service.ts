@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CanvasToolsService, toolDescriptions, toolSchemas, type CanvasToolName, type CanvasToolScope } from './canvas-tools.service';
+import { classifyError } from './agent-store';
 
 @Injectable()
 export class CanvasMcpService {
@@ -19,7 +20,8 @@ export class CanvasMcpService {
           const result = await this.tools.execute(scope, name, args);
           return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], structuredContent: result };
         } catch (error) {
-          return { isError: true, content: [{ type: 'text' as const, text: error instanceof Error ? error.message : '工具执行失败' }] };
+          const message = error instanceof Error ? error.message : '工具执行失败';
+          return { isError: true, content: [{ type: 'text' as const, text: message }], structuredContent: { code: classifyError(error), message } };
         }
       });
     }

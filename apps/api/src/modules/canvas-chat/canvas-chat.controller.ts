@@ -1,5 +1,7 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Logger, Param, ParseUUIDPipe, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, ConflictException, Controller, Delete, Get, HttpCode, HttpStatus, Logger, Param, ParseUUIDPipe, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { chatErrorMessage } from '@reel/contracts';
+import { LlmError } from '@reel/llm';
 import type { ServerResponse } from 'node:http';
 import { AuthGuard } from '../auth/auth.guard';
 import type { AuthUser } from '../auth/auth.types';
@@ -68,18 +70,32 @@ export class CanvasChatController {
     response.flushHeaders();
 
     const abort = new AbortController();
+    const requestId = dto.requestId ?? randomUUID();
     response.on('close', () => abort.abort());
     try {
-      for await (const item of this.chat.sendStream(user.id, canvasId, conversationId, dto.content, dto.references, abort.signal, dto.selectedNodeIds)) {
+      for await (const item of this.chat.sendStream(user.id, canvasId, conversationId, dto.content, dto.references, abort.signal, dto.selectedNodeIds, requestId, dto.resume)) {
         if (response.writableEnded || abort.signal.aborted) break;
         response.write(`event: ${item.event}\ndata: ${JSON.stringify(item.data)}\n\n`);
       }
     } catch (error) {
       if (!response.writableEnded && !abort.signal.aborted) {
+        // A rejected duplicate/concurrent request must not append a fake failed
+        // turn or replace the response of the worker that owns the lease.
+        if (error instanceof ConflictException) {
+          response.write(`event: error\ndata: ${JSON.stringify({ message: chatErrorMessage(error) })}\n\n`);
+          return;
+        }
         this.logger.error('Agent chat failed', error instanceof Error ? error.stack : undefined);
+        if (error instanceof LlmError) {
+          const detail = error.cause as { code?: string; model?: string; maxTokens?: number; reasoningCharacters?: number; contentCharacters?: number; usage?: unknown } | undefined;
+          if (detail?.code === 'OUTPUT_TOKEN_LIMIT') this.logger.error({
+            code: detail.code, model: detail.model, maxTokens: detail.maxTokens,
+            reasoningCharacters: detail.reasoningCharacters, contentCharacters: detail.contentCharacters, usage: detail.usage,
+          });
+        }
         const message = chatErrorMessage(error);
         try {
-          const conversation = await this.chat.saveErrorTurn(user.id, canvasId, conversationId, dto.content, dto.references, error);
+          const conversation = await this.chat.saveErrorTurn(user.id, canvasId, conversationId, dto.content, dto.references, error, requestId);
           if (!response.writableEnded && !abort.signal.aborted) {
             response.write(`event: replace\ndata: ${JSON.stringify({ text: message })}\n\n`);
             response.write(`event: done\ndata: ${JSON.stringify(conversation)}\n\n`);
@@ -91,5 +107,13 @@ export class CanvasChatController {
     } finally {
       if (!response.writableEnded) response.end();
     }
+  }
+
+  @Post(':conversationId/runs/:runId/resume')
+  async resume(@CurrentUser() user: AuthUser, @Param('canvasId', ParseUUIDPipe) canvasId: string,
+    @Param('conversationId', ParseUUIDPipe) conversationId: string, @Param('runId', ParseUUIDPipe) runId: string,
+    @Res() response: ServerResponse): Promise<void> {
+    const input = await this.chat.resumeInput(user.id, canvasId, conversationId, runId);
+    return this.send(user, canvasId, conversationId, input, response);
   }
 }

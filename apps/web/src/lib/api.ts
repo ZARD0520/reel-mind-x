@@ -123,12 +123,12 @@ export const api = {
       }),
     remove: (canvasId: string, conversationId: string) =>
       requestVoid(`/canvases/${canvasId}/conversations/${conversationId}`, { method: 'DELETE' }),
-    sendStream: async (canvasId: string, conversationId: string, content: string, references: CanvasChatReference[], onDelta: (text: string) => void, signal?: AbortSignal, agent?: { selectedNodeIds: string[]; onTool: (tool: import('../features/canvas/chat-types').AgentToolProgress) => void; onCanvas: (graph: import('@reel/contracts').CanvasGraph) => void; onStatus?: (message: string) => void; onReplace?: (text: string) => void }): Promise<Conversation> => {
+    sendStream: async (canvasId: string, conversationId: string, content: string, references: CanvasChatReference[], onDelta: (text: string) => void, signal?: AbortSignal, agent?: { requestId?: string; resume?: boolean; selectedNodeIds: string[]; onTool: (tool: import('../features/canvas/chat-types').AgentToolProgress) => void; onCanvas: (graph: import('@reel/contracts').CanvasGraph) => void; onStatus?: (message: string) => void; onPlan?: (plan: import('../features/canvas/chat-types').AgentPlanProgress) => void; onReplace?: (text: string) => void }): Promise<Conversation> => {
       const path = `/canvases/${canvasId}/conversations/${conversationId}/messages`;
       const response = await fetch(`${BASE}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, references, selectedNodeIds: agent?.selectedNodeIds ?? [] }),
+        body: JSON.stringify({ content, references, selectedNodeIds: agent?.selectedNodeIds ?? [], requestId: agent?.requestId ?? crypto.randomUUID(), resume: agent?.resume ?? false }),
         credentials: 'include',
         signal,
       });
@@ -152,6 +152,7 @@ export const api = {
               onDelta((data as { text: string }).text);
             }
             if (event.event === 'done') completed = data as Conversation;
+            if (event.event === 'plan') agent?.onPlan?.(data as unknown as import('../features/canvas/chat-types').AgentPlanProgress);
             if (event.event === 'tool') agent?.onTool(data as unknown as import('../features/canvas/chat-types').AgentToolProgress);
             if (event.event === 'canvas') agent?.onCanvas((data as unknown as { graph: import('@reel/contracts').CanvasGraph }).graph);
             if (event.event === 'status' && typeof (data as { message?: string }).message === 'string') agent?.onStatus?.((data as { message: string }).message);

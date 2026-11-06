@@ -91,3 +91,26 @@ pnpm typecheck    # 全量类型检查
 pnpm db:migrate   # 运行数据库迁移
 pnpm db:generate  # 重新生成 Prisma client
 ```
+
+
+## Agent 最小闭环验证
+
+画布 Agent 使用 Plan & Execute：先生成并保存结构化计划，再由执行器调用工具，最后核验实际结果。任务状态、上下文预算、租约、事务幂等和显式恢复详见 [架构说明](docs/canvas-agent-plan-execute.md)。
+
+API 开发启动会先执行已提交的数据库迁移；更新代码后也可手动运行 `pnpm db:deploy`。数据库不可用或迁移失败时会停止启动，避免出现对话接口访问缺失表的问题。
+
+```bash
+# 工具、执行循环及错误恢复回归（不调用真实模型）
+pnpm --filter @reel/api test:agent
+
+# 本地隔离数据库：事务幂等、并发租约、中断恢复、核验与积分
+pnpm --filter @reel/api test:agent:db
+
+# 真实模型：先规划再精确重命名，再创建视频节点并引用已有节点
+pnpm --filter @reel/api test:agent:plan:live
+
+# 真实 HTTP 闭环：登录 → 引用图片 → 创建视频节点并连线 → 持久化与积分结算
+pnpm --filter @reel/api test:agent:live
+```
+
+真实测试读取 `apps/api/.env`，需要本地 PostgreSQL 和有效模型密钥；使用独立测试 schema 并在结束后清理，只创建节点，不生成图片或视频媒体。真实测试应显式运行，普通回归通过不代表当前环境已完成真实模型验收。

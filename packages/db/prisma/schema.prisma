@@ -46,6 +46,7 @@ model Canvas {
   conversations CanvasConversation[]
   generationTasks GenerationTask[]
 
+  agentLease CanvasAgentLease?
   @@index([userId, updatedAt])
   @@map("canvases")
 }
@@ -92,7 +93,10 @@ model CanvasChatMessage {
   content        String             @db.Text
   references     Json               @default("[]")
   createdAt      DateTime           @default(now())
+  runId          String?
+  run            CanvasAgentRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
 
+  @@unique([runId, role])
   @@index([conversationId, createdAt])
   @@map("canvas_chat_messages")
 }
@@ -104,11 +108,57 @@ model CanvasAgentRun {
   status         String @default("running")
   events         Json @default("[]")
   error          String? @db.Text
+  requestId      String?
+  inputHash      String?
+  input          Json?
+  plan           Json?
+  context        Json?
+  response       String? @db.Text
+  errorCode      String?
+  holdId         String?
+  deliveredAt    DateTime?
+  steps          CanvasAgentStep[]
+  messages       CanvasChatMessage[]
+  lease          CanvasAgentLease?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@index([conversationId, createdAt])
+  @@unique([conversationId, requestId])
   @@map("canvas_agent_runs")
+}
+
+model CanvasAgentStep {
+  id         String @id @default(uuid())
+  runId      String
+  run        CanvasAgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepKey    String
+  ordinal    Int
+  tool       String
+  arguments  Json
+  status     String @default("pending")
+  result     Json?
+  attempts   Int @default(0)
+  errorCode  String?
+  error      String? @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([runId, stepKey])
+  @@index([runId, ordinal])
+  @@map("canvas_agent_steps")
+}
+
+model CanvasAgentLease {
+  canvasId  String @id
+  canvas    Canvas @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+  runId     String @unique
+  run       CanvasAgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  token     String
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("canvas_agent_leases")
 }
 
 model Asset {

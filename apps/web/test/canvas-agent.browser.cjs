@@ -5,6 +5,22 @@ const { randomUUID } = require('node:crypto');
   const browser = await chromium.launch({ headless: true, channel: 'chrome' });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
+    await page.addInitScript(() => {
+      const original = window.fetch.bind(window);
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (!String(args[0]).endsWith('/messages') || !response.headers.get('content-type')?.includes('text/event-stream')) return response;
+        const body = await response.text();
+        const plan = body.indexOf('event: plan\n');
+        if (plan < 0) return new Response(body, { headers: response.headers });
+        const end = body.indexOf('\n\n', plan) + 2;
+        return new Response(new ReadableStream({ start(controller) {
+          const encoder = new TextEncoder();
+          controller.enqueue(encoder.encode(body.slice(0, end)));
+          setTimeout(() => { controller.enqueue(encoder.encode(body.slice(end))); controller.close(); }, 900);
+        } }), { headers: response.headers });
+      };
+    });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     const canvasId = randomUUID();
@@ -38,6 +54,7 @@ const { randomUUID } = require('node:crypto');
           return;
         }
         expect(submitted.selectedNodeIds).toContain('story');
+        expect(submitted.requestId).toMatch(/^[a-f0-9-]{36}$/);
         const created = ['出门', '迷路', '相遇', '回家'].map((title, index) => ({ id: `shot-${index}`, type: 'workflow', position: { x: 750 + index * 500, y: 160 }, data: { kind: 'image', title, prompt: `分镜：${title}`, status: 'idle' } }));
         graph = { ...graph, nodes: [...graph.nodes, ...created], edges: created.map(node => ({ id: `story-${node.id}`, source: 'story', target: node.id })) };
         const runId = randomUUID();
@@ -45,6 +62,7 @@ const { randomUUID } = require('node:crypto');
         conversation.messages = [{ id: randomUUID(), role: 'user', content: submitted.content, references: submitted.references }, { id: randomUUID(), role: 'assistant', content: '已创建四个分镜节点并建立连接。', references: [] }];
         conversation.agentRuns = [{ id: runId, status: 'completed', events: operations }];
         const events = [
+          { event: 'plan', data: { runId, mode: 'execute', goal: '创建四个故事分镜', steps: [{ id: 'shots', description: '创建四个分镜并引用故事', tool: 'create_nodes' }] } },
           ...operations.flatMap(operation => [{ event: 'tool', data: { ...operation, status: 'running' } }, { event: 'tool', data: operation }]),
           { event: 'canvas', data: { graph, revision: new Date().toISOString() } },
           { event: 'delta', data: { text: '已创建四个分镜节点并建立连接。' } },
@@ -60,8 +78,10 @@ const { randomUUID } = require('node:crypto');
     await page.getByRole('button', { name: '打开 Agent Chat', exact: true }).click();
     await page.locator('aside [role="textbox"]').fill('根据选中的故事创建四个分镜节点');
     await page.locator('aside button[aria-label="发送消息"]').click();
+    await expect(page.getByLabel('本轮执行计划')).toContainText('创建四个分镜并引用故事');
     await expect(page.locator('.react-flow__node')).toHaveCount(5);
-    await expect(page.getByLabel('Agent 执行记录')).toContainText('创建节点 · 已完成');
+    await expect(page.getByLabel('Agent 执行记录')).toHaveCount(0);
+    await expect(page.getByLabel('本轮执行计划')).toHaveCount(0);
     await expect(page.locator('aside[aria-hidden="false"]')).toContainText('已创建四个分镜节点并建立连接。');
     await expect(page.locator('aside button[aria-label="发送消息"] svg.animate-spin')).toHaveCount(0);
     await page.waitForTimeout(1200); // Let the autosave debounce run: it must retain agent changes.
@@ -71,7 +91,7 @@ const { randomUUID } = require('node:crypto');
     await page.reload();
     await expect(page.locator('.react-flow__node')).toHaveCount(5);
     await page.getByRole('button', { name: '打开 Agent Chat', exact: true }).click();
-    await expect(page.getByLabel('Agent 执行记录')).toContainText('建立连接 · 已完成');
+    await expect(page.getByLabel('Agent 执行记录')).toHaveCount(0);
     const drawer = page.locator('aside[aria-hidden="false"]');
     const composer = drawer.getByRole('textbox');
     scenario = 'persisted-error';

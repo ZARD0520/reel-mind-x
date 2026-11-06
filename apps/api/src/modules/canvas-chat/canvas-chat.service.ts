@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
-import type { ChatMessage } from '@reel/llm';
+import { finalAnswerText, type ChatMessage } from '@reel/llm';
 import type { Prisma } from '@reel/db';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LlmService } from '../llm/llm.service';
@@ -10,14 +11,15 @@ import { CreditsService } from '../credits/credits.service';
 import type { Env } from '../../config/env';
 import { chatErrorMessage } from '@reel/contracts';
 import { CanvasAgentService, CREATIVE_AGENT_PROMPT } from '../canvas-agent/canvas-agent.service';
-import { chatAgentModel, PRIMARY_AGENT_MODEL } from '../canvas-agent/model-retry';
+import { PRIMARY_AGENT_MODEL } from '../canvas-agent/model-retry';
+import { TERMINAL_STATUSES } from '../canvas-agent/agent-store';
 
 const CHAT_MODEL = PRIMARY_AGENT_MODEL;
 
 function readablePrompt(content: string): string {
-  return content.replace(/@\[([^\]]*)\]\(node:([^)]*)\)/g, (token, title: string) => {
+  return content.replace(/@\[([^\]]*)\]\(node:([^)]*)\)/g, (token, title: string, nodeId: string) => {
     try {
-      return `【${decodeURIComponent(title)}】`;
+      return `【${decodeURIComponent(title)}】(节点ID：${decodeURIComponent(nodeId)})`;
     } catch {
       return token;
     }
@@ -97,9 +99,13 @@ export class CanvasChatService {
     });
     return {
       ...conversation,
-      agentRuns: (await this.prisma.canvasAgentRun.findMany({ where: { conversationId }, orderBy: { createdAt: 'asc' }, select: { id: true, status: true, events: true, error: true } })).map(run => ({ ...run, error: run.error ? chatErrorMessage(run.error) : null })),
+      agentRuns: (await this.prisma.canvasAgentRun.findMany({ where: { conversationId }, orderBy: { createdAt: 'asc' }, select: { id: true, requestId: true, status: true, plan: true, errorCode: true, events: true, error: true, lease: { select: { expiresAt: true } }, steps: { orderBy: { ordinal: 'asc' }, select: { stepKey: true, tool: true, status: true, attempts: true, errorCode: true } } } })).map(({ lease, ...run }) => ({ ...run,
+        status: ['planning', 'executing', 'verifying'].includes(run.status) && (!lease || lease.expiresAt <= new Date()) ? 'interrupted' : run.status,
+        error: run.error ? chatErrorMessage({ code: run.errorCode, message: run.error }) : null,
+      })),
       messages: messages.map((message) => ({
         ...message,
+        content: message.role === 'assistant' ? finalAnswerText(message.content) : message.content,
         references: CanvasChatReferenceSchema.array().catch([]).parse(message.references),
       })),
     };
@@ -114,12 +120,27 @@ export class CanvasChatService {
     });
   }
 
-  async saveErrorTurn(userId: string, canvasId: string, conversationId: string, content: string, references: CanvasChatReference[], error: unknown) {
+  async resumeInput(userId: string, canvasId: string, conversationId: string, runId: string) {
+    await this.requireConversation(userId, canvasId, conversationId);
+    const run = await this.prisma.canvasAgentRun.findFirst({ where: { id: runId, conversationId } });
+    const input = run?.input as { content?: string; references?: unknown; selectedNodeIds?: string[] } | null;
+    if (!run?.requestId || !input?.content) throw new BadRequestException('此任务没有可恢复的执行记录');
+    return { content: input.content, references: CanvasChatReferenceSchema.array().parse(input.references ?? []), selectedNodeIds: input.selectedNodeIds ?? [], requestId: run.requestId, resume: true };
+  }
+
+  async saveErrorTurn(userId: string, canvasId: string, conversationId: string, content: string, references: CanvasChatReference[], error: unknown, requestId?: string) {
     await this.requireConversation(userId, canvasId, conversationId);
     const message = chatErrorMessage(error);
     await this.prisma.$transaction(async tx => {
-      await tx.canvasChatMessage.create({ data: { conversationId, role: 'user', content, references: references as Prisma.InputJsonValue } });
-      await tx.canvasChatMessage.create({ data: { conversationId, role: 'assistant', content: message } });
+      const run = requestId ? await tx.canvasAgentRun.findUnique({ where: { conversationId_requestId: { conversationId, requestId } } }) : null;
+      if (run?.deliveredAt) return;
+      if (run) {
+        await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: run.id, role: 'user' } }, create: { conversationId, runId: run.id, role: 'user', content, references: references as Prisma.InputJsonValue }, update: {} });
+        await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: run.id, role: 'assistant' } }, create: { conversationId, runId: run.id, role: 'assistant', content: message }, update: { content: message } });
+      } else {
+        await tx.canvasChatMessage.create({ data: { conversationId, role: 'user', content, references: references as Prisma.InputJsonValue } });
+        await tx.canvasChatMessage.create({ data: { conversationId, role: 'assistant', content: message } });
+      }
       await tx.canvasConversation.update({ where: { id: conversationId }, data: { updatedAt: new Date() } });
     });
     return this.get(userId, canvasId, conversationId);
@@ -138,13 +159,24 @@ export class CanvasChatService {
     references: CanvasChatReference[],
     signal: AbortSignal,
     selectedNodeIds: string[] = [],
+    requestId: string = randomUUID(),
+    resume = false,
   ) {
     const conversation = await this.requireConversation(userId, canvasId, conversationId);
-    const history = await this.prisma.canvasChatMessage.findMany({
+    const cached = await this.prisma.canvasAgentRun.findUnique({ where: { conversationId_requestId: { conversationId, requestId } }, select: { status: true, deliveredAt: true } });
+    if (cached && TERMINAL_STATUSES.includes(cached.status) && cached.deliveredAt) {
+      // A delivered replay does not depend on assets still existing or on the
+      // current prompt/context budget. Claim verifies the original input hash.
+      const replay = await this.agent.claim({ userId, canvasId, selectedNodeIds }, conversationId, requestId, { content: content.trim(), references, selectedNodeIds }, resume);
+      try { yield { event: 'done', data: await this.get(userId, canvasId, conversationId) }; }
+      finally { await this.agent.store.release(replay); }
+      return;
+    }
+    const history = (await this.prisma.canvasChatMessage.findMany({
       where: { conversationId },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 20,
       select: { role: true, content: true, references: true },
-    });
+    })).reverse();
     const assetIds = references.flatMap((item) => (item.assetId ? [item.assetId] : []));
     let resolvedReferences = references;
     if (assetIds.length) {
@@ -197,10 +229,12 @@ export class CanvasChatService {
             ? '用户引用的图片节点画面已作为图片附在本条消息中，可以直接查看、描述和分析。视频节点只能依据节点标题、文字内容或生成提示词回答。'
             : '注意：本条消息没有附带任何图片，你看不到任何画面。如果用户询问图片或视频的内容，请明确说明你无法看到画面，只能依据节点标题、文字内容或生成提示词推断，不要编造画面细节。'),
       },
-      ...history.map((message) => ({
+      ...history.map((message, index) => ({
         role: message.role as 'user' | 'assistant',
         content:
-          readablePrompt(message.content) +
+          (message.role === 'user' && history[index + 1]?.role === 'assistant' && chatErrorMessage(history[index + 1]!.content) === history[index + 1]!.content
+            ? '【历史请求：该轮已失败并结束，仅供理解上下文，不是当前待执行任务】\n' : '') +
+          readablePrompt(message.role === 'assistant' ? finalAnswerText(message.content) : message.content) +
           referenceContext(CanvasChatReferenceSchema.array().catch([]).parse(message.references)),
       })),
       {
@@ -209,48 +243,56 @@ export class CanvasChatService {
         ...(referenceImages.length ? { images: referenceImages } : {}),
       },
     ];
-    let answer = '';
-    const hold = await this.credits.beginOperation(
-      userId,
-      { kind: 'chat', model: CHAT_MODEL },
-      conversationId,
-    );
+    const scope = { userId, canvasId, selectedNodeIds };
+    const ticket = await this.agent.claim(scope, conversationId, requestId, { content: prompt, references, selectedNodeIds }, resume);
+    let holdId: string | undefined;
     let settled = false;
+    let executed = false;
     try {
-      for await (const event of this.agent.run({ userId, canvasId, selectedNodeIds }, conversationId, messages, CHAT_MODEL, signal)) {
+      if (ticket.run.deliveredAt && TERMINAL_STATUSES.includes(ticket.run.status)) {
+        yield { event: 'done', data: await this.get(userId, canvasId, conversationId) };
+        return;
+      }
+      // Reserve and attach billing atomically; a process crash cannot orphan a
+      // charged operation or cause a resumed request to reserve twice.
+      holdId = await this.prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM canvases WHERE id = ${canvasId} FOR UPDATE`;
+        if (!await tx.canvasAgentLease.findFirst({ where: { runId: ticket.run.id, token: ticket.token, expiresAt: { gt: new Date() } } })) throw new ConflictException('任务执行权已失效');
+        const existing = ticket.run.holdId ? await tx.creditHold.findUnique({ where: { id: ticket.run.holdId } }) : null;
+        if (existing?.status === 'held' && (!existing.expiresAt || existing.expiresAt > new Date())) return existing.id;
+        if (existing?.status === 'held') await this.credits.settle(tx, existing.id, false);
+        await this.credits.assertConcurrentLimit(tx, userId);
+        const quote = await this.credits.quote({ kind: 'chat', model: CHAT_MODEL }, tx);
+        const hold = await this.credits.reserve(tx, userId, quote.total, `agent:${ticket.run.id}:${ticket.token}`, 'Agent 对话', conversationId, new Date(Date.now() + 30 * 60000));
+        await tx.canvasAgentRun.update({ where: { id: ticket.run.id }, data: { holdId: hold.id } });
+        return hold.id;
+      });
+      let answer = '';
+      executed = true;
+      for await (const event of this.agent.execute(ticket, messages, CHAT_MODEL, signal)) {
         if (event.event === 'delta') answer += String(event.data.text ?? '');
         yield event;
       }
       answer = answer.trim();
       if (!answer || signal.aborted) throw new Error('Generation was interrupted');
-      const firstMessage = history.length === 0;
-      const title = firstMessage
-        ? await this.makeTitle(readablePrompt(prompt), answer)
-        : conversation.title;
-      const updated = await this.prisma.$transaction(async (tx) => {
-        await tx.canvasChatMessage.create({
-          data: {
-            conversationId,
-            role: 'user',
-            content: prompt,
-            references: resolvedReferences as Prisma.InputJsonValue,
-          },
-        });
-        await tx.canvasChatMessage.create({
-          data: { conversationId, role: 'assistant', content: answer },
-        });
-        const billing = await this.credits.settle(tx, hold.id, true);
-        if (billing.status !== 'captured')
-          throw new BadRequestException('对话已超时，积分已退还，请重新发送');
-        return tx.canvasConversation.update({
-          where: { id: conversationId },
-          data: { title },
-        });
+      const title = history.length === 0 ? [...readablePrompt(prompt).replace(/\s+/g, ' ')].slice(0, 24).join('') || '新对话' : conversation.title;
+      await this.prisma.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM canvases WHERE id = ${canvasId} FOR UPDATE`;
+        if (!await tx.canvasAgentLease.findFirst({ where: { runId: ticket.run.id, token: ticket.token, expiresAt: { gt: new Date() } } })) throw new ConflictException('任务执行权已失效');
+        await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: ticket.run.id, role: 'user' } }, create: { conversationId, runId: ticket.run.id, role: 'user', content: prompt, references: resolvedReferences as Prisma.InputJsonValue }, update: { content: prompt, references: resolvedReferences as Prisma.InputJsonValue } });
+        await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: ticket.run.id, role: 'assistant' } }, create: { conversationId, runId: ticket.run.id, role: 'assistant', content: answer }, update: { content: answer } });
+        const billing = await this.credits.settle(tx, holdId!, true);
+        if (billing.status !== 'captured') throw new BadRequestException('对话已超时，积分已退还，请恢复任务');
+        await tx.canvasAgentRun.update({ where: { id: ticket.run.id }, data: { deliveredAt: new Date() } });
+        await tx.canvasConversation.update({ where: { id: conversationId }, data: { title } });
       });
       settled = true;
-      yield { event: 'done', data: await this.get(userId, canvasId, updated.id) };
+      yield { event: 'done', data: await this.get(userId, canvasId, conversationId) };
     } finally {
-      if (!settled) await this.credits.finishOperation(hold.id, false);
+      try {
+        if (!settled && holdId) await this.credits.finishOperation(holdId, false);
+        if (!executed && !ticket.run.deliveredAt) await this.agent.store.update(ticket, { status: 'failed', errorCode: 'BILLING_FAILED', error: '对话积分预留失败' });
+      } finally { await this.agent.store.release(ticket); }
     }
   }
 
@@ -271,26 +313,4 @@ export class CanvasChatService {
     return images;
   }
 
-  private async makeTitle(prompt: string, answer: string): Promise<string> {
-    const fallback = [...prompt.replace(/\s+/g, ' ').trim()].slice(0, 24).join('') || '新对话';
-    try {
-      const result = await chatAgentModel(this.llm,
-        [
-          {
-            role: 'system',
-            content:
-              '请为这次对话写一个简短标题，最多 12 个汉字或 24 个字符。只返回标题，不要引号、标点或解释。',
-          },
-          { role: 'user', content: `用户：${prompt}\n助手：${answer.slice(0, 500)}` },
-        ],
-        { model: CHAT_MODEL, maxTokens: 48 },
-      );
-      return (
-        [...result.text.trim().replace(/^["“”'「」]+|["“”'「」]+$/g, '')].slice(0, 24).join('') ||
-        fallback
-      );
-    } catch {
-      return fallback;
-    }
-  }
 }

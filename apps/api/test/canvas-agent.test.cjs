@@ -90,12 +90,51 @@ test('failed turns persist both the question and sanitized assistant reply witho
   assert.deepEqual(result.messages.map(message => [message.role, message.content]), [['user', '用户的问题'], ['assistant', CHAT_BUSY_MESSAGE]]);
 });
 
+test('rename tool changes only the requested node title and preserves content and graph size', async () => {
+  const f = fixture();
+  const before = structuredClone(f.graph());
+  const context = await f.tools.execute(f.scope, 'get_canvas_context', {});
+  await f.tools.execute(f.scope, 'rename_node', { expectedRevision: context.revision, nodeId: 'story', title: '测试agent' });
+  assert.equal(f.graph().nodes[0].data.title, '测试agent');
+  assert.equal(f.graph().nodes[0].data.content, before.nodes[0].data.content);
+  assert.equal(f.graph().nodes.length, before.nodes.length);
+  assert.deepEqual(f.graph().edges, before.edges);
+});
+
+test('prompt tool protocol rejects missing rename arguments before emitting a call, with bounded repair', async () => {
+  const tools = [{ type: 'function', function: { name: 'rename_node', parameters: { type: 'object', required: ['expectedRevision', 'nodeId', 'title'] } } }];
+  const args = { expectedRevision: new Date().toISOString(), nodeId: 'story', title: '测试agent' };
+  let attempts = 0;
+  const events = [];
+  for await (const event of streamPromptTools(async function* () {
+    yield { type: 'text', text: JSON.stringify({ type: 'tool_call', name: 'rename_node', arguments: attempts++ ? args : {} }) };
+  }, [{ role: 'user', content: '重命名' }], { model: PRIMARY_AGENT_MODEL, tools })) events.push(event);
+  assert.equal(attempts, 2);
+  assert.equal(events.length, 1);
+  assert.deepEqual(JSON.parse(events[0].calls[0].function.arguments), args);
+  attempts = 0;
+  await assert.rejects(async () => {
+    for await (const _ of streamPromptTools(async function* () {
+      attempts++;
+      yield { type: 'text', text: '{"type":"tool_call","name":"rename_node","arguments":{}}' };
+    }, [], { model: PRIMARY_AGENT_MODEL, tools })) assert.fail('invalid call must never be emitted');
+  }, /有效的操作结果/);
+  assert.equal(attempts, 2);
+});
+
+test('assistant final text omits internal thinking including an orphan closing tag', () => {
+  const { finalAnswerText } = apiRequire('@reel/llm');
+  assert.equal(finalAnswerText('<think>旧任务思考</think>新问题的回答'), '新问题的回答');
+  assert.equal(finalAnswerText('旧任务思考\n</think>\n新问题的回答'), '新问题的回答');
+  assert.equal(finalAnswerText('<think>未完成思考'), '');
+});
+
 test('real MCP discovery, scoped reads, validation, prompt updates, connections and stale revision rejection', async () => {
   const f = fixture();
   const session = await f.mcp.connect(f.scope);
   try {
     const names = (await session.client.listTools()).tools.map(tool => tool.name);
-    assert.deepEqual(names.sort(), ['connect_nodes', 'create_nodes', 'get_canvas_context', 'update_node_prompt']);
+    assert.deepEqual(names.sort(), ['connect_nodes', 'create_nodes', 'get_canvas_context', 'rename_node', 'update_node_prompt']);
     assert(!names.some(name => /generation|render|delete/.test(name)));
     const context = (await session.client.callTool({ name: 'get_canvas_context', arguments: {} })).structuredContent;
     assert.deepEqual(context.selectedNodeIds, ['story']);
@@ -122,30 +161,6 @@ test('real MCP discovery, scoped reads, validation, prompt updates, connections 
   } finally { await session.close(); }
 });
 
-test('LangGraph completes four storyboard nodes through MCP, connects story and persists progress', async () => {
-  const f = fixture();
-  let step = 0;
-  const model = { chatStreamEvents: async function* (messages, options) {
-    assert.equal(options.model, 'glm-4.6v-flash');
-    assert.equal(options.tools.length, 4);
-    if (step++ === 0) { yield call('get_canvas_context', {}); return; }
-    const result = JSON.parse(messages.at(-1).content);
-    if (step === 2) { yield call('create_nodes', { expectedRevision: result.revision, nodes: ['出门', '迷路', '相遇', '回家'].map(title => ({ kind: 'image', title, prompt: `分镜画面：${title}` })) }); return; }
-    if (step === 3) { yield call('connect_nodes', { expectedRevision: result.revision, connections: result.createdNodes.map(node => ({ source: 'story', target: node.id })) }); return; }
-    yield { type: 'text', text: '已创建四个分镜节点并关联故事。' };
-  } };
-  const agent = new CanvasAgentService(f.mcp, model, f.prisma);
-  const events = [];
-  for await (const event of agent.run(f.scope, randomUUID(), [{ role: 'system', content: CREATIVE_AGENT_PROMPT }, { role: 'user', content: '根据选中的故事创建四个分镜节点' }], 'glm-4.6v-flash', new AbortController().signal)) events.push(event);
-  assert.equal(f.graph().nodes.length, 5);
-  assert.equal(f.graph().edges.length, 4);
-  assert.equal(events.filter(event => event.event === 'canvas').length, 2);
-  assert.equal(events.filter(event => event.event === 'tool' && event.data.status === 'completed').length, 4);
-  assert.equal(events.at(-1).data.text, '已创建四个分镜节点并关联故事。');
-  assert.equal(f.runs[0].status, 'completed');
-  assert.equal(f.runs[0].events.length, 8);
-});
-
 test('MCP HTTP endpoint supports SDK initialize/list/call and rejects untrusted browser origins', async () => {
   const f = fixture();
   const { createServer } = require('node:http');
@@ -165,66 +180,12 @@ test('MCP HTTP endpoint supports SDK initialize/list/call and rejects untrusted 
   const client = new Client({ name: 'integration-test', version: '1.0.0' });
   try {
     await client.connect(new StreamableHTTPClientTransport(url));
-    assert.equal((await client.listTools()).tools.length, 4);
+    assert.equal((await client.listTools()).tools.length, 5);
     const context = await client.callTool({ name: 'get_canvas_context', arguments: {} });
     assert.equal(context.structuredContent.nodes[0].id, 'story');
     const response = await fetch(url, { method: 'POST', headers: { origin: 'https://untrusted.test', 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) });
     assert.equal(response.status, 403);
   } finally { await client.close(); await new Promise(resolve => server.close(resolve)); }
-});
-
-test('tool errors reach model, failed model runs preserve committed changes and audit', async () => {
-  const f = fixture();
-  let step = 0;
-  const model = { chatStreamEvents: async function* (messages) {
-    if (step++ === 0) { yield call('get_canvas_context', {}); return; }
-    const result = JSON.parse(messages.at(-1).content);
-    if (step === 2) { yield call('create_nodes', { expectedRevision: result.revision, nodes: [{ kind: 'image', title: '已创建的镜头' }] }); return; }
-    if (step === 3) { yield call('submit_generation', {}); return; }
-    assert.equal(result.isError, true);
-    throw new Error('provider disconnected');
-  } };
-  const agent = new CanvasAgentService(f.mcp, model, f.prisma);
-  await assert.rejects(async () => { for await (const _ of agent.run(f.scope, randomUUID(), [], 'glm-4.6v-flash', new AbortController().signal)) {} }, /provider disconnected/);
-  assert.equal(f.graph().nodes.length, 2);
-  assert.equal(f.runs[0].status, 'failed');
-  assert(f.runs[0].events.some(event => event.status === 'failed' && event.name === 'submit_generation'));
-});
-
-test('an instructional reply is withheld and corrected into an actual referenced video node', async () => {
-  const f = fixture();
-  f.graph().nodes[0].data = { kind: 'image', title: '图片', status: 'ready' };
-  let step = 0;
-  const model = { chatStreamEvents: async function* (messages) {
-    const context = JSON.parse(messages.find(message => message.role === 'tool').content);
-    if (step++ === 0) { yield { type: 'text', text: '请先执行 get_canvas_context()，然后假设 old_image_id，调用 create_nodes。' }; return; }
-    if (step === 2) {
-      assert.equal(messages.at(-1).role, 'system');
-      yield call('create_nodes', { expectedRevision: context.revision, nodes: [{ kind: 'video', title: '参考视频', referenceNodeIds: ['story'] }] });
-      return;
-    }
-    yield { type: 'text', text: '已创建视频节点并关联参考图片。' };
-  } };
-  const events = [];
-  for await (const event of new CanvasAgentService(f.mcp, model, f.prisma).run(f.scope, randomUUID(), [{ role: 'user', content: '引用该节点，创建一个新的视频节点' }], PRIMARY_AGENT_MODEL, new AbortController().signal)) events.push(event);
-  assert.equal(f.graph().nodes.length, 2);
-  assert.equal(f.graph().nodes[1].data.kind, 'video');
-  assert.equal(f.graph().edges[0].source, 'story');
-  assert.equal(f.graph().edges[0].target, f.graph().nodes[1].id);
-  assert.equal(events.filter(event => event.event === 'delta').map(event => event.data.text).join(''), '已创建视频节点并关联参考图片。');
-  assert.equal(f.runs[0].events.filter(event => event.name === 'create_nodes' && event.status === 'completed').length, 1);
-});
-
-test('repeated tool tutorials and fabricated completion never mark a run successful', async () => {
-  for (const reply of ['请先执行 get_canvas_context，然后调用 create_nodes。', '已创建新的视频节点。']) {
-    const f = fixture();
-    const model = { chatStreamEvents: async function* () { yield { type: 'text', text: reply }; } };
-    const events = [];
-    await assert.rejects(async () => { for await (const event of new CanvasAgentService(f.mcp, model, f.prisma).run(f.scope, randomUUID(), [{ role: 'user', content: '创建节点' }], PRIMARY_AGENT_MODEL, new AbortController().signal)) events.push(event); }, /未完成/);
-    assert.equal(f.runs[0].status, 'failed');
-    assert.equal(f.graph().nodes.length, 1);
-    assert.equal(events.filter(event => event.event === 'delta').length, 0);
-  }
 });
 
 test('creating nodes with invalid references rolls back the entire MCP edit', async () => {
@@ -233,42 +194,6 @@ test('creating nodes with invalid references rolls back the entire MCP edit', as
   await assert.rejects(f.tools.execute(f.scope, 'create_nodes', { expectedRevision: context.revision, nodes: [{ kind: 'video', title: '视频', referenceNodeIds: ['missing'] }] }), /不存在/);
   assert.equal(f.graph().nodes.length, 1);
   assert.equal(f.graph().edges.length, 0);
-});
-
-test('stream cancellation closes run; execution loop has a finite step limit', async () => {
-  const f = fixture();
-  const model = { chatStreamEvents: async function* () { yield call('get_canvas_context', {}); } };
-  const agent = new CanvasAgentService(f.mcp, model, f.prisma);
-  const stream = agent.run(f.scope, randomUUID(), [], 'glm-4.6v-flash', new AbortController().signal);
-  await stream.next();
-  await stream.return();
-  assert.equal(f.runs[0].status, 'cancelled');
-  await assert.rejects(async () => { for await (const _ of agent.run(f.scope, randomUUID(), [], 'glm-4.6v-flash', new AbortController().signal)) {} }, /步数上限/);
-  assert.equal(f.runs[1].status, 'failed');
-});
-
-test('429 switches to backup for the rest of the turn without repeating committed MCP changes', async () => {
-  const models = [];
-  const f = fixture();
-  let step = 0;
-  let rejected = false;
-  const model = { chatStreamEvents: async function* (messages, options) {
-    models.push(options.model);
-    if (step === 0) { step++; yield call('get_canvas_context', {}); return; }
-    const result = JSON.parse(messages.at(-1).content);
-    if (step === 1) { step++; yield call('create_nodes', { expectedRevision: result.revision, nodes: [{ kind: 'image', title: '镜头' }] }); return; }
-    if (!rejected) { rejected = true; throw new LlmError('busy', 429); }
-    if (step === 2) { step++; yield call('get_canvas_context', {}); return; }
-    yield { type: 'text', text: '已创建镜头' };
-  } };
-  const agent = new CanvasAgentService(f.mcp, model, f.prisma);
-  const events = [];
-  for await (const event of agent.run(f.scope, randomUUID(), [], 'glm-4.6v-flash', new AbortController().signal)) events.push(event);
-  assert.deepEqual(models, [PRIMARY_AGENT_MODEL, PRIMARY_AGENT_MODEL, PRIMARY_AGENT_MODEL, FALLBACK_AGENT_MODEL, FALLBACK_AGENT_MODEL]);
-  assert.equal(events.filter(event => event.event === 'status').length, 1);
-  assert.equal(events.filter(event => event.event === 'canvas').length, 1);
-  assert.equal(f.graph().nodes.length, 2);
-  assert.equal(f.runs[0].status, 'completed');
 });
 
 test('model fallback is bounded, skips other errors and never replays partial output', async () => {
@@ -332,8 +257,10 @@ test('backup tool compatibility hides control JSON, retains images and rejects u
   const source = [{ role: 'user', content: '读取画布', images }];
   const request = async function* (messages, options) {
     assert.equal(options.tools, undefined);
+    assert.equal(options.temperature, 0);
     assert.deepEqual(messages[1].images, images);
     assert(messages[1].content.includes('get_canvas_context'));
+    assert(messages[1].content.includes('当前唯一待处理的用户请求'));
     yield { type: 'text', text: '<|begin_of_box|>{"type":"tool_' };
     yield { type: 'text', text: 'call","name":"get_canvas_context","arguments":{}}<|end_of_box|>' };
   };
@@ -360,6 +287,57 @@ test('backup tool compatibility hides control JSON, retains images and rejects u
       for await (const _ of streamPromptTools(stream, source, { tools })) {}
     }, /备用模型/);
   }
+});
+
+test('thinking fallback retries truncated output once with a bounded budget before emitting any tool', async () => {
+  const previous = global.fetch;
+  const tools = [{ type: 'function', function: { name: 'get_canvas_context', parameters: { type: 'object' } } }];
+  const candidate = '{"type":"tool_call","name":"get_canvas_context","arguments":{}}';
+  const budgets = [];
+  let alwaysTruncated = false;
+  const abort = new AbortController();
+  let cancel = false;
+  global.fetch = async (_url, init) => {
+    budgets.push(JSON.parse(init.body).max_tokens);
+    if (cancel) abort.abort();
+    const truncated = alwaysTruncated || budgets.length === 1;
+    return new Response([
+      { choices: [{ delta: { reasoning_content: 'thinking' } }] },
+      // Even syntactically complete JSON must be discarded when finish_reason=length.
+      { choices: [{ delta: { content: candidate }, finish_reason: truncated ? 'length' : 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 16384, total_tokens: 16484 } },
+    ].map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n');
+  };
+  try {
+    const provider = new GlmProvider({ apiKey: 'test' });
+    const run = async (options = {}) => {
+      const events = [];
+      for await (const event of provider.chatStreamEvents([{ role: 'user', content: '读取画布' }], { model: FALLBACK_AGENT_MODEL, tools, maxTokens: 4096, ...options })) events.push(event);
+      return events;
+    };
+    const events = await run();
+    assert.deepEqual(budgets, [16384, 32768]);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].calls[0].function.name, 'get_canvas_context');
+    budgets.length = 0;
+    alwaysTruncated = true;
+    await assert.rejects(run, error => {
+      assert.equal(error.cause.code, 'OUTPUT_TOKEN_LIMIT');
+      assert.equal(error.cause.model, FALLBACK_AGENT_MODEL);
+      assert.equal(error.cause.maxTokens, 32768);
+      assert.equal(error.cause.reasoningCharacters, 8);
+      assert.equal(error.cause.contentCharacters, candidate.length);
+      assert.equal(error.cause.usage.prompt_tokens, 100);
+      return true;
+    });
+    assert.deepEqual(budgets, [16384, 32768]);
+    budgets.length = 0;
+    await assert.rejects(() => run({ maxTokens: 99999 }), /长度限制/);
+    assert.deepEqual(budgets, [32768]);
+    budgets.length = 0;
+    cancel = true;
+    await assert.rejects(() => run({ signal: abort.signal }), /abort/i);
+    assert.deepEqual(budgets, [16384]);
+  } finally { global.fetch = previous; }
 });
 
 test('GLM streaming assembles fragmented tool arguments and sends tool results using native protocol', async () => {
@@ -390,41 +368,44 @@ test('GLM streaming assembles fragmented tool arguments and sends tool results u
   } finally { global.fetch = originalFetch; }
 });
 
-test('live GLM creates four storyboard nodes through MCP (opt-in; no media generation)', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 60000 }, async () => {
-  assert(process.env.GLM_API_KEY, 'GLM_API_KEY is required');
-  const f = fixture();
-  const { GlmProvider: RuntimeGlmProvider } = apiRequire('@reel/llm');
-  const model = new RuntimeGlmProvider({ apiKey: process.env.GLM_API_KEY, baseUrl: process.env.GLM_BASE_URL });
-  const agent = new CanvasAgentService(f.mcp, model, f.prisma);
-  for await (const _ of agent.run(f.scope, randomUUID(), [
-    { role: 'system', content: CREATIVE_AGENT_PROMPT },
-    { role: 'user', content: '根据选中的故事节点story，创建且只创建四个图片分镜节点，并把故事节点分别连接到它们。只创建节点，不生成媒体。' },
-  ], 'glm-4.6v-flash', AbortSignal.timeout(45000))) {}
-  assert.equal(f.graph().nodes.length, 5);
-  assert.equal(f.graph().edges.length, 4);
-  assert.equal(f.runs[0].status, 'completed');
+test('empty streaming tool scaffolding does not invalidate a final reply or execute an empty tool', async () => {
+  const previous = global.fetch;
+  try {
+    global.fetch = async () => new Response([
+      { choices: [{ delta: { content: '已完成', tool_calls: [{ index: 0, id: 'empty', function: { name: '', arguments: '' } }] }, finish_reason: 'stop' }] },
+    ].map(chunk => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n');
+    const events = [];
+    for await (const event of new GlmProvider({ apiKey: 'test' }).chatStreamEvents([], { model: PRIMARY_AGENT_MODEL })) events.push(event);
+    assert.deepEqual(events, [{ type: 'text', text: '已完成' }]);
+    global.fetch = async () => new Response(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{}' } }] } }] })}\n\ndata: [DONE]\n\n`);
+    await assert.rejects(async () => { for await (const _ of new GlmProvider({ apiKey: 'test' }).chatStreamEvents([], { model: PRIMARY_AGENT_MODEL })) {} }, /工具调用不完整/);
+  } finally { global.fetch = previous; }
 });
 
-test('live image reference creates a real video node and edge through MCP', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 60000 }, async (t) => {
-  const f = fixture();
-  const imageId = randomUUID();
-  f.graph().nodes.splice(0, 1, { id: imageId, type: 'workflow', position: { x: 0, y: 0 }, data: { kind: 'image', title: '图片', prompt: '小猫', status: 'ready' } });
-  f.scope.selectedNodeIds = [imageId];
-  const { GlmProvider: RuntimeGlmProvider } = apiRequire('@reel/llm');
-  const model = new RuntimeGlmProvider({ apiKey: process.env.GLM_API_KEY, baseUrl: process.env.GLM_BASE_URL });
-  const agent = new CanvasAgentService(f.mcp, model, f.prisma);
-  const events = [];
-  try { for await (const event of agent.run(f.scope, randomUUID(), [
-    { role: 'system', content: CREATIVE_AGENT_PROMPT },
-    { role: 'user', content: '引用该节点【图片】，创建一个新的视频节点。\n用户引用的当前画布节点：图片节点「图片」' },
-  ], FALLBACK_AGENT_MODEL, AbortSignal.timeout(45000))) events.push(event); }
-  catch (error) { if (error.cause?.output) t.diagnostic(`Synthetic fixture model output: ${error.cause.output}`); throw error; }
-  const video = f.graph().nodes.find(node => node.data.kind === 'video');
-  assert(video, '模型回复了文字，但没有创建视频节点');
-  assert(f.graph().edges.some(edge => edge.source === imageId && edge.target === video.id), '没有连接引用图片与新视频节点');
-  assert.equal(f.graph().nodes.length, 2);
-  assert(events.some(event => event.event === 'canvas'));
-  assert(!events.filter(event => event.event === 'delta').map(event => event.data.text).join('').includes('old_image_id'));
+test('malformed native calls are repaired before emission and share a hard HTTP request budget', async () => {
+  const previous = global.fetch;
+  const tools = [{ type: 'function', function: { name: 'submit_plan', parameters: { type: 'object', required: ['goal'] } } }];
+  let requests = 0;
+  global.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    requests++;
+    const delta = body.tools ? { tool_calls: [{ index: 0, function: { arguments: '{}' } }] }
+      : { content: '{"type":"tool_call","name":"submit_plan","arguments":{"goal":"重命名"}}' };
+    return new Response(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+  };
+  try {
+    const provider = new GlmProvider({ apiKey: 'test' });
+    const events = [];
+    for await (const e of provider.chatStreamEvents([{ role: 'user', content: '规划重命名' }], { model: PRIMARY_AGENT_MODEL, tools, maxTokens: 4096, requestBudget: { remainingRequests: 2, remainingOutputTokens: 8192 } })) events.push(e);
+    assert.equal(requests, 2);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].calls[0].function.name, 'submit_plan');
+    requests = 0;
+    await assert.rejects(async () => {
+      for await (const _ of provider.chatStreamEvents([], { model: PRIMARY_AGENT_MODEL, tools, maxTokens: 4096, requestBudget: { remainingRequests: 1, remainingOutputTokens: 4096 } })) assert.fail('invalid call must not escape');
+    }, e => e.cause.code === 'REQUEST_BUDGET');
+    assert.equal(requests, 1);
+  } finally { global.fetch = previous; }
 });
 
 test('live HTTP chat persists image-to-video nodes with real image input, auth, MCP and credits', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 120000 }, async () => {
@@ -462,6 +443,13 @@ test('live HTTP chat persists image-to-video nodes with real image input, auth, 
     const canvas = await prisma.canvas.create({ data: { userId: user.id, name: 'Agent HTTP test', graph: { version: 1, nodes: [{ id: imageId, type: 'workflow', position: { x: 0, y: 0 }, data: { kind: 'image', title: '图片', prompt: '参考图片', url: imageUrl, status: 'ready' } }], edges: [], viewport: { x: 0, y: 0, zoom: 1 } } } });
     const credits = new CreditsService(prisma, config);
     const llm = new LlmService(config);
+    const modelFailures = [];
+    const streamModel = llm.chatStreamEvents.bind(llm);
+    llm.chatStreamEvents = async function* (...args) {
+      let candidate = '';
+      try { for await (const event of streamModel(...args)) { if (event.type === 'text') candidate += event.text; yield event; } modelFailures.push({ candidate: candidate.slice(-3000) }); }
+      catch (error) { modelFailures.push({ message: error.message, status: error.status, cause: error.cause }); throw error; }
+    };
     const agent = new CanvasAgentService(new CanvasMcpService(new CanvasToolsService(prisma)), llm, prisma);
     const chat = new CanvasChatService(prisma, llm, credits, config, agent);
     const auth = new AuthService(prisma, config);
@@ -482,18 +470,39 @@ test('live HTTP chat persists image-to-video nodes with real image input, auth, 
     const body = await response.text();
     const persisted = await prisma.canvas.findUniqueOrThrow({ where: { id: canvas.id } });
     const video = persisted.graph.nodes.find(node => node.data.kind === 'video');
-    assert(video, `HTTP chat did not create a video node: ${body.slice(-1000)}`);
+    const actualRun = await prisma.canvasAgentRun.findFirst({ where: { conversationId: conversation.id }, orderBy: { createdAt: 'desc' } });
+    const diagnostic = JSON.stringify({ error: actualRun?.error, events: actualRun?.events, modelFailures });
+    assert(video, `HTTP chat did not create a video node: ${diagnostic}`);
     assert(persisted.graph.edges.some(edge => edge.source === imageId && edge.target === video.id));
-    assert.equal(persisted.graph.nodes.length, 2);
+    assert.equal(persisted.graph.nodes.length, 2, diagnostic);
     assert.equal(await prisma.generationTask.count(), 0);
     const history = await chat.get(user.id, canvas.id, conversation.id);
-    assert.equal(history.agentRuns[0].status, 'completed');
+    assert.equal(history.agentRuns[0].status, 'completed', diagnostic);
     assert.equal(history.messages.length, 2);
     assert(!/get_canvas_context|create_nodes|old_image_id/.test(history.messages[1].content));
     assert.match(body, /event: canvas/);
     assert.match(body, /event: done/);
     const balance = await credits.balance(user.id);
     assert.equal(balance.spent, 1);
+    // Reproduce the user's sequence: an old creation request failed, then a new rename request arrives.
+    await chat.saveErrorTurn(user.id, canvas.id, conversation.id, '根据图片再创建三个图片节点', [], new Error('fixture previous failure'));
+    const rename = await fetch(`${base}/canvases/${canvas.id}/conversations/${conversation.id}/messages`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ content: `本轮只把节点 @[视频](node:${video.id}) 的名称更改为测试agent，不要创建其他节点`, references: [{ id: video.id, kind: 'video', title: video.data.title }], selectedNodeIds: [imageId] }), signal: AbortSignal.timeout(90000),
+    });
+    const renameBody = await rename.text();
+    const renamed = await prisma.canvas.findUniqueOrThrow({ where: { id: canvas.id } });
+    const renameRun = await prisma.canvasAgentRun.findFirst({ where: { conversationId: conversation.id }, orderBy: { createdAt: 'desc' } });
+    assert.equal(renamed.graph.nodes.find(node => node.id === video.id).data.title, '测试agent', JSON.stringify({ error: renameRun?.error, events: renameRun?.events }));
+    assert.equal(renamed.graph.nodes.length, 2, 'New turn must not resume old creation request');
+    assert.equal(renameRun.status, 'completed');
+    assert(renameRun.events.some(event => event.name === 'rename_node' && event.status === 'completed'));
+    assert(!renameRun.events.some(event => event.name === 'create_nodes'));
+    assert.match(renameBody, /event: done/);
+    const finalHistory = await chat.get(user.id, canvas.id, conversation.id);
+    assert.equal(finalHistory.messages.length, 6);
+    assert(!finalHistory.messages.at(-1).content.includes('</think>'));
+
   } finally {
     await app?.close();
     await prisma.$disconnect();

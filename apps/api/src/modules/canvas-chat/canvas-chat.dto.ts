@@ -17,6 +17,8 @@ export class SendCanvasMessageDto extends createZodDto(z.object({
   content: z.string().trim().min(1).max(20000),
   references: z.array(CanvasChatReferenceSchema).max(8).default([]),
   selectedNodeIds: z.array(z.string().min(1).max(100)).max(100).default([]),
+  requestId: z.string().uuid().optional(),
+  resume: z.boolean().default(false),
 })) {}
 
 export class RenameCanvasConversationDto extends createZodDto(z.object({

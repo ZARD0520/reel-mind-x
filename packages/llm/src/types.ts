@@ -35,6 +35,10 @@ export interface ChatOptions {
   /** 中断信号 */
   signal?: AbortSignal;
   tools?: ChatTool[];
+  /** Shared across protocol repairs and retries; bounds actual HTTP requests. */
+  requestBudget?: { remainingRequests: number; remainingOutputTokens: number };
+  /** Conservative UTF-8 text estimate plus a fixed reservation per image. */
+  maxEstimatedInputTokens?: number;
 }
 
 /** token 消耗统计 */

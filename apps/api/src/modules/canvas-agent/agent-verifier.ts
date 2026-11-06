@@ -1,0 +1,60 @@
+import type { AgentPlan, StepResult } from './agent-plan';
+import { resolveArguments } from './agent-plan';
+import { AgentFailure } from './agent-store';
+
+type Graph = { nodes: Array<{ id: string; data: Record<string, unknown> }>; edges: Array<{ source: string; target: string }> };
+export function verifyPlan(plan: AgentPlan, results: Map<string, StepResult>, graph: Graph) {
+  const expected = new Map<string, Record<string, unknown>>();
+  const edges: Array<{ source: string; target: string }> = [];
+  const patch = (id: string, data: Record<string, unknown>) => expected.set(id, { ...expected.get(id), ...data });
+  for (const step of plan.steps) {
+    const result = results.get(step.id);
+    if (!result) throw new AgentFailure('VERIFICATION_FAILED', `步骤 ${step.id} 没有提交结果`);
+    const args = resolveArguments(step, results);
+    if (step.tool === 'rename_node') patch(String(args.nodeId), { title: args.title });
+    if (step.tool === 'update_node_prompt') patch(String(args.nodeId), { prompt: args.prompt });
+    if (step.tool === 'create_nodes') {
+      const created = result.createdNodes as { id: string }[];
+      const nodes = args.nodes as Array<Record<string, unknown> & { referenceNodeIds: string[] }>;
+      if (created?.length !== nodes.length) throw new AgentFailure('VERIFICATION_FAILED', '创建节点数量与计划不符');
+      nodes.forEach((node, index) => {
+        const id = created[index]!.id;
+        const state = (result.nodeStates as Graph['nodes'] | undefined)?.find(n => n.id === id)?.data;
+        if (!state || !String(state.prompt ?? '').startsWith(String(node.prompt ?? ''))) throw new AgentFailure('VERIFICATION_FAILED', '创建节点的提示词与计划不符');
+        patch(id, { title: node.title, kind: node.kind, content: node.content ?? '', prompt: state.prompt ?? '' });
+        node.referenceNodeIds.forEach(source => edges.push({ source, target: id }));
+      });
+    }
+    if (step.tool === 'connect_nodes') {
+      edges.push(...args.connections as typeof edges);
+      // Connecting appends reference tokens to the prompt. Its committed state
+      // supersedes a prompt supplied by an earlier step in the same plan.
+      for (const node of (result.nodeStates ?? []) as Graph['nodes']) patch(node.id, { prompt: node.data.prompt ?? '' });
+    }
+  }
+  for (const [id, fields] of expected) {
+    const actual = graph.nodes.find(n => n.id === id);
+    if (!actual || Object.entries(fields).some(([key, value]) => actual.data[key] !== value)) throw new AgentFailure('VERIFICATION_FAILED', `节点 ${id} 的实际结果与计划不符`);
+  }
+  for (const edge of edges) if (!graph.edges.some(e => e.source === edge.source && e.target === edge.target)) throw new AgentFailure('VERIFICATION_FAILED', '计划中的依赖连接未完成');
+}
+
+export function assertPreconditions(tool: string, args: Record<string, unknown>, baseline: Graph, results: Map<string, StepResult>, current: Graph) {
+  const states = new Map(baseline.nodes.map(n => [n.id, n.data]));
+  for (const result of results.values()) for (const node of (result.nodeStates ?? []) as Graph['nodes']) {
+    const before = states.get(node.id);
+    if (result.createdNodes) states.set(node.id, node.data);
+    else if (result.renamedNodeId) states.set(node.id, { ...before, title: node.data.title });
+    else states.set(node.id, { ...before, prompt: node.data.prompt, referenceNodeIds: node.data.referenceNodeIds });
+  }
+  const check = (id: string, fields: string[]) => {
+    const before = states.get(id);
+    const actual = current.nodes.find(n => n.id === id)?.data;
+    const value = (data: Record<string, unknown>, key: string) => data[key] ?? ({ uploaded: false, prompt: '', content: '', referenceNodeIds: [] } as Record<string, unknown>)[key] ?? null;
+    if (!before || !actual || fields.some(key => JSON.stringify(value(before, key)) !== JSON.stringify(value(actual, key)))) throw new AgentFailure('PRECONDITION_CHANGED', '目标节点已被其他操作修改，请根据最新画布发送新指令');
+  };
+  if (tool === 'rename_node') check(String(args.nodeId), ['title']);
+  if (tool === 'update_node_prompt') check(String(args.nodeId), ['prompt', 'kind', 'uploaded']);
+  if (tool === 'connect_nodes') for (const c of args.connections as { source: string; target: string }[]) { check(c.source, ['kind']); check(c.target, ['kind', 'prompt', 'referenceNodeIds', 'model', 'uploaded']); }
+  if (tool === 'create_nodes') for (const n of args.nodes as { referenceNodeIds: string[] }[]) for (const id of n.referenceNodeIds) check(id, ['kind']);
+}

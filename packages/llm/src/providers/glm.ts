@@ -31,6 +31,7 @@ interface GlmResponse {
  */
 const OUTPUT_TOKEN_CEILINGS: Record<string, number> = {
   'glm-4v-flash': 1024,
+  'glm-4.1v-thinking-flash': 32768,
 };
 
 function clampMaxTokens(model: string, maxTokens?: number): number | undefined {
@@ -137,6 +138,17 @@ export class GlmProvider implements LlmProvider {
       yield* streamPromptTools((history, params) => this.chatStreamEvents(history, params), messages, options);
       return;
     }
+    if (options.maxEstimatedInputTokens !== undefined) {
+      const textMessages = messages.map(({ images: _images, ...message }) => message);
+      const estimated = Buffer.byteLength(JSON.stringify({ messages: textMessages, tools: options.tools }), 'utf8') + 2048 * messages.reduce((n, m) => n + (m.images?.length ?? 0), 0);
+      if (estimated > options.maxEstimatedInputTokens) throw new LlmError('本轮模型输入超出上下文预算', undefined, { code: 'CONTEXT_BUDGET', estimatedInputTokens: estimated, limit: options.maxEstimatedInputTokens });
+    }
+    if (options.requestBudget) {
+      const requested = clampMaxTokens(model, options.maxTokens) ?? 4096;
+      if (options.requestBudget.remainingRequests <= 0 || options.requestBudget.remainingOutputTokens < requested) throw new LlmError('本轮模型请求预算已耗尽', undefined, { code: 'REQUEST_BUDGET' });
+      options.requestBudget.remainingRequests--;
+      options.requestBudget.remainingOutputTokens -= requested;
+    }
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -160,10 +172,9 @@ export class GlmProvider implements LlmProvider {
               : m.content,
           })),
           stream: true,
-          ...(options.tools?.length ? {
-            tools: options.tools, tool_choice: 'auto',
-            ...(model === 'glm-4.1v-thinking-flash' ? {} : { thinking: { type: 'disabled' } }),
-          } : {}),
+          ...(options.tools?.length ? { tools: options.tools, tool_choice: 'auto' } : {}),
+          ...(model === 'glm-4.6v-flash' || (options.tools?.length && model !== 'glm-4.1v-thinking-flash')
+            ? { thinking: { type: 'disabled' } } : {}),
           ...(options.temperature !== undefined && { temperature: options.temperature }),
           ...(clampMaxTokens(model, options.maxTokens) !== undefined && {
             max_tokens: clampMaxTokens(model, options.maxTokens),
@@ -184,6 +195,9 @@ export class GlmProvider implements LlmProvider {
     const decoder = new TextDecoder();
     const sse = new SseDecoder();
     let finished = false;
+    let reasoningCharacters = 0;
+    let contentCharacters = 0;
+    let pendingText = '';
     const calls = new Map<number, ChatToolCall>();
     try {
       while (!finished) {
@@ -196,7 +210,7 @@ export class GlmProvider implements LlmProvider {
             finished = true;
             break;
           }
-          let data: { choices?: Array<{ finish_reason?: string; delta?: { content?: string; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> } }>; error?: { message?: string } };
+          let data: { usage?: GlmResponse['usage']; choices?: Array<{ finish_reason?: string; delta?: { content?: string; reasoning_content?: string; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> } }>; error?: { message?: string } };
           try {
             data = JSON.parse(event.data) as typeof data;
           } catch {
@@ -204,7 +218,14 @@ export class GlmProvider implements LlmProvider {
           }
           if (data.error) throw new LlmError(data.error.message || 'GLM 流式响应失败');
           const content = data.choices?.[0]?.delta?.content;
-          if (content) yield { type: 'text', text: content };
+          reasoningCharacters += data.choices?.[0]?.delta?.reasoning_content?.length ?? 0;
+          contentCharacters += content?.length ?? 0;
+          // A native tool candidate may need protocol repair. Do not expose its
+          // accompanying text until we know which response will be accepted.
+          if (content) {
+            if (options.tools?.length) pendingText += content;
+            else yield { type: 'text', text: content };
+          }
           for (const part of data.choices?.[0]?.delta?.tool_calls ?? []) {
             if (!Number.isInteger(part.index) || part.index < 0 || part.index >= 20) throw new LlmError('模型返回的工具调用数量或索引无效');
             const call = calls.get(part.index) ?? { id: '', type: 'function' as const, function: { name: '', arguments: '' } };
@@ -215,16 +236,47 @@ export class GlmProvider implements LlmProvider {
             if (call.function.arguments.length > 100000) throw new LlmError('工具参数超出大小限制');
             calls.set(part.index, call);
           }
-          if (data.choices?.[0]?.finish_reason === 'length') throw new LlmError('模型输出达到长度限制，请缩小本次任务范围');
+          if (data.choices?.[0]?.finish_reason === 'length') throw new LlmError('模型输出达到长度限制，请缩小本次任务范围', undefined, {
+            code: 'OUTPUT_TOKEN_LIMIT', model, finishReason: 'length',
+            maxTokens: clampMaxTokens(model, options.maxTokens),
+            reasoningCharacters, contentCharacters, usage: data.usage,
+          });
         }
         if (done) break;
       }
       if (!finished) throw new LlmError('GLM 流式响应中断');
       if (calls.size) {
-        const complete = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
-        if (complete.some(call => !call.id || !call.function.name)) throw new LlmError('模型返回的工具调用不完整');
-        yield { type: 'tool_calls', calls: complete };
+        const complete = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call)
+          .filter(call => call.function.name || call.function.arguments.trim());
+        // Some streams include empty tool-call scaffolding in their final chunk.
+        // It carries no executable request and must not turn a final reply into a failure.
+        if (!options.tools?.length && complete.some(call => !call.id || !call.function.name)) throw new LlmError('模型返回的工具调用不完整', undefined, { calls: complete });
+        const invalid = complete.find(call => {
+          if (options.tools?.length && (!call.id || !call.function.name || !options.tools.some(tool => tool.function.name === call.function.name))) return true;
+          const schema = options.tools?.find(tool => tool.function.name === call.function.name)?.function.parameters;
+          if (!schema || !Array.isArray(schema.required) || !schema.required.length) return false;
+          try {
+            const args: unknown = JSON.parse(call.function.arguments);
+            return !args || typeof args !== 'object' || Array.isArray(args) || schema.required.some(key => !Object.hasOwn(args, String(key)));
+          } catch { return true; }
+        });
+        if (invalid) {
+          // Some GLM native responses name the tool but return {} repeatedly.
+          // Repair this unexecuted candidate with the explicit JSON protocol,
+          // preserving all successful results and the latest user request.
+          await reader.cancel().catch(() => undefined);
+          yield* streamPromptTools((history, params) => this.chatStreamEvents(history, params), [
+            ...messages,
+            { role: 'system', content: `上一条原生工具候选 ${invalid.function.name} 缺少必填参数，已拒绝且未执行。请根据已有上下文和工具定义补全全部必填参数，遵守原始系统要求。` },
+          ], { ...options, model });
+          return;
+        }
+        if (complete.length) {
+          yield { type: 'tool_calls', calls: complete };
+          return;
+        }
       }
+      if (pendingText) yield { type: 'text', text: pendingText };
     } finally {
       await reader.cancel().catch(() => undefined);
     }

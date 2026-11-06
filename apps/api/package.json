@@ -3,13 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "nest start --watch",
+    "dev": "pnpm --filter @reel/db db:deploy && nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "echo \"no tests yet\" ",
-    "test:generation": "node --test test/generation-reliability.test.cjs"
+    "test:generation": "node --test test/generation-reliability.test.cjs",
+    "test:agent": "node --test test/canvas-agent.test.cjs test/canvas-agent-plan.test.cjs",
+    "test:agent:live": "LIVE_AGENT_SMOKE=1 node --env-file=.env --test --test-name-pattern=\"live HTTP chat persists\" test/canvas-agent.test.cjs",
+    "test:agent:db": "AGENT_DATABASE_TESTS=1 node --env-file=.env --test test/canvas-agent-plan.test.cjs",
+    "test:agent:plan:live": "LIVE_AGENT_SMOKE=1 node --env-file=.env --test --test-name-pattern=\"live Plan\" test/canvas-agent-plan.test.cjs"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
