@@ -21,6 +21,69 @@ const { chatErrorMessage, CHAT_BUSY_MESSAGE, CHAT_FAILURE_MESSAGE } = apiRequire
 const { CanvasChatController } = require('../src/modules/canvas-chat/canvas-chat.controller.ts');
 const { CanvasChatService } = require('../src/modules/canvas-chat/canvas-chat.service.ts');
 const { streamPromptTools } = require('../../../packages/llm/src/providers/prompt-tools.ts');
+const { createAgentDiagnostics, diagnosticError } = require('../src/modules/canvas-agent/agent-diagnostics.ts');
+const { logRuntimeDiagnostics } = require('../src/config/runtime-diagnostics.ts');
+
+test('runtime diagnostics expose PM2 paths and configuration presence without credentials', t => {
+  const entries = [];
+  t.mock.method(apiRequire('@nestjs/common').Logger.prototype, 'log', value => entries.push(JSON.parse(value)));
+  const config = { get: key => ({ DATABASE_URL: 'postgresql://user:private-password@db.example:5432/private_database?token=private-query', GLM_API_KEY: 'private-api-key', GLM_BASE_URL: 'https://user:private-password@gateway.example/v4?api_key=private-query' })[key] };
+  logRuntimeDiagnostics(config);
+  assert.equal(entries[0].event, 'agent.runtime');
+  assert.equal(entries[0].cwd, process.cwd());
+  assert.equal(entries[0].defaultEnvFile, path.join(process.cwd(), '.env'));
+  assert.equal(entries[0].glmKeyConfigured, true);
+  assert.equal(entries[0].glmBaseUrl, 'https://gateway.example/v4');
+  assert.equal(entries[0].databaseHost, 'db.example:5432');
+  assert(!JSON.stringify(entries).includes('private-'));
+  assert(!JSON.stringify(entries).includes('private_database'));
+});
+
+test('diagnostics identify failures before model execution without logging Prisma input', async t => {
+  const entries = [];
+  const logger = apiRequire('@nestjs/common').Logger.prototype;
+  t.mock.method(logger, 'log', value => entries.push(JSON.parse(value)));
+  t.mock.method(logger, 'error', value => entries.push(JSON.parse(value)));
+  const raw = Object.assign(new Error('Invalid prisma invocation content: PRIVATE_DIALOGUE'), { code: 'P2021', meta: { table: 'public.canvas_agent_runs', modelName: 'CanvasAgentRun' } });
+  let modelCalled = false;
+  const chat = new CanvasChatService({
+    canvasConversation: { findFirst: async () => ({ id: 'conversation' }) },
+    canvasAgentRun: { findUnique: async () => { throw raw; } },
+  }, {}, {}, {}, { claim: () => { modelCalled = true; } });
+  await assert.rejects(async () => {
+    for await (const event of chat.sendStream('owner', 'canvas', 'conversation', 'PRIVATE_DIALOGUE', [], new AbortController().signal, [], 'request-123')) void event;
+  }, error => error === raw);
+  const failure = entries.find(entry => entry.event === 'agent.failed');
+  assert.equal(failure.requestId, 'request-123');
+  assert.equal(failure.phase, 'request.lookup');
+  assert.equal(failure.error.code, 'P2021');
+  assert.equal(failure.error.database.table, 'public.canvas_agent_runs');
+  assert.equal(modelCalled, false);
+  assert(!JSON.stringify(entries).includes('PRIVATE_DIALOGUE'));
+});
+
+test('model diagnostics retain status, provider error code and correlation without raw response bodies', async () => {
+  const entries = [];
+  const sink = { log: value => entries.push(JSON.parse(value)), error: value => entries.push(JSON.parse(value)), warn: () => {} };
+  const trace = createAgentDiagnostics({ requestId: 'request-model', canvasId: 'canvas', conversationId: 'conversation' }, sink);
+  trace.stage('plan.request');
+  const llm = { chatStreamEvents: async function* () {
+    throw new LlmError('GLM API 调用失败 (401): ' + JSON.stringify({ error: { code: 'invalid_key', message: 'Invalid api_key=super-private-key' }, messages: [{ content: 'PRIVATE_DIALOGUE' }] }), 401);
+  } };
+  await assert.rejects(async () => {
+    for await (const event of streamAgentModel(llm, [{ role: 'user', content: 'PRIVATE_DIALOGUE' }], { model: PRIMARY_AGENT_MODEL }, () => {}, trace)) void event;
+  }, error => error.status === 401);
+  const failed = entries.find(entry => entry.event === 'agent.model_failed');
+  assert.equal(failed.requestId, 'request-model');
+  assert.equal(failed.model, PRIMARY_AGENT_MODEL);
+  assert.equal(failed.phase, 'plan.request');
+  assert.equal(failed.error.status, 401);
+  assert.equal(failed.error.providerCode, 'invalid_key');
+  assert(!JSON.stringify(entries).includes('super-private-key'));
+  assert(!JSON.stringify(entries).includes('PRIVATE_DIALOGUE'));
+  assert(!JSON.stringify(diagnosticError(Object.assign(new Error('PRIVATE_DIALOGUE'), { code: 'INVALID_PLAN' }))).includes('PRIVATE_DIALOGUE'));
+  assert.equal(diagnosticError({ code: -32603, message: 'MCP initialization failed' }).code, -32603);
+});
 
 test('chat image references cannot read another user, traverse paths or follow foreign symlinks', async () => {
   const storage = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'reel-image-scope-'));

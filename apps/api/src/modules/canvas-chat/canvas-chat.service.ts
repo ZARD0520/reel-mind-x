@@ -13,6 +13,7 @@ import { chatErrorMessage } from '@reel/contracts';
 import { CanvasAgentService, CREATIVE_AGENT_PROMPT } from '../canvas-agent/canvas-agent.service';
 import { PRIMARY_AGENT_MODEL } from '../canvas-agent/model-retry';
 import { TERMINAL_STATUSES } from '../canvas-agent/agent-store';
+import { createAgentDiagnostics } from '../canvas-agent/agent-diagnostics';
 
 const CHAT_MODEL = PRIMARY_AGENT_MODEL;
 
@@ -164,138 +165,171 @@ export class CanvasChatService {
     requestId: string = randomUUID(),
     resume = false,
   ) {
-    const conversation = await this.requireConversation(userId, canvasId, conversationId);
-    const cached = await this.prisma.canvasAgentRun.findUnique({ where: { conversationId_requestId: { conversationId, requestId } }, select: { status: true, deliveredAt: true } });
-    if (cached && TERMINAL_STATUSES.includes(cached.status) && cached.deliveredAt) {
-      // A delivered replay does not depend on assets still existing or on the
-      // current prompt/context budget. Claim verifies the original input hash.
-      const replay = await this.agent.claim({ userId, canvasId, selectedNodeIds }, conversationId, requestId, { content: content.trim(), references, selectedNodeIds }, resume);
-      try { yield { event: 'done', data: await this.get(userId, canvasId, conversationId) }; }
-      finally { await this.agent.store.release(replay); }
-      return;
-    }
-    const history = (await this.prisma.canvasChatMessage.findMany({
-      where: { conversationId },
-      orderBy: [{ createdAt: 'desc' }, { role: 'asc' }, { id: 'desc' }], take: 20,
-      select: { role: true, content: true, references: true },
-    })).reverse();
-    const assetIds = references.flatMap((item) => (item.assetId ? [item.assetId] : []));
-    let resolvedReferences = references;
-    if (assetIds.length) {
-      const ownedAssets = await this.prisma.asset.findMany({
-        where: { id: { in: assetIds }, userId },
-        select: {
-          id: true,
-          name: true,
-          kind: true,
-          prompt: true,
-          width: true,
-          height: true,
-          durationInFrames: true,
-          url: true,
-        },
-      });
-      if (new Set(ownedAssets.map((asset) => asset.id)).size !== new Set(assetIds).size) {
-        throw new BadRequestException('引用的素材不存在');
-      }
-      const assetsById = new Map(ownedAssets.map((asset) => [asset.id, asset]));
-      resolvedReferences = references.map((reference) => {
-        const asset = reference.assetId ? assetsById.get(reference.assetId) : undefined;
-        if (!asset) return reference;
-        if (asset.kind !== reference.kind) throw new BadRequestException('引用的素材类型不匹配');
-        return {
-          ...reference,
-          url: asset.url ?? undefined,
-          description: [
-            asset.name,
-            asset.kind,
-            asset.width && asset.height ? `${asset.width}×${asset.height}` : '',
-            asset.durationInFrames ? `${asset.durationInFrames} 帧` : '',
-            asset.prompt ? `素材提示词：${asset.prompt}` : '',
-          ]
-            .filter(Boolean)
-            .join('；')
-            .slice(0, 2000),
-        };
-      });
-    }
-    const prompt = content.trim();
-    // 引用的图片节点以 base64 随消息传给视觉模型（GLM-4V 系列）；读取失败的跳过
-    const referenceImages = await this.resolveReferenceImages(userId, resolvedReferences);
-    const messages: ChatMessage[] = [
-      {
-        role: 'system',
-        content:
-          CREATIVE_AGENT_PROMPT + '\n当前选中的节点ID：' + JSON.stringify(selectedNodeIds) + '\n引用的文本节点可直接阅读。' +
-          (referenceImages.length
-            ? '用户引用的图片节点画面已作为图片附在本条消息中，可以直接查看、描述和分析。视频节点只能依据节点标题、文字内容或生成提示词回答。'
-            : '注意：本条消息没有附带任何图片，你看不到任何画面。如果用户询问图片或视频的内容，请明确说明你无法看到画面，只能依据节点标题、文字内容或生成提示词推断，不要编造画面细节。'),
-      },
-      ...history.map((message, index) => ({
-        role: message.role as 'user' | 'assistant',
-        content:
-          (message.role === 'user' && history[index + 1]?.role === 'assistant' && chatErrorMessage(history[index + 1]!.content) === history[index + 1]!.content
-            ? '【历史请求：该轮已失败并结束，仅供理解上下文，不是当前待执行任务】\n' : '') +
-          readablePrompt(message.role === 'assistant' ? finalAnswerText(message.content) : message.content) +
-          referenceContext(CanvasChatReferenceSchema.array().catch([]).parse(message.references)),
-      })),
-      {
-        role: 'user',
-        content: readablePrompt(prompt) + referenceContext(resolvedReferences),
-        ...(referenceImages.length ? { images: referenceImages } : {}),
-      },
-    ];
-    const scope = { userId, canvasId, selectedNodeIds };
-    const ticket = await this.agent.claim(scope, conversationId, requestId, { content: prompt, references, selectedNodeIds }, resume);
-    let holdId: string | undefined;
-    let settled = false;
-    let executed = false;
+    const trace = createAgentDiagnostics({ requestId, canvasId, conversationId });
+    trace.stage('conversation.load');
     try {
-      if (ticket.run.deliveredAt && TERMINAL_STATUSES.includes(ticket.run.status)) {
-        yield { event: 'done', data: await this.get(userId, canvasId, conversationId) };
+      const conversation = await this.requireConversation(userId, canvasId, conversationId);
+      trace.stage('request.lookup');
+      const cached = await this.prisma.canvasAgentRun.findUnique({ where: { conversationId_requestId: { conversationId, requestId } }, select: { status: true, deliveredAt: true } });
+      if (cached && TERMINAL_STATUSES.includes(cached.status) && cached.deliveredAt) {
+        trace.stage('request.replay');
+        // A delivered replay does not depend on assets still existing or on the
+        // current prompt/context budget. Claim verifies the original input hash.
+        const replay = await this.agent.claim({ userId, canvasId, selectedNodeIds }, conversationId, requestId, { content: content.trim(), references, selectedNodeIds }, resume);
+        try { yield { event: 'done', data: await this.get(userId, canvasId, conversationId) }; }
+        finally { await this.agent.store.release(replay); }
         return;
       }
-      // Reserve and attach billing atomically; a process crash cannot orphan a
-      // charged operation or cause a resumed request to reserve twice.
-      holdId = await this.prisma.$transaction(async tx => {
-        await tx.$queryRaw`SELECT id FROM canvases WHERE id = ${canvasId} FOR UPDATE`;
-        if (!await tx.canvasAgentLease.findFirst({ where: { runId: ticket.run.id, token: ticket.token, expiresAt: { gt: new Date() } } })) throw new ConflictException('任务执行权已失效');
-        const existing = ticket.run.holdId ? await tx.creditHold.findUnique({ where: { id: ticket.run.holdId } }) : null;
-        if (existing?.status === 'held' && (!existing.expiresAt || existing.expiresAt > new Date())) return existing.id;
-        if (existing?.status === 'held') await this.credits.settle(tx, existing.id, false);
-        await this.credits.assertConcurrentLimit(tx, userId);
-        const quote = await this.credits.quote({ kind: 'chat', model: CHAT_MODEL }, tx);
-        const hold = await this.credits.reserve(tx, userId, quote.total, `agent:${ticket.run.id}:${ticket.token}`, 'Agent 对话', conversationId, new Date(Date.now() + 30 * 60000));
-        await tx.canvasAgentRun.update({ where: { id: ticket.run.id }, data: { holdId: hold.id } });
-        return hold.id;
-      });
-      let answer = '';
-      executed = true;
-      for await (const event of this.agent.execute(ticket, messages, CHAT_MODEL, signal)) {
-        if (event.event === 'delta') answer += String(event.data.text ?? '');
-        yield event;
+      trace.stage('history.load');
+      const history = (await this.prisma.canvasChatMessage.findMany({
+        where: { conversationId },
+        orderBy: [{ createdAt: 'desc' }, { role: 'asc' }, { id: 'desc' }], take: 20,
+        select: { role: true, content: true, references: true },
+      })).reverse();
+      const assetIds = references.flatMap((item) => (item.assetId ? [item.assetId] : []));
+      let resolvedReferences = references;
+      if (assetIds.length) {
+        trace.stage('references.validate', { assetCount: assetIds.length });
+        const ownedAssets = await this.prisma.asset.findMany({
+          where: { id: { in: assetIds }, userId },
+          select: {
+            id: true,
+            name: true,
+            kind: true,
+            prompt: true,
+            width: true,
+            height: true,
+            durationInFrames: true,
+            url: true,
+          },
+        });
+        if (new Set(ownedAssets.map((asset) => asset.id)).size !== new Set(assetIds).size) {
+          throw new BadRequestException('引用的素材不存在');
+        }
+        const assetsById = new Map(ownedAssets.map((asset) => [asset.id, asset]));
+        resolvedReferences = references.map((reference) => {
+          const asset = reference.assetId ? assetsById.get(reference.assetId) : undefined;
+          if (!asset) return reference;
+          if (asset.kind !== reference.kind) throw new BadRequestException('引用的素材类型不匹配');
+          return {
+            ...reference,
+            url: asset.url ?? undefined,
+            description: [
+              asset.name,
+              asset.kind,
+              asset.width && asset.height ? `${asset.width}×${asset.height}` : '',
+              asset.durationInFrames ? `${asset.durationInFrames} 帧` : '',
+              asset.prompt ? `素材提示词：${asset.prompt}` : '',
+            ]
+              .filter(Boolean)
+              .join('；')
+              .slice(0, 2000),
+          };
+        });
       }
-      answer = answer.trim();
-      if (!answer || signal.aborted) throw new Error('Generation was interrupted');
-      const title = history.length === 0 ? [...readablePrompt(prompt).replace(/\s+/g, ' ')].slice(0, 24).join('') || '新对话' : conversation.title;
-      await this.prisma.$transaction(async tx => {
-        await tx.$queryRaw`SELECT id FROM canvases WHERE id = ${canvasId} FOR UPDATE`;
-        if (!await tx.canvasAgentLease.findFirst({ where: { runId: ticket.run.id, token: ticket.token, expiresAt: { gt: new Date() } } })) throw new ConflictException('任务执行权已失效');
-        await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: ticket.run.id, role: 'user' } }, create: { conversationId, runId: ticket.run.id, role: 'user', content: prompt, references: resolvedReferences as Prisma.InputJsonValue }, update: { content: prompt, references: resolvedReferences as Prisma.InputJsonValue } });
-        await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: ticket.run.id, role: 'assistant' } }, create: { conversationId, runId: ticket.run.id, role: 'assistant', content: answer }, update: { content: answer } });
-        const billing = await this.credits.settle(tx, holdId!, true);
-        if (billing.status !== 'captured') throw new BadRequestException('对话已超时，积分已退还，请恢复任务');
-        await tx.canvasAgentRun.update({ where: { id: ticket.run.id }, data: { deliveredAt: new Date() } });
-        await tx.canvasConversation.update({ where: { id: conversationId }, data: { title } });
-      });
-      settled = true;
-      yield { event: 'done', data: await this.get(userId, canvasId, conversationId) };
-    } finally {
+      const prompt = content.trim();
+      trace.stage('references.images');
+      // 引用的图片节点以 base64 随消息传给视觉模型（GLM-4V 系列）；读取失败的跳过
+      const referenceImages = await this.resolveReferenceImages(userId, resolvedReferences);
+      trace.event('agent.context_ready', { historyMessages: history.length, referenceCount: references.length, images: referenceImages.length });
+      const messages: ChatMessage[] = [
+        {
+          role: 'system',
+          content:
+            CREATIVE_AGENT_PROMPT + '\n当前选中的节点ID：' + JSON.stringify(selectedNodeIds) + '\n引用的文本节点可直接阅读。' +
+            (referenceImages.length
+              ? '用户引用的图片节点画面已作为图片附在本条消息中，可以直接查看、描述和分析。视频节点只能依据节点标题、文字内容或生成提示词回答。'
+              : '注意：本条消息没有附带任何图片，你看不到任何画面。如果用户询问图片或视频的内容，请明确说明你无法看到画面，只能依据节点标题、文字内容或生成提示词推断，不要编造画面细节。'),
+        },
+        ...history.map((message, index) => ({
+          role: message.role as 'user' | 'assistant',
+          content:
+            (message.role === 'user' && history[index + 1]?.role === 'assistant' && chatErrorMessage(history[index + 1]!.content) === history[index + 1]!.content
+              ? '【历史请求：该轮已失败并结束，仅供理解上下文，不是当前待执行任务】\n' : '') +
+            readablePrompt(message.role === 'assistant' ? finalAnswerText(message.content) : message.content) +
+            referenceContext(CanvasChatReferenceSchema.array().catch([]).parse(message.references)),
+        })),
+        {
+          role: 'user',
+          content: readablePrompt(prompt) + referenceContext(resolvedReferences),
+          ...(referenceImages.length ? { images: referenceImages } : {}),
+        },
+      ];
+      const scope = { userId, canvasId, selectedNodeIds };
+      trace.stage('run.claim');
+      const ticket = await this.agent.claim(scope, conversationId, requestId, { content: prompt, references, selectedNodeIds }, resume);
+      trace.event('agent.run_claimed', { runId: ticket.run.id, status: ticket.run.status });
+      let holdId: string | undefined;
+      let settled = false;
+      let executed = false;
       try {
-        if (!settled && holdId) await this.credits.finishOperation(holdId, false);
-        if (!executed && !ticket.run.deliveredAt) await this.agent.store.update(ticket, { status: 'failed', errorCode: 'BILLING_FAILED', error: '对话积分预留失败' });
-      } finally { await this.agent.store.release(ticket); }
-    }
+        if (ticket.run.deliveredAt && TERMINAL_STATUSES.includes(ticket.run.status)) {
+          yield { event: 'done', data: await this.get(userId, canvasId, conversationId) };
+          return;
+        }
+        // Reserve and attach billing atomically; a process crash cannot orphan a
+        // charged operation or cause a resumed request to reserve twice.
+        trace.stage('credits.reserve', { runId: ticket.run.id, model: CHAT_MODEL });
+        holdId = await this.prisma.$transaction(async tx => {
+          await tx.$queryRaw`SELECT id FROM canvases WHERE id = ${canvasId} FOR UPDATE`;
+          if (!await tx.canvasAgentLease.findFirst({ where: { runId: ticket.run.id, token: ticket.token, expiresAt: { gt: new Date() } } })) throw new ConflictException('任务执行权已失效');
+          const existing = ticket.run.holdId ? await tx.creditHold.findUnique({ where: { id: ticket.run.holdId } }) : null;
+          if (existing?.status === 'held' && (!existing.expiresAt || existing.expiresAt > new Date())) return existing.id;
+          if (existing?.status === 'held') await this.credits.settle(tx, existing.id, false);
+          await this.credits.assertConcurrentLimit(tx, userId);
+          trace.stage('credits.quote', { model: CHAT_MODEL });
+          const quote = await this.credits.quote({ kind: 'chat', model: CHAT_MODEL }, tx);
+          trace.stage('credits.hold', { credits: quote.total, priceId: quote.priceId });
+          const hold = await this.credits.reserve(tx, userId, quote.total, `agent:${ticket.run.id}:${ticket.token}`, 'Agent 对话', conversationId, new Date(Date.now() + 30 * 60000));
+          await tx.canvasAgentRun.update({ where: { id: ticket.run.id }, data: { holdId: hold.id } });
+          return hold.id;
+        });
+        let answer = '';
+        executed = true;
+        trace.stage('agent.execute', { runId: ticket.run.id });
+        for await (const event of this.agent.execute(ticket, messages, CHAT_MODEL, signal)) {
+          if (event.event === 'delta') answer += String(event.data.text ?? '');
+          yield event;
+        }
+        answer = answer.trim();
+        if (!answer || signal.aborted) throw new Error('Generation was interrupted');
+        const title = history.length === 0 ? [...readablePrompt(prompt).replace(/\s+/g, ' ')].slice(0, 24).join('') || '新对话' : conversation.title;
+        trace.stage('delivery.commit');
+        await this.prisma.$transaction(async tx => {
+          await tx.$queryRaw`SELECT id FROM canvases WHERE id = ${canvasId} FOR UPDATE`;
+          if (!await tx.canvasAgentLease.findFirst({ where: { runId: ticket.run.id, token: ticket.token, expiresAt: { gt: new Date() } } })) throw new ConflictException('任务执行权已失效');
+          await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: ticket.run.id, role: 'user' } }, create: { conversationId, runId: ticket.run.id, role: 'user', content: prompt, references: resolvedReferences as Prisma.InputJsonValue }, update: { content: prompt, references: resolvedReferences as Prisma.InputJsonValue } });
+          await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: ticket.run.id, role: 'assistant' } }, create: { conversationId, runId: ticket.run.id, role: 'assistant', content: answer }, update: { content: answer } });
+          const billing = await this.credits.settle(tx, holdId!, true);
+          if (billing.status !== 'captured') throw new BadRequestException('对话已超时，积分已退还，请恢复任务');
+          await tx.canvasAgentRun.update({ where: { id: ticket.run.id }, data: { deliveredAt: new Date() } });
+          await tx.canvasConversation.update({ where: { id: conversationId }, data: { title } });
+        });
+        settled = true;
+        trace.stage('delivery.read');
+        yield { event: 'done', data: await this.get(userId, canvasId, conversationId) };
+        trace.stage('delivery.completed');
+      } catch (error) {
+        // Capture the original failure before refund/lease cleanup can also fail.
+        trace.failure(error, 'agent.execution_or_billing_failed');
+        throw error;
+      } finally {
+        try {
+          if (!settled && holdId) {
+            trace.event('agent.credits_refund');
+            try { await this.credits.finishOperation(holdId, false); }
+            catch (error) { trace.failure(error, 'agent.refund_failed'); throw error; }
+          }
+          if (!executed && !ticket.run.deliveredAt) {
+            try { await this.agent.store.update(ticket, { status: 'failed', errorCode: 'BILLING_FAILED', error: '对话积分预留失败' }); }
+            catch (error) { trace.failure(error, 'agent.failure_checkpoint_failed'); throw error; }
+          }
+        } finally {
+          try { await this.agent.store.release(ticket); }
+          catch (error) { trace.failure(error, 'agent.lease_release_failed'); throw error; }
+        }
+      }
+    } catch (error) { trace.failure(error); throw error; }
   }
 
   /**

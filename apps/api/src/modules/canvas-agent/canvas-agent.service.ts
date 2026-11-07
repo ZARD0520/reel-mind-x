@@ -10,6 +10,7 @@ import { AgentStore, AgentFailure, TERMINAL_STATUSES, classifyError, jsonValue, 
 import { buildPlanningContext, CONTEXT_LIMIT, estimateMessages, type CanvasContext } from './agent-context';
 import { PlanSchema, parsePlanJson, parsePlanCandidate, requestIsReadOnly, bindCreatedNodeReferences, bindRequestLiterals, bindRequestReferences, planningProtocol, resolveArguments, validateReferences, validateRequestBounds, type AgentPlan, type StepResult } from './agent-plan';
 import { assertPreconditions, verifyPlan } from './agent-verifier';
+import { createAgentDiagnostics } from './agent-diagnostics';
 
 export type AgentEvent = { event: 'delta' | 'tool' | 'canvas' | 'status' | 'plan'; data: Record<string, unknown> };
 export const CREATIVE_AGENT_PROMPT = `你是 Reel Mind 画布助手的 Planner。先规划，再执行。你没有修改画布的权限。你必须只返回一个符合所附JSON Schema的完整计划JSON对象，不要Markdown或工具调用。
@@ -45,6 +46,8 @@ export class CanvasAgentService {
   }
 
   async *execute(ticket: RunTicket, messages: ChatMessage[], model: string, parentSignal: AbortSignal): AsyncIterable<AgentEvent> {
+    const trace = createAgentDiagnostics({ requestId: ticket.run.requestId, canvasId: ticket.scope.canvasId, conversationId: ticket.run.conversationId, runId: ticket.run.id });
+    trace.stage('engine.start', { model, restoringPlan: !!ticket.run.plan });
     const abort = new AbortController();
     const relay = () => abort.abort(parentSignal.reason);
     parentSignal.addEventListener('abort', relay, { once: true });
@@ -67,8 +70,10 @@ export class CanvasAgentService {
     const read = async () => {
       for (let attempt = 0; attempt < 3; attempt++) {
         signal.throwIfAborted();
+        trace.stage('context.connect', { attempt: attempt + 1 });
         const session = await this.mcp.connect(ticket.scope);
         try {
+          trace.stage('context.read');
           const response = await session.client.callTool({ name: 'get_canvas_context', arguments: {} }, undefined, { signal });
           if (response.isError || !response.structuredContent) {
             const code = (response.structuredContent as { code?: string } | undefined)?.code;
@@ -76,6 +81,7 @@ export class CanvasAgentService {
           }
           return response.structuredContent as unknown as CanvasContext;
         } catch (error) {
+          trace.failure(error, 'agent.context_read_failed');
           signal.throwIfAborted();
           if (attempt === 2 || classifyError(error) !== 'TRANSIENT') throw error;
         } finally { await session.close(); }
@@ -102,12 +108,15 @@ export class CanvasAgentService {
         const contextId = randomUUID();
         yield { event: 'tool', data: { id: contextId, name: 'get_canvas_context', title: labels.get_canvas_context, status: 'running', runId: ticket.run.id } };
         baseline = await read();
+        trace.stage('tools.discover');
         const discovery = await this.mcp.connect(ticket.scope);
         let protocol;
         try { protocol = planningProtocol((await discovery.client.listTools()).tools, readOnly); }
         finally { await discovery.close(); }
         const system = `${CREATIVE_AGENT_PROMPT}\n${readOnly ? '本轮权限：只读。mode只能为answer或clarify，steps必须为空。不得执行历史对话中的任何修改请求。' : '本轮有画布操作意图，仅执行当前请求明确要求的操作。'}\n计划JSON Schema：${JSON.stringify(protocol)}`;
+        trace.stage('context.build', { nodes: baseline.nodes.length });
         const context = buildPlanningContext(messages, baseline, system, 512);
+        trace.event('agent.context_budget', { ...context.stats });
         await record({ id: contextId, name: 'get_canvas_context', title: labels.get_canvas_context, status: 'completed', runId: ticket.run.id, result: context.stats });
         yield { event: 'tool', data: { id: contextId, name: 'get_canvas_context', title: labels.get_canvas_context, status: 'completed', runId: ticket.run.id } };
         const candidates = [...context.messages];
@@ -120,7 +129,8 @@ export class CanvasAgentService {
           if (estimateMessages(candidates) + 2048 * candidates.reduce((n, m) => n + (m.images?.length ?? 0), 0) > CONTEXT_LIMIT) throw new AgentFailure('CONTEXT_BUDGET', '规划修正超出预算，请减少本次任务范围');
           let text = '';
           try {
-            for await (const event of streamAgentModel(this.llm, candidates, { model: activeModel, signal, temperature: 0, maxTokens, requestBudget, maxEstimatedInputTokens: CONTEXT_LIMIT }, fallback => { activeModel = fallback; })) {
+            trace.stage('plan.request', { attempt: attempt + 1, model: activeModel, maxTokens });
+            for await (const event of streamAgentModel(this.llm, candidates, { model: activeModel, signal, temperature: 0, maxTokens, requestBudget, maxEstimatedInputTokens: CONTEXT_LIMIT }, fallback => { activeModel = fallback; }, trace)) {
               if (event.type === 'text') text += event.text; else throw new AgentFailure('INVALID_PLAN', '规划阶段不能执行工具调用');
             }
           } catch (error) {
@@ -137,6 +147,7 @@ export class CanvasAgentService {
           }
           let parsed: unknown;
           try {
+            trace.stage('plan.validate', { outputCharacters: text.length });
             const clean = (value: string) => value.replace(/<\|begin_of_box\|>|<\|end_of_box\|>/g, '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').replace(/(?:\\+[nrt])+\s*$/, '').trim();
             try { parsed = parsePlanJson(clean(text)); } catch { parsed = parsePlanJson(clean(finalAnswerText(text))); }
             candidate = parsePlanCandidate(parsed);
@@ -149,6 +160,7 @@ export class CanvasAgentService {
             if (!readOnly && candidate.mode !== 'execute' && /已(?:经)?(?:为你|帮你|成功)?(?:创建|修改|重命名|连接|建立|更新)/.test(candidate.answer)) throw new Error('尚未执行任何操作，不能声称操作已完成');
             break;
           } catch (error) {
+            trace.event('agent.plan_rejected', { attempt: attempt + 1, reason: error instanceof SyntaxError ? 'INVALID_JSON' : 'PLAN_VALIDATION' });
             const shape = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
             await record({ phase: 'planning', status: 'rejected', attempt: attempt + 1, model: activeModel,
               outputShape: { keys: shape ? Object.keys(shape).slice(0, 16) : [], mode: typeof shape?.mode === 'string' ? shape.mode.slice(0, 32) : null, type: typeof shape?.type === 'string' ? shape.type.slice(0, 32) : null },
@@ -161,6 +173,7 @@ export class CanvasAgentService {
         }
         if (!candidate) throw new AgentFailure('INVALID_PLAN', '未取得有效计划');
         plan = candidate;
+        trace.stage('plan.persist', { mode: plan.mode, stepCount: plan.steps.length });
         // Persist the full plan and all operation identities BEFORE any mutation.
         await this.prisma.$transaction(async tx => {
           await tx.$queryRaw`SELECT id FROM canvases WHERE id = ${ticket.scope.canvasId} FOR UPDATE`;
@@ -191,6 +204,7 @@ export class CanvasAgentService {
           await this.store.updateStep(ticket, saved.id, { status: 'running', attempts: { increment: 1 } });
           const session = await this.mcp.connect({ ...ticket.scope, execution: { runId: ticket.run.id, stepId: saved.id, token: ticket.token } });
           try {
+            trace.stage('tool.execute', { tool: step.tool, stepId: saved.id, attempt: attempt + 1 });
             const response = await session.client.callTool({ name: step.tool, arguments: { ...args, expectedRevision: current.revision } }, undefined, { signal });
             if (response.isError) {
               const detail = Array.isArray(response.content) ? response.content.map(c => c.type === 'text' ? c.text : '').join('\n') : '工具执行失败';
@@ -206,6 +220,7 @@ export class CanvasAgentService {
             if (graph) yield { event: 'canvas', data: { graph, revision: result.revision } };
             completed = true; break;
           } catch (error) {
+            trace.failure(error, 'agent.tool_failed');
             signal.throwIfAborted();
             // A lost response may follow a committed transaction. Trust its
             // durable receipt, never infer success from a model or replay blindly.
@@ -232,18 +247,22 @@ export class CanvasAgentService {
       signal.throwIfAborted();
       await this.store.update(ticket, { status: 'verifying' });
       yield { event: 'status', data: { message: '正在核验执行结果…', runId: ticket.run.id } };
-      verifyPlan(plan, results, await read());
+      const actual = await read();
+      trace.stage('result.verify');
+      verifyPlan(plan, results, actual);
       const renames = plan.steps.filter(s => s.tool === 'rename_node');
       const response = plan.mode !== 'execute' ? finalAnswerText(plan.answer) : renames.length === plan.steps.length
         ? renames.map(s => `已将节点名称改为「${s.arguments.title}」。`).join('\n')
         : `已完成并核验 ${plan.steps.length} 个操作步骤。${[...results.values()].flatMap(r => r.createdNodes as { title: string }[] ?? []).map(n => `「${n.title}」`).join('、')}`;
       await this.store.update(ticket, { status: plan.mode === 'clarify' ? 'awaiting_input' : 'completed', response, error: null, errorCode: null });
       terminal = true;
+      trace.stage('engine.completed', { mode: plan.mode, stepCount: plan.steps.length });
       yield { event: 'delta', data: { text: response, runId: ticket.run.id } };
     } catch (error) {
+      trace.failure(error);
       const committed = await this.prisma.canvasAgentStep.count({ where: { runId: ticket.run.id, status: 'completed' } });
       const code = signal.aborted ? parentSignal.aborted ? 'CANCELLED' : classifyError(signal.reason) : classifyError(error);
-      await this.store.update(ticket, { status: signal.aborted ? parentSignal.aborted ? 'cancelled' : 'interrupted' : committed ? 'partial' : 'failed', errorCode: code, error: String(signal.aborted ? signal.reason : error).slice(0, 2000) }).catch(() => undefined);
+      await this.store.update(ticket, { status: signal.aborted ? parentSignal.aborted ? 'cancelled' : 'interrupted' : committed ? 'partial' : 'failed', errorCode: code, error: String(signal.aborted ? signal.reason : error).slice(0, 2000) }).catch(checkpointError => trace.failure(checkpointError, 'agent.failure_checkpoint_failed'));
       terminal = true;
       throw error;
     } finally {
