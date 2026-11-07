@@ -22,6 +22,29 @@ const { CanvasChatController } = require('../src/modules/canvas-chat/canvas-chat
 const { CanvasChatService } = require('../src/modules/canvas-chat/canvas-chat.service.ts');
 const { streamPromptTools } = require('../../../packages/llm/src/providers/prompt-tools.ts');
 
+test('chat image references cannot read another user, traverse paths or follow foreign symlinks', async () => {
+  const storage = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'reel-image-scope-'));
+  try {
+    for (const user of ['owner', 'other']) {
+      fs.mkdirSync(path.join(storage, 'users', user, 'uploads'), { recursive: true });
+      fs.writeFileSync(path.join(storage, 'users', user, 'uploads', 'image.png'), user);
+    }
+    fs.symlinkSync(path.join(storage, 'users', 'other', 'uploads', 'image.png'), path.join(storage, 'users', 'owner', 'uploads', 'linked.png'));
+    const chat = new CanvasChatService({}, {}, {}, { get: () => storage }, {});
+    const references = [
+      '/files/users/owner/uploads/image.png',
+      '/files/users/other/uploads/image.png',
+      '/files/users/owner/../other/uploads/image.png',
+      '/files/users/owner/uploads/linked.png',
+      '/files/other/owner/uploads/image.png',
+    ].map((url, index) => ({ id: String(index), title: 'image', kind: 'image', url }));
+    // Include the symlink in the four-image request limit; test malformed URL separately.
+    const images = await chat.resolveReferenceImages('owner', references);
+    assert.deepEqual(images, ['data:image/png;base64,' + Buffer.from('owner').toString('base64')]);
+    assert.deepEqual(await chat.resolveReferenceImages('owner', references.slice(4)), []);
+  } finally { fs.rmSync(storage, { recursive: true, force: true }); }
+});
+
 function fixture() {
   let row = { id: randomUUID(), userId: 'owner', updatedAt: new Date(), graph: {
     version: 1, nodes: [{ id: 'story', type: 'workflow', position: { x: 0, y: 0 }, data: { kind: 'text', title: '故事', content: '小狗出门、迷路、遇到朋友、一起回家', prompt: '', status: 'ready' } }], edges: [], viewport: { x: 0, y: 0, zoom: 1 },
@@ -99,6 +122,54 @@ test('rename tool changes only the requested node title and preserves content an
   assert.equal(f.graph().nodes[0].data.content, before.nodes[0].data.content);
   assert.equal(f.graph().nodes.length, before.nodes.length);
   assert.deepEqual(f.graph().edges, before.edges);
+});
+
+test('agent creation lays out wide cards beyond the existing group and avoids batch overlaps', async () => {
+  const f = fixture();
+  f.graph().nodes.push({ id: 'wide', type: 'workflow', position: { x: 500, y: -200 }, data: { kind: 'video', aspectRatio: '21:9', title: '超宽视频' } },
+    { id: 'right', type: 'workflow', position: { x: 700, y: 300 }, data: { kind: 'image', title: '最右侧图片' } });
+  const context = await f.tools.execute(f.scope, 'get_canvas_context', {});
+  const result = await f.tools.execute(f.scope, 'create_nodes', { expectedRevision: context.revision, nodes: Array.from({ length: 8 }, (_, i) => ({ kind: i % 2 ? 'image' : 'video', title: `节点${i}`, position: { x: 0, y: 0 } })) });
+  const created = f.graph().nodes.filter(n => result.createdNodes.some(c => c.id === n.id));
+  assert(created.every(n => n.position.x >= 500 + 840 + 160), 'positions must use the existing right edge rather than anchors or model coordinates');
+  assert.equal(new Set(created.map(n => n.position.x)).size, 1, 'one batch must stay in a single vertical column');
+  assert(created.every((node, index) => index === 0 || node.position.y > created[index - 1].position.y));
+  for (const [index, a] of created.entries()) for (const b of created.slice(index + 1)) {
+    const aw = a.data.kind === 'video' ? 640 : 360;
+    const bw = b.data.kind === 'video' ? 640 : 360;
+    assert(a.position.x + aw + 160 <= b.position.x || b.position.x + bw + 160 <= a.position.x || a.position.y + 400 + 160 <= b.position.y || b.position.y + 400 + 160 <= a.position.y);
+  }
+  const previousRight = Math.max(...created.map(n => n.position.x + (n.data.kind === 'video' ? 640 : 360)));
+  await f.tools.execute(f.scope, 'create_nodes', { expectedRevision: result.revision, nodes: [{ kind: 'video', title: '下一批' }] });
+  assert(f.graph().nodes.at(-1).position.x >= previousRight + 160);
+});
+
+test('prompt reference tokens create real edges and image references choose a compatible image model', async () => {
+  const f = fixture();
+  f.graph().nodes[0].data.kind = 'image';
+  const context = await f.tools.execute(f.scope, 'get_canvas_context', {});
+  await f.tools.execute(f.scope, 'create_nodes', { expectedRevision: context.revision, nodes: [{ kind: 'image', title: '参考图片', prompt: '@[故事](node:story)' }] });
+  const target = f.graph().nodes[1];
+  assert.equal(target.data.model, 'Kwai-Kolors/Kolors');
+  assert.deepEqual(target.data.referenceNodeIds, ['story']);
+  assert.deepEqual(f.graph().edges.map(e => [e.source, e.target]), [['story', target.id]]);
+});
+
+test('updating a prompt preserves active dependencies and connecting an existing edge repairs its reference', async () => {
+  const f = fixture();
+  const context = await f.tools.execute(f.scope, 'get_canvas_context', {});
+  const created = await f.tools.execute(f.scope, 'create_nodes', { expectedRevision: context.revision, nodes: [{ kind: 'video', title: '视频', prompt: '白天', referenceNodeIds: ['story'] }] });
+  const nodeId = created.createdNodes[0].id;
+  const updated = await f.tools.execute(f.scope, 'update_node_prompt', { expectedRevision: created.revision, nodeId, prompt: '夜景' });
+  assert.deepEqual(f.graph().nodes[1].data.referenceNodeIds, ['story']);
+  assert(f.graph().nodes[1].data.prompt.startsWith('夜景'));
+  assert(f.graph().nodes[1].data.prompt.includes('(node:story)'));
+  f.graph().nodes[1].data.prompt = '没有引用标记';
+  f.graph().nodes[1].data.referenceNodeIds = [];
+  await f.tools.execute(f.scope, 'connect_nodes', { expectedRevision: updated.revision, connections: [{ source: 'story', target: nodeId }] });
+  assert.equal(f.graph().edges.length, 1);
+  assert.deepEqual(f.graph().nodes[1].data.referenceNodeIds, ['story']);
+  assert(f.graph().nodes[1].data.prompt.includes('(node:story)'));
 });
 
 test('prompt tool protocol rejects missing rename arguments before emitting a call, with bounded repair', async () => {
@@ -408,7 +479,7 @@ test('malformed native calls are repaired before emission and share a hard HTTP 
   } finally { global.fetch = previous; }
 });
 
-test('live HTTP chat persists image-to-video nodes with real image input, auth, MCP and credits', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 120000 }, async () => {
+test('live HTTP chat persists image-to-video nodes with real image input, auth, MCP and credits', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 240000 }, async () => {
   const { PrismaClient } = apiRequire('@reel/db');
   const { Module } = apiRequire('@nestjs/common');
   const { NestFactory } = apiRequire('@nestjs/core');
@@ -479,11 +550,21 @@ test('live HTTP chat persists image-to-video nodes with real image input, auth, 
     const history = await chat.get(user.id, canvas.id, conversation.id);
     assert.equal(history.agentRuns[0].status, 'completed', diagnostic);
     assert.equal(history.messages.length, 2);
+    assert.deepEqual(history.messages.map(message => message.role), ['user', 'assistant']);
     assert(!/get_canvas_context|create_nodes|old_image_id/.test(history.messages[1].content));
     assert.match(body, /event: canvas/);
     assert.match(body, /event: done/);
     const balance = await credits.balance(user.id);
     assert.equal(balance.spent, 1);
+    const modelRequests = modelFailures.length;
+    const replay = await fetch(`${base}/canvases/${canvas.id}/conversations/${conversation.id}/messages`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...actualRun.input, requestId: actualRun.requestId }), signal: AbortSignal.timeout(30000),
+    });
+    assert.match(await replay.text(), /event: done/);
+    assert.equal(modelFailures.length, modelRequests, 'A replay must not call the model again');
+    assert.equal((await credits.balance(user.id)).spent, 1);
+    assert.equal(await prisma.canvasChatMessage.count({ where: { conversationId: conversation.id } }), 2);
     // Reproduce the user's sequence: an old creation request failed, then a new rename request arrives.
     await chat.saveErrorTurn(user.id, canvas.id, conversation.id, '根据图片再创建三个图片节点', [], new Error('fixture previous failure'));
     const rename = await fetch(`${base}/canvases/${canvas.id}/conversations/${conversation.id}/messages`, {
@@ -501,7 +582,48 @@ test('live HTTP chat persists image-to-video nodes with real image input, auth, 
     assert.match(renameBody, /event: done/);
     const finalHistory = await chat.get(user.id, canvas.id, conversation.id);
     assert.equal(finalHistory.messages.length, 6);
+    assert.deepEqual(finalHistory.messages.map(message => message.role), ['user', 'assistant', 'user', 'assistant', 'user', 'assistant']);
     assert(!finalHistory.messages.at(-1).content.includes('</think>'));
+
+    const update = await fetch(`${base}/canvases/${canvas.id}/conversations/${conversation.id}/messages`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ content: `把视频节点 @[测试agent](node:${video.id}) 的提示词修改为「夜晚的城市街景」，保留已有图片引用，不要创建其他节点。`, references: [{ id: video.id, kind: 'video', title: '测试agent' }], selectedNodeIds: [imageId] }), signal: AbortSignal.timeout(90000),
+    });
+    assert.match(await update.text(), /event: done/);
+    const afterUpdate = await prisma.canvas.findUniqueOrThrow({ where: { id: canvas.id } });
+    const updatedVideo = afterUpdate.graph.nodes.find(node => node.id === video.id);
+    const updateRun = await prisma.canvasAgentRun.findFirst({ where: { conversationId: conversation.id }, orderBy: { createdAt: 'desc' } });
+    assert.equal(updateRun.status, 'completed', JSON.stringify({ error: updateRun.error, events: updateRun.events, modelFailures }));
+    assert(updateRun.plan.steps.some(step => step.tool === 'update_node_prompt'));
+    assert(updatedVideo.data.prompt.includes('夜晚') && updatedVideo.data.prompt.includes('城市'));
+    assert.deepEqual(updatedVideo.data.referenceNodeIds, [imageId]);
+    assert(afterUpdate.graph.edges.some(edge => edge.source === imageId && edge.target === video.id));
+    assert.equal(afterUpdate.graph.nodes.length, 2);
+
+    const question = await fetch(`${base}/canvases/${canvas.id}/conversations/${conversation.id}/messages`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ content: '这个画布现在有几个节点？只回答数量，不要修改画布。', references: [], selectedNodeIds: [] }), signal: AbortSignal.timeout(90000),
+    });
+    assert.match(await question.text(), /event: done/);
+    const questionRun = await prisma.canvasAgentRun.findFirst({ where: { conversationId: conversation.id }, orderBy: { createdAt: 'desc' } });
+    assert.equal(questionRun.status, 'completed', JSON.stringify({ error: questionRun.error, events: questionRun.events }));
+    assert.equal(questionRun.plan.mode, 'answer', JSON.stringify({ plan: questionRun.plan, events: questionRun.events }));
+    assert.equal(await prisma.canvasAgentStep.count({ where: { runId: questionRun.id } }), 0);
+    assert.match(questionRun.response, /2|两|二/);
+    assert.deepEqual((await prisma.canvas.findUniqueOrThrow({ where: { id: canvas.id } })).graph, afterUpdate.graph);
+    assert.equal((await credits.balance(user.id)).spent, 4);
+    assert.equal(await prisma.generationTask.count(), 0);
+    const completeHistory = await chat.get(user.id, canvas.id, conversation.id);
+    assert.equal(completeHistory.messages.length, 10);
+    assert(completeHistory.messages.every((message, index) => message.role === (index % 2 ? 'assistant' : 'user')));
+
+    const anonymous = await fetch(`${base}/canvases/${canvas.id}/conversations/${conversation.id}`);
+    assert.equal(anonymous.status, 401);
+    const outsider = await prisma.user.create({ data: { email: `outsider-${schema}@invalid.test`, name: 'Other owner' } });
+    let otherCookie;
+    auth.setSessionCookie({ cookie: (name, value) => { otherCookie = `${name}=${value}`; } }, outsider.id);
+    const denied = await fetch(`${base}/canvases/${canvas.id}/conversations/${conversation.id}`, { headers: { cookie: otherCookie } });
+    assert.equal(denied.status, 404);
 
   } finally {
     await app?.close();

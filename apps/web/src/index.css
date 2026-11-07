@@ -40,6 +40,21 @@ body {
     sans-serif;
 }
 
+@layer base {
+  /* Menu labels are controls: repeated clicks must not select their text. */
+  :where([role='menu'], [role='listbox'], [role='option'], [role='menuitem'],
+    [data-dropdown-menu], [data-add-node-menu], [data-node-action-menu], [aria-haspopup], select, option) {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Search/rename fields inside menus keep normal editing and select-all. */
+  :where([role='menu'], [role='listbox'], [data-dropdown-menu]) :where(input, textarea, [contenteditable='true']) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
 @keyframes typewriter-cursor-blink {
   0%,
   49% {

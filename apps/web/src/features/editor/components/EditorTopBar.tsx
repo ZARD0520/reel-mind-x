@@ -232,7 +232,7 @@ export function EditorTopBar({
             </div>
           </>}
           {exportOpen && (
-            <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] rounded-xl border border-white/[0.14] bg-[#242424] p-4 shadow-xl">
+            <div data-dropdown-menu className="absolute right-0 top-[calc(100%+8px)] z-50 w-[320px] rounded-xl border border-white/[0.14] bg-[#242424] p-4 shadow-xl">
               <div className="mb-3 flex items-center justify-between">
                 <span className="text-sm font-semibold">{destination === 'canvas' ? '导出到画布' : '导出到本地'}</span>
                 <button

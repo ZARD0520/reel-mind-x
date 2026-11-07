@@ -104,6 +104,7 @@ function TransitionSelect({ value, onChange }: TransitionSelectProps) {
       {open && rect && (
         <div
           ref={menuRef}
+          data-dropdown-menu
           className="fixed z-50 rounded-xl border border-white/[0.12] bg-[#242424] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.55)]"
           style={{ left: rect.left, top: rect.top, width: rect.width }}
         >

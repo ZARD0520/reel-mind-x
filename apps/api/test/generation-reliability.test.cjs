@@ -47,11 +47,37 @@ const { AuthService } = require('../src/modules/auth/auth.service.ts');
 const { AuthGuard } = require('../src/modules/auth/auth.guard.ts');
 const { ZodExceptionFilter } = require('../src/filters/zod-exception.filter.ts');
 const { CanvasChatService } = require('../src/modules/canvas-chat/canvas-chat.service.ts');
+const { CanvasAgentService } = require('../src/modules/canvas-agent/canvas-agent.service.ts');
+const { CanvasToolsService } = require('../src/modules/canvas-agent/canvas-tools.service.ts');
+const { CanvasMcpService } = require('../src/modules/canvas-agent/canvas-mcp.service.ts');
 const { CanvasesService } = require('../src/modules/canvases/canvases.service.ts');
 const { PrismaService } = require('../src/prisma/prisma.service.ts');
 const { AssetFoldersService } = require('../src/modules/asset-folders/asset-folders.service.ts');
 const repo = path.resolve(__dirname, '../../..');
 const { referenceImagePath } = require('../src/modules/generation-tasks/reference-image-path.ts');
+const { canvasNodeBounds } = require('../../../packages/contracts/src/canvas-layout.ts');
+
+test('batch outputs stack below their source, skip occupied cards and preserve positions on replay', () => {
+  const nodes = [
+    { id: 'parent', position: { x: 100, y: 100 }, measured: { width: 640, height: 410 }, data: { kind: 'image', title: '批量图片', content: '', generationRequestId: 'request', aspectRatio: '16:9' } },
+    { id: 'blocker', position: { x: 80, y: 650 }, measured: { width: 840, height: 900 }, data: { kind: 'video', title: '保留的位置', content: '' } },
+    { id: 'blocker2', position: { x: 200, y: 2400 }, data: { kind: 'text', title: '已有文本', content: '' } },
+  ];
+  const task = { id: 'batch', requestId: 'request', nodeId: 'parent', model: 'model', status: 'completed', items: Array.from({ length: 4 }, (_, index) => ({ id: `item-${index}`, index, status: 'completed', asset: { id: `asset-${index}`, url: `/image-${index}.png` } })) };
+  const recovered = recoverGenerationTasks(nodes, [], [task]);
+  const children = recovered.nodes.filter(node => node.data.generationBatchTaskId === 'batch');
+  assert.equal(children.length, 3);
+  assert(children.every((node, index) => node.position.x === 100 && node.position.y > (index ? children[index - 1].position.y : 510)));
+  for (const child of children) for (const other of recovered.nodes) {
+    if (child.id === other.id) continue;
+    const a = canvasNodeBounds(child), b = canvasNodeBounds(other);
+    assert(a.x + a.width + 160 <= b.x || b.x + b.width + 160 <= a.x || a.y + a.height + 160 <= b.y || b.y + b.height + 160 <= a.y, `overlap: ${child.id} / ${other.id}`);
+  }
+  assert.deepEqual(recovered.nodes.find(node => node.id === 'blocker').position, nodes[1].position);
+  const again = recoverGenerationTasks(recovered.nodes, recovered.edges, [task]);
+  assert.deepEqual(again.nodes.map(node => node.position), recovered.nodes.map(node => node.position));
+  assert.equal(again.nodes.length, recovered.nodes.length);
+});
 
 test('media model contracts reject unsupported options and preserve valid parameters', () => {
   const { CreateGenerationTaskSchema, VIDEO_SIZES, IMAGE_SIZES } = apiRequire('@reel/contracts');
@@ -592,17 +618,16 @@ test(
             data: { name: 'Chat billing fixture', email: `${randomUUID()}@invalid.test` },
           });
           const scope = await prisma.canvas.create({
-            data: { userId: fixture.id, name: 'Chat billing' },
+            data: { userId: fixture.id, name: 'Chat billing', graph: { version: 1, nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } } },
           });
           const llm = {
             chat: async () => ({ text: '测试标题' }),
-            chatStream: async function* () {
-              yield '测试回答';
+            chatStreamEvents: async function* () {
+              yield { type: 'text', text: JSON.stringify({ mode: 'answer', goal: '回答问题', answer: '测试回答', steps: [] }) };
             },
           };
-          const agent = { run: async function* (_scope, _conversationId, messages, model, signal) {
-            for await (const text of llm.chatStream(messages, { model, signal })) yield { event: 'delta', data: { text } };
-          } };
+          // Exercise the durable agent contract instead of the old run-only stub.
+          const agent = new CanvasAgentService(new CanvasMcpService(new CanvasToolsService(prisma)), llm, prisma);
           const chat = new CanvasChatService(prisma, llm, credits, config, agent);
           const conversation = await chat.create(fixture.id, scope.id);
           const signal = new AbortController().signal;
@@ -623,8 +648,8 @@ test(
             await prisma.canvasChatMessage.count({ where: { conversationId: conversation.id } }),
             2,
           );
-          llm.chatStream = async function* () {
-            yield '部分回答';
+          llm.chatStreamEvents = async function* () {
+            yield { type: 'text', text: '部分计划' };
             throw new Error('provider disconnected');
           };
           await assert.rejects(async () => {
@@ -638,9 +663,9 @@ test(
             ))
               void event;
           }, /provider disconnected/);
-          llm.chatStream = async function* () {
-            yield '部分回答';
-            yield '剩余回答';
+          llm.chatStreamEvents = async function* () {
+            yield { type: 'text', text: '部分计划' };
+            yield { type: 'text', text: '剩余计划' };
           };
           const interrupted = chat.sendStream(
             fixture.id,

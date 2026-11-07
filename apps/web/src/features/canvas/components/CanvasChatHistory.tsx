@@ -37,11 +37,11 @@ export function CanvasChatHistory({ chat }: { chat: ReturnType<typeof useCanvasC
 
   return (
     <div ref={rootRef} className="relative min-w-0 flex-1">
-      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label="选择对话" className="flex max-w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-semibold text-[#f3f3f0] hover:bg-white/[0.08]">
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-haspopup="menu" aria-expanded={open} aria-label="选择对话" className="flex max-w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-left text-sm font-semibold text-[#f3f3f0] hover:bg-white/[0.08]">
         <span className="truncate">{chat.title}</span><ChevronDown className="h-4 w-4 shrink-0 text-[#99999d]" />
       </button>
       {open && (
-        <div className="absolute left-0 top-11 z-50 w-[min(340px,calc(86vw-32px))] overflow-hidden rounded-xl border border-white/[0.14] bg-[#242424] shadow-2xl">
+        <div data-dropdown-menu className="absolute left-0 top-11 z-50 w-[min(340px,calc(86vw-32px))] overflow-hidden rounded-xl border border-white/[0.14] bg-[#242424] shadow-2xl">
           <div className="reel-scroll flex max-h-72 flex-col gap-1 overflow-y-auto p-1.5">
             {chat.list.isLoading && <p className="px-3 py-2 text-xs text-[#929296]">加载中...</p>}
             {!chat.list.isLoading && !chat.list.data?.length && <p className="px-3 py-2 text-xs text-[#929296]">暂无历史对话</p>}

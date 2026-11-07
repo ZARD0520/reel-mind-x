@@ -12,7 +12,12 @@ export function verifyPlan(plan: AgentPlan, results: Map<string, StepResult>, gr
     if (!result) throw new AgentFailure('VERIFICATION_FAILED', `步骤 ${step.id} 没有提交结果`);
     const args = resolveArguments(step, results);
     if (step.tool === 'rename_node') patch(String(args.nodeId), { title: args.title });
-    if (step.tool === 'update_node_prompt') patch(String(args.nodeId), { prompt: args.prompt });
+    if (step.tool === 'update_node_prompt') {
+      const state = (result.nodeStates as Graph['nodes'] | undefined)?.find(n => n.id === args.nodeId)?.data;
+      if (!state || !String(state.prompt ?? '').startsWith(String(args.prompt))) throw new AgentFailure('VERIFICATION_FAILED', '修改提示词的提交结果与计划不符');
+      patch(String(args.nodeId), { prompt: state.prompt });
+      for (const source of (state.referenceNodeIds ?? []) as string[]) edges.push({ source, target: String(args.nodeId) });
+    }
     if (step.tool === 'create_nodes') {
       const created = result.createdNodes as { id: string }[];
       const nodes = args.nodes as Array<Record<string, unknown> & { referenceNodeIds: string[] }>;
@@ -36,7 +41,11 @@ export function verifyPlan(plan: AgentPlan, results: Map<string, StepResult>, gr
     const actual = graph.nodes.find(n => n.id === id);
     if (!actual || Object.entries(fields).some(([key, value]) => actual.data[key] !== value)) throw new AgentFailure('VERIFICATION_FAILED', `节点 ${id} 的实际结果与计划不符`);
   }
-  for (const edge of edges) if (!graph.edges.some(e => e.source === edge.source && e.target === edge.target)) throw new AgentFailure('VERIFICATION_FAILED', '计划中的依赖连接未完成');
+  for (const edge of edges) {
+    const target = graph.nodes.find(node => node.id === edge.target);
+    if (!graph.edges.some(e => e.source === edge.source && e.target === edge.target) ||
+      !Array.isArray(target?.data.referenceNodeIds) || !target.data.referenceNodeIds.includes(edge.source)) throw new AgentFailure('VERIFICATION_FAILED', '计划中的依赖连接或引用信息未完成');
+  }
 }
 
 export function assertPreconditions(tool: string, args: Record<string, unknown>, baseline: Graph, results: Map<string, StepResult>, current: Graph) {

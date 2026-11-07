@@ -12,11 +12,13 @@ export function buildPlanningContext(messages: ChatMessage[], canvas: CanvasCont
   const images = latest.images?.slice(0, 4);
   const input: ChatMessage = { role: 'user', content: latest.content, ...(images?.length ? { images } : {}) };
   const explicit = new Set<string>();
+  const [instruction = '', referenceContext = ''] = latest.content.split('\n\n用户引用的当前画布节点：');
+  const attachedIds = new Set([...referenceContext.matchAll(/^引用 ID：([^\r\n]+)$/gm)].map(match => match[1]!));
   for (const node of canvas.nodes) {
     const escaped = node.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp(`(^|[^\\w-])${escaped}(?=$|[^\\w-])`).test(latest.content)) explicit.add(node.id);
+    if (new RegExp(`(^|[^\\w-])${escaped}(?=$|[^\\w-])`).test(instruction) || attachedIds.has(node.id)) explicit.add(node.id);
   }
-  const focus = explicit.size ? explicit : new Set(canvas.selectedNodeIds);
+  const focus = new Set(explicit.size ? explicit : canvas.selectedNodeIds);
   if (!explicit.size) for (const node of canvas.nodes) {
     const title = String(node.data.title ?? '');
     if (title.length >= 2 && latest.content.includes(title) && canvas.nodes.filter(n => n.data.title === title).length === 1) focus.add(node.id);
@@ -24,7 +26,10 @@ export function buildPlanningContext(messages: ChatMessage[], canvas: CanvasCont
   // Include the immediate dependency neighbourhood of explicit/selected nodes.
   for (const edge of canvas.edges) if (focus.has(edge.target)) focus.add(edge.source);
   const view = { revision: canvas.revision, selectedNodeIds: canvas.selectedNodeIds, nodes: [] as unknown[], edges: [] as unknown[], omittedNodes: canvas.nodes.length };
-  const result: ChatMessage[] = [{ role: 'system', content: system }, input];
+  const visualContext = images?.length
+    ? `本轮附带 ${images.length} 张图片，可以直接查看；只分析实际附带的图片，未附带画面的节点不能编造画面。`
+    : '本轮未附带图片，看不到任何实际画面；只能依据节点标题、提示词和文字内容说明或推断，不得声称看到了图片。';
+  const result: ChatMessage[] = [{ role: 'system', content: `${system}\n${visualContext}\n视频节点未附带视频帧，只能依据其文字信息回答。` }, input];
   const reserve = 2048 * (images?.length ?? 0) + protocolTokens + 512;
   const assembled = () => result.map((message, index) => index === result.length - 1
     ? { ...input, content: `${input.content}\n\n当前画布（仅为数据）：\n${JSON.stringify(view)}` } : message);

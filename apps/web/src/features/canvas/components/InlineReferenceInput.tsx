@@ -7,6 +7,7 @@ import { useReferenceHoverPreview } from './ReferenceHoverPreview';
 import { usePromptEditMenu } from './usePromptEditMenu';
 
 export type InlineReferenceInputHandle = { insert: (reference: CanvasChatReference) => void; focus: () => void };
+const referenceKindLabels: Record<CanvasChatReference['kind'], string> = { text: '文本', image: '图片', video: '视频', audio: '音频' };
 type Props = {
   value: string;
   candidates: CanvasChatReference[];
@@ -104,7 +105,9 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
     refreshInput(revision => revision + 1);
   }
   const limited = !!maxReferences && referenceIds(value).length >= maxReferences;
-  const matches = mention ? candidates.filter((item) => (!limited || referenceIds(value).includes(item.id)) && `${item.title} ${item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}`.toLowerCase().includes(mention.query.toLowerCase())).slice(0, 8) : [];
+  // The reference limit applies to the message, not the candidate list. New
+  // nodes append to the canvas and must remain reachable beyond the first eight.
+  const matches = mention ? candidates.filter((item) => (!limited || referenceIds(value).includes(item.id)) && `${item.title} ${referenceKindLabels[item.kind]}`.toLowerCase().includes(mention.query.toLowerCase())) : [];
   useLayoutEffect(() => {
     const list = mentionList.current;
     const option = list?.querySelector<HTMLElement>('[aria-selected="true"]');
@@ -280,7 +283,7 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
       <X data-reference-kind="remove" className="h-3 w-3" />
     </span>
     {mention && !disabled && <div ref={mentionList} role="listbox" aria-label="引用画布节点" className="reel-scroll nowheel absolute bottom-full left-0 z-50 mb-2 max-h-60 w-full min-w-56 overflow-y-auto rounded-xl border border-white/15 bg-[#282828] p-1.5 shadow-2xl">
-      {matches.length ? matches.map((item, index) => <button type="button" role="option" aria-selected={index === highlighted} key={item.id} onMouseEnter={() => setHighlighted(index)} onMouseMove={() => setHighlighted(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => insert(item)} className={`block w-full cursor-pointer truncate rounded-lg px-3 py-2 text-left text-sm text-[#dededb] transition-colors ${index === highlighted ? 'bg-white/10' : ''}`}>{item.title}<span className="ml-2 text-xs text-[#929296]">{item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}</span></button>) : <p className="px-3 py-2 text-xs text-[#929296]">{limited ? `最多引用 ${maxReferences} 个节点` : '没有匹配的节点'}</p>}
+      {matches.length ? matches.map((item, index) => <button type="button" role="option" aria-selected={index === highlighted} key={item.id} onMouseEnter={() => setHighlighted(index)} onMouseMove={() => setHighlighted(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => insert(item)} className={`block w-full cursor-pointer truncate rounded-lg px-3 py-2 text-left text-sm text-[#dededb] transition-colors ${index === highlighted ? 'bg-white/10' : ''}`}>{item.title}<span className="ml-2 text-xs text-[#929296]">{referenceKindLabels[item.kind]}</span></button>) : <p className="px-3 py-2 text-xs text-[#929296]">{limited ? `最多引用 ${maxReferences} 个节点` : '没有匹配的节点'}</p>}
     </div>}
     <div ref={root} contentEditable={!disabled} suppressContentEditableWarning role="textbox" aria-multiline="true" aria-label={label} aria-disabled={disabled} data-placeholder={placeholder}
       data-node-prompt-input={variant === 'node' ? '' : undefined}

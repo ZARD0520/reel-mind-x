@@ -112,6 +112,7 @@ export function Select<T extends string>({
       {isOpen && (
         <div
           ref={menuRef}
+          data-dropdown-menu
           role={hasPanel ? 'dialog' : 'listbox'}
           aria-label={ariaLabel}
           className={`reel-scroll absolute right-0 z-30 max-h-72 overflow-y-auto rounded-xl border border-white/[0.12] bg-[#242424] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.55)] ${isCompact ? 'w-24' : 'w-64'} ${placement === 'bottom' ? (isCompact ? 'top-9' : 'top-11') : isCompact ? 'bottom-9' : 'bottom-11'} ${menuClassName}`}

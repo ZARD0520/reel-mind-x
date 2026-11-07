@@ -60,12 +60,17 @@ async function downscaleToJpeg(filePath: string): Promise<Buffer | null> {
  * 视觉模型由智谱服务端拉取 URL，无法携带本站登录态，因此必须以 base64 内联。
  * 非本站路径或处理失败返回 null（调用方跳过该图即可）。
  */
-export async function readLocalImageAsDataUrl(storageDir: string, url: string): Promise<string | null> {
+export async function readLocalImageAsDataUrl(storageDir: string, url: string, expectedUserId?: string): Promise<string | null> {
   try {
-    if (!url.startsWith('/files/')) return null;
-    const [, , , userId, scope, filename] = url.split('/');
-    if (!userId || !scope || !filename || filename !== path.basename(filename)) return null;
-    const filePath = path.resolve(storageDir, 'users', userId, scope, filename);
+    const parts = url.split('/');
+    if (parts.length !== 6 || parts[1] !== 'files' || parts[2] !== 'users') return null;
+    const [, , , userId, scope, filename] = parts;
+    if (!userId || !/^[\w-]+$/.test(userId) || !scope || !/^[\w-]+$/.test(scope) || !filename || filename === '.' || filename === '..' || filename !== path.basename(filename)) return null;
+    if (expectedUserId !== undefined && userId !== expectedUserId) return null;
+    // Resolve symlinks as well as URL segments before reading or creating a cache.
+    const userRoot = path.join(await fs.realpath(storageDir), 'users', userId);
+    const filePath = await fs.realpath(path.join(userRoot, scope, filename));
+    if (!filePath.startsWith(userRoot + path.sep)) return null;
     const stat = await fs.stat(filePath);
     if (!stat.isFile()) return null;
     const directMime = IMAGE_MIME_BY_EXT[path.extname(filename).toLowerCase()];

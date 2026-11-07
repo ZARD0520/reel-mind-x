@@ -13,12 +13,13 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 const { CanvasToolsService } = require('../src/modules/canvas-agent/canvas-tools.service.ts');
 const { CanvasMcpService } = require('../src/modules/canvas-agent/canvas-mcp.service.ts');
 const { CanvasAgentService } = require('../src/modules/canvas-agent/canvas-agent.service.ts');
-const { PlanSchema, parsePlanCandidate, bindRequestLiterals, bindRequestReferences, resolveArguments, validateReferences, validateRequestBounds } = require('../src/modules/canvas-agent/agent-plan.ts');
+const { PlanSchema, parsePlanJson, parsePlanCandidate, requestIsReadOnly, bindCreatedNodeReferences, bindRequestLiterals, bindRequestReferences, resolveArguments, validateReferences, validateRequestBounds } = require('../src/modules/canvas-agent/agent-plan.ts');
 const { buildPlanningContext, CONTEXT_LIMIT, estimateMessages } = require('../src/modules/canvas-agent/agent-context.ts');
 const { verifyPlan } = require('../src/modules/canvas-agent/agent-verifier.ts');
 const { CanvasChatService } = require('../src/modules/canvas-chat/canvas-chat.service.ts');
 const { CreditsService } = require('../src/modules/credits/credits.service.ts');
 const { LlmError } = apiRequire('@reel/llm');
+const { classifyError } = require('../src/modules/canvas-agent/agent-store.ts');
 const plan = steps => ({ mode: 'execute', goal: '执行当前请求', answer: '', steps });
 const rename = (title = '测试agent', id = 'rename') => ({ id, description: `名称改为${title}`, tool: 'rename_node', arguments: { nodeId: 'story', title } });
 const create = (id = 'create') => ({ id, description: '创建一个视频并引用故事', tool: 'create_nodes', arguments: { nodes: [{ kind: 'video', title: '视频', prompt: '', referenceNodeIds: ['story'] }] } });
@@ -26,6 +27,54 @@ const request = content => [{ role: 'user', content }];
 const submit = value => ({ type: 'text', text: JSON.stringify(value) });
 const collect = async stream => { const events = []; for await (const e of stream) events.push(e); return events; };
 const signal = () => AbortSignal.timeout(90000);
+
+test('new node placeholders bind only to unambiguous prior creation results', () => {
+  for (const placeholder of ['由create_text_node步骤生成的文本节点ID', '从当前步骤第一个操作创建的节点获取的真实ID', 'create_text_node', 'create_text_node[0]']) {
+    const value = PlanSchema.parse(plan([create('create_text_node'), { ...rename(), arguments: { nodeId: placeholder, title: '最终说明' } }]));
+    bindCreatedNodeReferences(value, new Set(['story']));
+    assert.deepEqual(value.steps[1].arguments.nodeId, { stepId: 'create_text_node', index: 0 });
+    validateReferences(value, new Set(['story']));
+  }
+  for (const value of [
+    plan([create(), { ...rename(), arguments: { nodeId: randomUUID(), title: '错误ID' } }]),
+    plan([create('first'), create('second'), { ...rename(), arguments: { nodeId: '刚创建的节点ID', title: '不明确' } }]),
+    plan([create('first'), { ...rename(), arguments: { nodeId: '由future步骤生成的节点ID', title: '前向引用' } }, create('future')]),
+    plan([create(), { ...rename(), arguments: { nodeId: '由unknown_step步骤生成的节点ID', title: '不存在的步骤' } }]),
+    plan([{ ...rename(), arguments: { nodeId: '由create步骤生成的节点ID', title: '前向引用' } }, create()]),
+  ]) {
+    const parsed = PlanSchema.parse(value);
+    bindCreatedNodeReferences(parsed, new Set(['story']));
+    assert.throws(() => validateReferences(parsed, new Set(['story'])));
+  }
+});
+
+test('fallback JSON closing-delimiter repairs preserve values and retain strict validation', () => {
+  const expected = plan([create()]);
+  const json = JSON.stringify(expected);
+  for (const suffix of ['}]}}}', '}]}}}}', '}]}}']) {
+    const malformed = json.replace(/\}\]\}\}\]\}$/, suffix);
+    assert.deepEqual(PlanSchema.parse(parsePlanJson(malformed)), PlanSchema.parse(expected));
+  }
+  const tricky = plan([rename('含引号"、反斜线\\、括号 } ] 的名称')]);
+  assert.deepEqual(PlanSchema.parse(parsePlanJson(JSON.stringify(tricky).slice(0, -2))), PlanSchema.parse(tricky));
+  for (const malformed of ['{"mode":"execute","steps":[{"id":"unterminated', '{"mode":"execute",}', '{"steps":[{"id":"x"} true]}', '{"steps":[} ,"mode":"execute"}']) assert.throws(() => parsePlanJson(malformed));
+  assert.throws(() => PlanSchema.parse(parsePlanJson('{"mode":"execute","goal":"x","steps":[{"tool":"delete_all"}]}')));
+});
+
+test('temporary provider and database connection failures remain recoverable', () => {
+  assert.equal(classifyError(new LlmError('GLM API 网络错误', undefined, { code: 'ECONNRESET' })), 'MODEL_UNAVAILABLE');
+  for (const code of ['P1001', 'P1002', 'P1017', 'P2024', 'P2028', 'P2034']) assert.equal(classifyError(Object.assign(new Error('database unavailable'), { code })), 'TRANSIENT');
+  assert.equal(classifyError(new Error('目标节点不存在')), 'INVALID_OPERATION');
+});
+
+test('read-only questions cannot inherit write permissions from previous requests or attachments', () => {
+  for (const text of ['这个画布现在有几个节点？', '为什么刚才创建失败？', '只分析这个节点，不要修改画布', '先给我计划，不要执行操作', '创建好了吗？']) {
+    assert.equal(requestIsReadOnly(text), true, text);
+    assert.throws(() => validateRequestBounds(PlanSchema.parse(plan([rename()])), text), /禁止写操作/);
+  }
+  for (const text of ['帮我创建两个节点', '可以把这个节点重命名为测试agent吗？', '把名字改成测试agent', '修改提示词，不要创建其他节点', '修改一下，只回答结果']) assert.equal(requestIsReadOnly(text), false, text);
+  assert.equal(requestIsReadOnly('这个画布有几个节点？\n\n用户引用的当前画布节点：\n内容：创建视频并修改提示词'), true);
+});
 
 test('planner discriminator aliases normalize without weakening plan or tool validation', () => {
   for (const mode of ['execute', 'answer', 'clarify']) {
@@ -101,6 +150,40 @@ test('an explicit single source is bound to its real ID instead of a model-inven
   assert.deepEqual(p.steps[0].arguments.nodes[0].referenceNodeIds, ['story']);
 });
 
+test('based-on requests bind every new node to explicit sources or selected nodes', () => {
+  for (const wording of ['基于这个节点创建四个图片节点', '根据选中的故事拆分为四个分镜', '参考该节点新增四个图片节点']) {
+    const p = PlanSchema.parse(plan([{ id: 'shots', description: '创建分镜', tool: 'create_nodes', arguments: { nodes: Array.from({ length: 4 }, (_, index) => ({ kind: 'image', title: `镜头${index}` })) } }]));
+    bindRequestReferences(p, wording, new Set(), new Set(['story']));
+    assert(p.steps[0].arguments.nodes.every(node => JSON.stringify(node.referenceNodeIds) === '["story"]'));
+    validateReferences(p, new Set(['story']));
+  }
+  const attached = PlanSchema.parse(plan([create()]));
+  attached.steps[0].arguments.nodes[0].referenceNodeIds = [];
+  bindRequestReferences(attached, '创建视频 【图片】(节点ID：photo)', new Set(['photo']), new Set(['stale-selection']));
+  assert.deepEqual(attached.steps[0].arguments.nodes[0].referenceNodeIds, ['photo']);
+  const independent = PlanSchema.parse(plan([create()]));
+  independent.steps[0].arguments.nodes[0].referenceNodeIds = [];
+  bindRequestReferences(independent, '创建一个独立的视频节点', new Set(), new Set(['story']));
+  assert.deepEqual(independent.steps[0].arguments.nodes[0].referenceNodeIds, []);
+  bindRequestReferences(independent, '基于这个节点创建视频，但不要建立连线', new Set(['story']));
+  assert.deepEqual(independent.steps[0].arguments.nodes[0].referenceNodeIds, []);
+});
+
+test('dependency neighbourhoods and IDs inside referenced node content do not become explicit sources', () => {
+  const canvas = { revision: new Date().toISOString(), selectedNodeIds: ['old'], nodes: ['source', 'parent', 'old'].map(id => ({ id, data: { kind: 'text', title: id, content: '' } })), edges: [{ source: 'parent', target: 'source' }] };
+  const context = buildPlanningContext(request('基于该节点创建图片\n\n用户引用的当前画布节点：\n引用 ID：source\n内容：parent是之前引用的节点'), canvas, '只规划');
+  assert.deepEqual([...context.explicitNodeIds], ['source']);
+  assert(context.nodeIds.has('parent'));
+});
+
+test('planning context reports the actual image count and never claims to see missing images', () => {
+  const canvas = { revision: new Date().toISOString(), selectedNodeIds: ['photo'], nodes: [{ id: 'photo', data: { kind: 'image', title: '图片' } }], edges: [] };
+  const absent = buildPlanningContext(request('描述选中图片'), canvas, '只规划');
+  assert(absent.messages[0].content.includes('本轮未附带图片'));
+  const attached = buildPlanningContext([{ role: 'user', content: '描述图片', images: ['data:image/png;base64,test'] }], canvas, '只规划');
+  assert(attached.messages[0].content.includes('本轮附带 1 张图片'));
+});
+
 const dbEnabled = process.env.AGENT_DATABASE_TESTS === '1' || process.env.LIVE_AGENT_SMOKE === '1';
 let db, admin, schema, user;
 before(async () => {
@@ -146,6 +229,98 @@ async function fixture(value = plan([rename()]), customDb = db) {
 }
 
 test('database Plan & Execute guarantees', { skip: !dbEnabled, timeout: 120000 }, async t => {
+  await t.test('creation split across steps stays in the same vertical column', async () => {
+    const f = await fixture(plan([create('first'), create('second')]));
+    await collect(f.run());
+    const graph = await f.graph();
+    assert.equal(graph.nodes.length, 3);
+    assert.equal(graph.nodes[1].position.x, graph.nodes[2].position.x);
+    assert(graph.nodes[2].position.y >= graph.nodes[1].position.y + 560);
+    assert.equal(graph.edges.length, 2);
+  });
+  await t.test('create with content then rename resolves descriptive output IDs and preserves existing nodes', async () => {
+    const value = plan([
+      { id: 'create_text_node', description: '创建并填写内容', tool: 'create_nodes', arguments: { nodes: [{ kind: 'text', title: '临时说明', content: '测试内容' }] } },
+      { ...rename('最终说明'), arguments: { nodeId: '由create_text_node步骤生成的文本节点ID', title: '最终说明' } },
+    ]);
+    const f = await fixture(value);
+    const events = await collect(f.run(request('创建一个名为临时说明的文本节点，内容为测试内容，然后把它重命名为最终说明')));
+    const graph = await f.graph();
+    assert.equal(f.calls(), 1);
+    assert.equal(graph.nodes.length, 2);
+    assert.equal(graph.nodes[0].data.title, '故事');
+    assert.equal(graph.nodes[1].data.title, '最终说明');
+    assert.equal(graph.nodes[1].data.content, '测试内容');
+    assert.equal(graph.nodes[1].data.status, 'ready');
+    assert.equal(events.filter(event => event.event === 'canvas').length, 2);
+    const run = await db.canvasAgentRun.findFirst({ where: { conversationId: f.conversation.id } });
+    assert.equal(run.status, 'completed');
+    assert.deepEqual(run.plan.steps[1].arguments.nodeId, { stepId: 'create_text_node', index: 0 });
+  });
+  await t.test('a stale write plan for a read-only question is rejected before any tool execution', async () => {
+    const f = await fixture((_messages, _options, attempts) => attempts === 1 ? plan([rename()]) : { mode: 'answer', goal: '回答当前节点数量', answer: '当前有1个节点。', steps: [] });
+    await collect(f.run(request('这个画布有几个节点？只回答数量，不要修改画布。')));
+    assert.equal(f.calls(), 2);
+    assert.equal((await f.graph()).nodes[0].data.title, '故事');
+    assert.equal(await db.canvasAgentStep.count({ where: { run: { conversationId: f.conversation.id } } }), 0);
+    const run = await db.canvasAgentRun.findFirst({ where: { conversationId: f.conversation.id } });
+    assert.equal(run.plan.mode, 'answer');
+    assert(run.events.some(event => event.phase === 'planning' && event.status === 'rejected'));
+  });
+  await t.test('unavailable context reads retry within a bound and do not execute a partial plan', async () => {
+    const f = await fixture();
+    const connect = f.mcp.connect.bind(f.mcp);
+    let reads = 0;
+    f.mcp.connect = async scope => {
+      const session = await connect(scope);
+      const call = session.client.callTool.bind(session.client);
+      session.client.callTool = async (...args) => {
+        if (args[0].name === 'get_canvas_context' && reads++ < 2) return { isError: true, structuredContent: { code: 'TRANSIENT' }, content: [{ type: 'text', text: 'temporarily unavailable' }] };
+        return call(...args);
+      };
+      return session;
+    };
+    await collect(f.run());
+    assert.equal(f.calls(), 1);
+    assert.equal((await f.graph()).nodes[0].data.title, '测试agent');
+    assert.equal((await db.canvasAgentStep.findFirst({ where: { run: { conversationId: f.conversation.id } } })).attempts, 1);
+  });
+  await t.test('user messages precede assistant replies even when PostgreSQL transaction timestamps are identical', async () => {
+    const f = await fixture();
+    const createdAt = new Date('2026-01-01T00:00:00.000Z');
+    await db.canvasChatMessage.createMany({ data: [
+      { id: 'ffffffff-ffff-ffff-ffff-ffffffffffff', conversationId: f.conversation.id, role: 'user', content: '问题', createdAt },
+      { id: '00000000-0000-0000-0000-000000000000', conversationId: f.conversation.id, role: 'assistant', content: '回答', createdAt },
+    ] });
+    const chat = new CanvasChatService(db, {}, {}, {}, f.agent);
+    const history = await chat.get(user.id, f.canvas.id, f.conversation.id);
+    assert.deepEqual(history.messages.map(message => message.role), ['user', 'assistant']);
+  });
+  await t.test('create then update prompt retains the reference throughout verification', async () => {
+    const f = await fixture(plan([create(), { id: 'prompt', description: '修改新视频提示词', tool: 'update_node_prompt', arguments: { nodeId: { stepId: 'create', index: 0 }, prompt: '夜景' } }]));
+    await collect(f.run());
+    const graph = await f.graph();
+    assert.equal(graph.edges.length, 1);
+    assert.deepEqual(graph.nodes[1].data.referenceNodeIds, ['story']);
+    assert(graph.nodes[1].data.prompt.includes('(node:story)'));
+    assert.equal((await db.canvasAgentRun.findFirst({ where: { conversationId: f.conversation.id } })).status, 'completed');
+  });
+  await t.test('creating several nodes based on a selected story commits and verifies every dependency', async () => {
+    const f = await fixture(plan([{ id: 'shots', description: '根据故事创建分镜', tool: 'create_nodes', arguments: { nodes: Array.from({ length: 4 }, (_, index) => ({ kind: 'image', title: `镜头${index}`, referenceNodeIds: [] })) } }]));
+    await collect(f.run(request('根据选中的故事创建四个图片节点')));
+    const graph = await f.graph();
+    assert.equal(graph.nodes.length, 5);
+    assert.equal(graph.edges.length, 4);
+    for (const node of graph.nodes.slice(1)) {
+      assert.deepEqual(node.data.referenceNodeIds, ['story']);
+      assert(graph.edges.some(edge => edge.source === 'story' && edge.target === node.id));
+      assert(node.data.prompt.includes('(node:story)'));
+      assert(node.position.x >= 360 + 160);
+    }
+    const run = await db.canvasAgentRun.findFirst({ where: { conversationId: f.conversation.id } });
+    assert.equal(run.status, 'completed');
+    assert(run.plan.steps[0].arguments.nodes.every(node => node.referenceNodeIds.includes('story')));
+  });
   await t.test('a type=execute rename plan is normalized, persisted and executed exactly once', async () => {
     const { mode: _mode, ...rest } = plan([rename()]);
     const f = await fixture({ ...rest, type: 'execute' });
@@ -391,6 +566,33 @@ test('database Plan & Execute guarantees', { skip: !dbEnabled, timeout: 120000 }
   });
 });
 
+test('live creation with content then rename resolves outputs on primary and fallback models', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 240000 }, async () => {
+  assert(process.env.GLM_API_KEY);
+  const f = await fixture();
+  const { GlmProvider } = apiRequire('@reel/llm');
+  const model = new GlmProvider({ apiKey: process.env.GLM_API_KEY, baseUrl: process.env.GLM_BASE_URL });
+  const agent = new CanvasAgentService(f.mcp, model, db);
+  for (const name of ['glm-4.6v-flash', 'glm-4.1v-thinking-flash']) {
+    const before = await f.graph();
+    const ids = new Set(before.nodes.map(node => node.id));
+    await collect(agent.run(f.scope, f.conversation.id, [
+      { role: 'user', content: '之前帮我创建过几个分镜节点。' },
+      { role: 'assistant', content: '已完成之前的创建任务。' },
+      ...request('创建一个名为临时说明的文本节点，内容为测试内容，然后把它重命名为最终说明'),
+    ], name, signal()));
+    const graph = await f.graph();
+    const added = graph.nodes.filter(node => !ids.has(node.id));
+    assert.equal(added.length, 1, name);
+    assert.equal(added[0].data.title, '最终说明', name);
+    assert.equal(added[0].data.content, '测试内容', name);
+    assert.deepEqual(graph.nodes.filter(node => ids.has(node.id)), before.nodes, name);
+    const run = await db.canvasAgentRun.findFirst({ where: { conversationId: f.conversation.id }, orderBy: { createdAt: 'desc' } });
+    assert.equal(run.status, 'completed', name);
+    assert(run.plan.steps.some(step => step.tool === 'create_nodes'), name);
+    assert(run.plan.steps.some(step => step.tool === 'rename_node'), name);
+  }
+});
+
 test('live Plan & Execute renames then creates a referenced video on a populated canvas', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 120000 }, async () => {
   assert(process.env.GLM_API_KEY);
   const f = await fixture();
@@ -410,4 +612,18 @@ test('live Plan & Execute renames then creates a referenced video on a populated
   const video = result.nodes.find(n => n.data.kind === 'video');
   assert(video);
   assert(result.edges.some(e => e.source === 'story' && e.target === video.id));
+  const previousIds = new Set(result.nodes.map(node => node.id));
+  const previousRight = Math.max(...result.nodes.map(node => node.position.x + (node.data.kind === 'video' ? 640 : 360)));
+  await collect(agent.run(f.scope, f.conversation.id, request('基于选中的故事节点story，创建两个图片节点，每个都依赖这个故事，只创建节点，不生成媒体。'), 'glm-4.6v-flash', signal()));
+  const storyboard = await f.graph();
+  const created = storyboard.nodes.filter(node => !previousIds.has(node.id));
+  assert.equal(created.length, 2);
+  assert.equal(created[0].position.x, created[1].position.x);
+  assert(created[1].position.y >= created[0].position.y + 560);
+  for (const node of created) {
+    assert.equal(node.data.kind, 'image');
+    assert(node.data.referenceNodeIds.includes('story'));
+    assert(storyboard.edges.some(edge => edge.source === 'story' && edge.target === node.id));
+    assert(node.position.x >= previousRight + 160);
+  }
 });

@@ -5,6 +5,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./canvas-layout": {
+      "types": "./src/canvas-layout.ts",
+      "browser": "./src/canvas-layout.ts",
+      "default": "./dist/canvas-layout.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"

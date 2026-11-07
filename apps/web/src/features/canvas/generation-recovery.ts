@@ -1,5 +1,6 @@
 import type { GenerationTask } from '@reel/contracts';
 import { isGenerationActive } from '@reel/contracts/generation';
+import { CANVAS_NODE_GAP, canvasNodeBounds, layoutVerticalNodes } from '@reel/contracts/canvas-layout';
 import type { Edge, Node } from '@xyflow/react';
 
 /** Unknown tasks are paused for manual verification, not actively executing. */
@@ -45,7 +46,6 @@ export function recoverGenerationTasks<D extends GenerationNodeData>(
   nodes: Node<D>[],
   edges: Edge[],
   tasks: GenerationTask[],
-  horizontalGap: (node: Node<D>) => number,
 ) {
   let nextNodes = nodes;
   let nextEdges = edges;
@@ -113,10 +113,7 @@ export function recoverGenerationTasks<D extends GenerationNodeData>(
           (item, index): Node<D> => ({
             id: item.asset?.id ?? item.id,
             type: node.type,
-            position: {
-              x: node.position.x + horizontalGap(node) * (index + 1),
-              y: node.position.y,
-            },
+            position: node.position,
             data: {
               ...node.data,
               ...patch,
@@ -156,7 +153,12 @@ export function recoverGenerationTasks<D extends GenerationNodeData>(
         (!alreadyApplied || candidate.data.status === 'failed'),
       );
       if (additions.length) {
-        nextNodes = [...nextNodes, ...additions];
+        const bounds = canvasNodeBounds(node);
+        const positions = layoutVerticalNodes(nextNodes, additions.map(output => output.data), {
+          x: node.position.x, y: node.position.y + bounds.height + CANVAS_NODE_GAP,
+        });
+        const placed = additions.map((output, index) => ({ ...output, position: positions[index]! }));
+        nextNodes = [...nextNodes, ...placed];
         const incoming = nextEdges.filter((edge) => edge.target === node.id);
         nextEdges = [
           ...nextEdges,

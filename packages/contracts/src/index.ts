@@ -3,6 +3,7 @@ import { VIDEO_SIZES, validImageSizeForModel } from './media-capabilities';
 export * from './media-capabilities';
 export * from './credits';
 export * from './chat-errors';
+export * from './canvas-layout';
 export { MODEL_BUSY_MESSAGE } from './generation';
 
 /**

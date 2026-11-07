@@ -595,7 +595,7 @@ function serializeCanvasGraph(
 }
 
 function toChatReferences(nodes: WorkflowNode[]): CanvasChatReference[] {
-  return nodes.filter((node) => node.data.kind !== 'audio' && node.data.kind !== 'edit').map((node) => ({
+  return nodes.filter((node) => node.data.kind !== 'edit').map((node) => ({
     id: node.id,
     kind: node.data.kind as CanvasNodeKind,
     title: node.data.title.trim().slice(0, 200) || nodeLabels[node.data.kind],
@@ -1475,7 +1475,7 @@ function InfiniteCanvas({
     // Do not treat stale query-cache statuses as tasks observed running in this visit.
     if (!taskRecoveryReady.current && (!generationTasks.isFetchedAfterMount || generationTasks.isError)) return;
     taskRecoveryReady.current = true;
-    const recovered = recoverGenerationTasks(nodes, edges, generationTasks.data, (node) => node.data.kind === 'text' ? 400 : mediaNodeWidth(node.data.aspectRatio, node.data.kind === 'video' ? DEFAULT_VIDEO_ASPECT_RATIO : DEFAULT_IMAGE_ASPECT_RATIO) + 40);
+    const recovered = recoverGenerationTasks(nodes, edges, generationTasks.data);
     if (recovered.nodes !== nodes) setNodes(recovered.nodes as WorkflowNode[]);
     if (recovered.edges !== edges) setEdges(recovered.edges);
   }, [generationTasks.data, generationTasks.isFetchedAfterMount, generationTasks.isError, nodes, edges, setNodes, setEdges]);
@@ -1633,6 +1633,7 @@ function InfiniteCanvas({
   useLayoutEffect(() => {
     const apply = (graph: CanvasGraph) => {
       const selected = new Set(nodes.filter(node => node.selected).map(node => node.id));
+      if (graph.edges.some(edge => !edges.some(current => current.id === edge.id))) setShowEdges(true);
       lastSavedGraphRef.current = JSON.stringify(graph);
       setNodes(graph.nodes.map(node => ({ ...normalizeNode(node), selected: selected.has(node.id) })));
       setEdges(graph.edges.map(normalizeEdge));

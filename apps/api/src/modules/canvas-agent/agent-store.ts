@@ -21,12 +21,13 @@ export function classifyError(error: unknown) {
   if (error instanceof AgentFailure) return error.code;
   const cause = (error as { cause?: { code?: string } })?.cause;
   if (cause?.code === 'REQUEST_BUDGET' || cause?.code === 'OUTPUT_TOKEN_LIMIT' || cause?.code === 'CONTEXT_BUDGET') return cause.code;
-  const value = error as { code?: string; status?: number; message?: string };
-  if (value?.code === 'P2034' || value?.code === 'P2028' || /deadlock|serialization|连接.*中断/i.test(value?.message ?? '')) return 'TRANSIENT';
+  const value = error as { code?: string; status?: number; message?: string; name?: string };
+  if (['P1001', 'P1002', 'P1017', 'P2024', 'P2028', 'P2034'].includes(value?.code ?? '') || /deadlock|serialization|连接.*中断/i.test(value?.message ?? '')) return 'TRANSIENT';
   if (/画布已变化/.test(value?.message ?? '')) return 'REVISION_CONFLICT';
   if (/LEASE_LOST/.test(value?.message ?? '')) return 'LEASE_LOST';
   if (/CONTEXT_BUDGET/.test(value?.message ?? '')) return 'CONTEXT_BUDGET';
   if (value?.status === 429 || (value?.status ?? 0) >= 500) return 'MODEL_UNAVAILABLE';
+  if (value?.name === 'LlmError' && /网络|network|fetch failed/i.test(value.message ?? '')) return 'MODEL_UNAVAILABLE';
   return 'INVALID_OPERATION';
 }
 export class AgentStore {

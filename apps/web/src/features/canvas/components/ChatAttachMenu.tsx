@@ -70,6 +70,8 @@ export function ChatAttachMenu({ canvasId, uploads, draftIds, onPick, onUploaded
       <button
         type="button"
         aria-label="添加素材"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
         title="上传图片或添加素材"
         disabled={disabled || uploading}
         onMouseDown={(event) => event.preventDefault()}
@@ -79,7 +81,7 @@ export function ChatAttachMenu({ canvasId, uploads, draftIds, onPick, onUploaded
         {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
       </button>
       {menuOpen && (
-        <div className="absolute bottom-full left-0 z-50 mb-2 w-52 rounded-xl border border-white/[0.15] bg-[#282828] p-1.5 shadow-2xl">
+        <div data-dropdown-menu className="absolute bottom-full left-0 z-50 mb-2 w-52 rounded-xl border border-white/[0.15] bg-[#282828] p-1.5 shadow-2xl">
           <button type="button" className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[#dededb] transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
             disabled={uploading}
             onMouseDown={(event) => event.preventDefault()}

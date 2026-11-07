@@ -94,7 +94,9 @@ export class CanvasChatService {
     const conversation = await this.requireConversation(userId, canvasId, conversationId);
     const messages = await this.prisma.canvasChatMessage.findMany({
       where: { conversationId },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      // PostgreSQL now() is constant within a transaction: both messages can
+      // share a timestamp, so UUID ordering must not put the reply first.
+      orderBy: [{ createdAt: 'asc' }, { role: 'desc' }, { id: 'asc' }],
       select: { id: true, role: true, content: true, references: true, createdAt: true },
     });
     return {
@@ -174,7 +176,7 @@ export class CanvasChatService {
     }
     const history = (await this.prisma.canvasChatMessage.findMany({
       where: { conversationId },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 20,
+      orderBy: [{ createdAt: 'desc' }, { role: 'asc' }, { id: 'desc' }], take: 20,
       select: { role: true, content: true, references: true },
     })).reverse();
     const assetIds = references.flatMap((item) => (item.assetId ? [item.assetId] : []));
@@ -219,7 +221,7 @@ export class CanvasChatService {
     }
     const prompt = content.trim();
     // 引用的图片节点以 base64 随消息传给视觉模型（GLM-4V 系列）；读取失败的跳过
-    const referenceImages = await this.resolveReferenceImages(resolvedReferences);
+    const referenceImages = await this.resolveReferenceImages(userId, resolvedReferences);
     const messages: ChatMessage[] = [
       {
         role: 'system',
@@ -298,16 +300,17 @@ export class CanvasChatService {
 
   /**
    * 解析引用中的图片节点为 base64 data URL（最多 MAX_REFERENCE_IMAGES 张）。
-   * 引用的素材属主已在 sendStream 中校验；读取失败的跳过，不阻断回复。
+   * 素材 ID 在 sendStream 中校验；无素材 ID 的节点 URL 也必须属于当前用户。
+   * 读取失败的跳过，不阻断回复。
    */
-  private async resolveReferenceImages(references: CanvasChatReference[]): Promise<string[]> {
+  private async resolveReferenceImages(userId: string, references: CanvasChatReference[]): Promise<string[]> {
     const storageDir = this.config.get('STORAGE_DIR', { infer: true });
     const imageRefs = references
       .filter((reference) => reference.kind === 'image' && reference.url)
       .slice(0, MAX_REFERENCE_IMAGES);
     const images: string[] = [];
     for (const reference of imageRefs) {
-      const dataUrl = await readLocalImageAsDataUrl(storageDir, reference.url!);
+      const dataUrl = await readLocalImageAsDataUrl(storageDir, reference.url!, userId);
       if (dataUrl) images.push(dataUrl);
     }
     return images;

@@ -453,12 +453,13 @@ export function HomePage() {
               ref={userMenuButtonRef}
               className="flex h-9 w-9 items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.06] text-[#b9b9ba] transition-colors hover:bg-white/[0.10] hover:text-[#f7f7f2]"
               aria-label="打开用户菜单"
+              aria-haspopup="menu"
               aria-expanded={isUserMenuOpen}
             >
               <User className="h-[18px] w-[18px]" />
             </button>
             {isUserMenuOpen && (
-              <div ref={userMenuRef} className="absolute right-0 top-12 w-52 rounded-xl border border-white/[0.12] bg-[#171717] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
+              <div ref={userMenuRef} data-dropdown-menu className="absolute right-0 top-12 w-52 rounded-xl border border-white/[0.12] bg-[#171717] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.55)]">
                 <div className="truncate px-3 py-2 text-sm text-[#b9b9ba]">{greeting}</div>
                 <button type="button" onClick={() => logout.mutate()} className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-sm text-[#b9b9ba] transition-colors hover:bg-white/[0.08] hover:text-[#f7f7f2]">
                   <LogOut className="h-4 w-4" />退出登录

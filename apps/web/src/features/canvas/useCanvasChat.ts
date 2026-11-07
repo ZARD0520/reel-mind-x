@@ -108,6 +108,12 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
     setBusy(false);
   }, [activeId, canvasId, pending, queryClient]);
 
+  useEffect(() => {
+    // Cached/idempotent replies may contain only `done`. There is no animated
+    // message to call finishTurn in that case, but the composer must unlock.
+    if (pending?.completed && !pending.answer.trim()) finishTurn();
+  }, [finishTurn, pending?.completed, pending?.answer]);
+
   const createConversation = useCallback(async () => {
     if (busyRef.current) return false;
     busyRef.current = true;
