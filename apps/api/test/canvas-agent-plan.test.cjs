@@ -13,7 +13,7 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 const { CanvasToolsService } = require('../src/modules/canvas-agent/canvas-tools.service.ts');
 const { CanvasMcpService } = require('../src/modules/canvas-agent/canvas-mcp.service.ts');
 const { CanvasAgentService } = require('../src/modules/canvas-agent/canvas-agent.service.ts');
-const { PlanSchema, bindRequestLiterals, bindRequestReferences, resolveArguments, validateReferences, validateRequestBounds } = require('../src/modules/canvas-agent/agent-plan.ts');
+const { PlanSchema, parsePlanCandidate, bindRequestLiterals, bindRequestReferences, resolveArguments, validateReferences, validateRequestBounds } = require('../src/modules/canvas-agent/agent-plan.ts');
 const { buildPlanningContext, CONTEXT_LIMIT, estimateMessages } = require('../src/modules/canvas-agent/agent-context.ts');
 const { verifyPlan } = require('../src/modules/canvas-agent/agent-verifier.ts');
 const { CanvasChatService } = require('../src/modules/canvas-chat/canvas-chat.service.ts');
@@ -26,6 +26,22 @@ const request = content => [{ role: 'user', content }];
 const submit = value => ({ type: 'text', text: JSON.stringify(value) });
 const collect = async stream => { const events = []; for await (const e of stream) events.push(e); return events; };
 const signal = () => AbortSignal.timeout(90000);
+
+test('planner discriminator aliases normalize without weakening plan or tool validation', () => {
+  for (const mode of ['execute', 'answer', 'clarify']) {
+    const original = mode === 'execute' ? plan([rename()]) : { mode, goal: '回答当前问题', answer: '请指定节点。', steps: [] };
+    const { mode: _mode, ...rest } = original;
+    const legacy = { type: mode, ...rest };
+    assert.deepEqual(parsePlanCandidate(legacy), PlanSchema.parse(original));
+    assert.equal(legacy.mode, undefined, 'candidate normalization must not mutate the raw response');
+    assert.deepEqual(parsePlanCandidate({ ...original, type: mode }), PlanSchema.parse(original));
+  }
+  assert.throws(() => parsePlanCandidate({ ...plan([rename()]), type: 'answer' }));
+  assert.throws(() => parsePlanCandidate({ type: 'plan', goal: '未知协议', steps: [rename()] }));
+  assert.throws(() => parsePlanCandidate({ type: 'execute', goal: '缺少步骤' }));
+  assert.throws(() => parsePlanCandidate({ type: 'execute', goal: '未知工具', steps: [{ ...rename(), tool: 'delete_node' }] }));
+  assert.throws(() => parsePlanCandidate({ type: 'execute', goal: '非法额外字段', steps: [rename()], unsafe: true }));
+});
 
 test('context budget preserves the current request and selected node, trims history and canvas index', () => {
   const canvas = { revision: new Date().toISOString(), selectedNodeIds: ['n499'], nodes: Array.from({ length: 500 }, (_, i) => ({ id: `n${i}`, data: { kind: 'text', title: '节点'.repeat(30), content: '故事'.repeat(10000) } })), edges: [] };
@@ -130,6 +146,21 @@ async function fixture(value = plan([rename()]), customDb = db) {
 }
 
 test('database Plan & Execute guarantees', { skip: !dbEnabled, timeout: 120000 }, async t => {
+  await t.test('a type=execute rename plan is normalized, persisted and executed exactly once', async () => {
+    const { mode: _mode, ...rest } = plan([rename()]);
+    const f = await fixture({ ...rest, type: 'execute' });
+    const events = await collect(f.run(request('将story的名称改为测试agent')));
+    assert.equal(f.calls(), 1);
+    assert.equal((await f.graph()).nodes[0].data.title, '测试agent');
+    assert.equal((await f.graph()).nodes.length, 1);
+    const run = await db.canvasAgentRun.findFirst({ where: { conversationId: f.conversation.id }, include: { steps: true } });
+    assert.equal(run.status, 'completed');
+    assert.equal(run.plan.mode, 'execute');
+    assert(!Object.hasOwn(run.plan, 'type'));
+    assert.equal(run.steps.length, 1);
+    assert.equal(run.steps[0].attempts, 1);
+    assert.equal(events.filter(e => e.event === 'canvas').length, 1);
+  });
   await t.test('plan persists before any write; rename completes with a single planning call', async () => {
     const f = await fixture();
     const stream = f.run();

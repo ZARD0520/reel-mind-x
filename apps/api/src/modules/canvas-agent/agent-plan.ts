@@ -21,6 +21,20 @@ export type AgentPlan = z.infer<typeof PlanSchema>;
 export type PlanStep = AgentPlan['steps'][number];
 export type StepResult = Record<string, unknown>;
 
+/** Normalize only an unambiguous discriminator alias, then validate everything. */
+export function parsePlanCandidate(value: unknown): AgentPlan {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const candidate = value as Record<string, unknown>;
+    const modes = ['execute', 'answer', 'clarify'];
+    if (typeof candidate.type === 'string' && modes.includes(candidate.type) &&
+      (!Object.hasOwn(candidate, 'mode') || candidate.mode === candidate.type)) {
+      const { type, ...rest } = candidate;
+      return PlanSchema.parse({ ...rest, mode: type });
+    }
+  }
+  return PlanSchema.parse(value);
+}
+
 /** Explicit literal slots belong to the request, not to model paraphrasing. */
 export function bindRequestLiterals(plan: AgentPlan, request: string, explicitNodeIds = new Set<string>()) {
   const renames = plan.steps.filter(step => step.tool === 'rename_node');

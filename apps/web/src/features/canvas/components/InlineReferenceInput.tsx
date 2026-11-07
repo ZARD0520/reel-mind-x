@@ -48,6 +48,7 @@ function serialize(node: Node): string {
 
 export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props>(function InlineReferenceInput({ value, candidates, referenceItems = candidates, onChange, onReference, onFocusReference, onSubmit, placeholder, label, disabled, maxReferences, maxLength, variant = 'node', editorClassName }, ref) {
   const root = useRef<HTMLDivElement>(null);
+  const mentionList = useRef<HTMLDivElement>(null);
   const iconTemplates = useRef<HTMLSpanElement>(null);
   const editMenu = usePromptEditMenu(root, disabled);
   const cursor = useRef(value.length);
@@ -104,6 +105,15 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
   }
   const limited = !!maxReferences && referenceIds(value).length >= maxReferences;
   const matches = mention ? candidates.filter((item) => (!limited || referenceIds(value).includes(item.id)) && `${item.title} ${item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}`.toLowerCase().includes(mention.query.toLowerCase())).slice(0, 8) : [];
+  useLayoutEffect(() => {
+    const list = mentionList.current;
+    const option = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!list || !option) return;
+    const top = list.getBoundingClientRect().top + list.clientTop;
+    const rect = option.getBoundingClientRect();
+    if (rect.top < top) list.scrollTop += rect.top - top;
+    else if (rect.bottom > top + list.clientHeight) list.scrollTop += rect.bottom - top - list.clientHeight;
+  }, [highlighted, mention?.start, mention?.query, matches.length]);
 
   function selectionOffset() {
     const selection = window.getSelection();
@@ -112,6 +122,47 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
     range.selectNodeContents(root.current);
     range.setEnd(selection.getRangeAt(0).endContainer, selection.getRangeAt(0).endOffset);
     return serialize(range.cloneContents()).length;
+  }
+
+  function deleteReference(backward: boolean) {
+    const element = root.current;
+    const selection = window.getSelection();
+    if (disabled || !element || !selection?.rangeCount) return false;
+    const range = selection.getRangeAt(0);
+    if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return false;
+    const offset = (container: Node, position: number, end: boolean) => {
+      const chip = (container instanceof Element ? container : container.parentElement)?.closest<HTMLElement>('[data-reference]');
+      const prefix = document.createRange();
+      prefix.selectNodeContents(element);
+      // Noneditable chips are atomic even if the browser reports an endpoint
+      // inside their label/button rather than immediately before/after them.
+      if (chip && element.contains(chip)) {
+        if (end) prefix.setEndAfter(chip); else prefix.setEndBefore(chip);
+      } else prefix.setEnd(container, position);
+      return serialize(prefix.cloneContents()).length;
+    };
+    let start = offset(range.startContainer, range.startOffset, false);
+    let end = offset(range.endContainer, range.endOffset, true);
+    let position = 0;
+    let touchesReference = false;
+    for (const part of splitReferences(value)) {
+      const next = position + part.text.length;
+      if (part.id) {
+        if (start === end) {
+          if ((backward && start === next) || (!backward && start === position)) {
+            start = position; end = next; touchesReference = true; break;
+          }
+        } else if (start < next && end > position) touchesReference = true;
+      }
+      position = next;
+    }
+    if (!touchesReference) return false;
+    beforeCursor.current = selectionOffset();
+    cursor.current = start;
+    commit(value.slice(0, start) + value.slice(end));
+    setMention(null);
+    hover.close();
+    return true;
   }
 
   function placeCursor(offset: number) {
@@ -228,8 +279,8 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
       <Music data-reference-kind="audio" className="h-3.5 w-3.5 shrink-0" />
       <X data-reference-kind="remove" className="h-3 w-3" />
     </span>
-    {mention && !disabled && <div role="listbox" aria-label="引用画布节点" className="reel-scroll nowheel absolute bottom-full left-0 z-50 mb-2 max-h-60 w-full min-w-56 overflow-y-auto rounded-xl border border-white/15 bg-[#282828] p-1.5 shadow-2xl">
-      {matches.length ? matches.map((item, index) => <button type="button" role="option" aria-selected={index === highlighted} key={item.id} onMouseEnter={() => setHighlighted(index)} onMouseMove={() => setHighlighted(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => insert(item)} className={`block w-full cursor-pointer truncate rounded-lg px-3 py-2 text-left text-sm text-[#dededb] transition-colors hover:bg-white/10 ${index === highlighted ? 'bg-white/10' : ''}`}>{item.title}<span className="ml-2 text-xs text-[#929296]">{item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}</span></button>) : <p className="px-3 py-2 text-xs text-[#929296]">{limited ? `最多引用 ${maxReferences} 个节点` : '没有匹配的节点'}</p>}
+    {mention && !disabled && <div ref={mentionList} role="listbox" aria-label="引用画布节点" className="reel-scroll nowheel absolute bottom-full left-0 z-50 mb-2 max-h-60 w-full min-w-56 overflow-y-auto rounded-xl border border-white/15 bg-[#282828] p-1.5 shadow-2xl">
+      {matches.length ? matches.map((item, index) => <button type="button" role="option" aria-selected={index === highlighted} key={item.id} onMouseEnter={() => setHighlighted(index)} onMouseMove={() => setHighlighted(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => insert(item)} className={`block w-full cursor-pointer truncate rounded-lg px-3 py-2 text-left text-sm text-[#dededb] transition-colors ${index === highlighted ? 'bg-white/10' : ''}`}>{item.title}<span className="ml-2 text-xs text-[#929296]">{item.kind === 'text' ? '文本' : item.kind === 'image' ? '图片' : '视频'}</span></button>) : <p className="px-3 py-2 text-xs text-[#929296]">{limited ? `最多引用 ${maxReferences} 个节点` : '没有匹配的节点'}</p>}
     </div>}
     <div ref={root} contentEditable={!disabled} suppressContentEditableWarning role="textbox" aria-multiline="true" aria-label={label} aria-disabled={disabled} data-placeholder={placeholder}
       data-node-prompt-input={variant === 'node' ? '' : undefined}
@@ -267,7 +318,13 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
             onFocusReference(referenceChip.dataset.nodeId);
           } else updateMention();
         }
-      }} onKeyUp={(event) => { if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) { edits.current.typing = false; updateMention(); } }}
+      }} onKeyUp={(event) => {
+        if (event.nativeEvent.isComposing || composing.current || event.nativeEvent.keyCode === 229) return;
+        // Keydown already moved the list selection. Refreshing the mention on
+        // keyup would reset highlighted to zero after every arrow press.
+        if (mention && matches.length && ['ArrowUp', 'ArrowDown'].includes(event.key)) { event.stopPropagation(); return; }
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) { edits.current.typing = false; updateMention(); }
+      }}
       onBlur={() => { cursor.current = selectionOffset(); setMention(null); }}
       onPaste={(event) => { event.preventDefault(); edits.current.typing = false; document.execCommand('insertText', false, event.clipboardData.getData('text/plain')); edits.current.typing = false; }}
       onKeyDown={(event) => {
@@ -277,6 +334,11 @@ export const InlineReferenceInput = forwardRef<InlineReferenceInputHandle, Props
         if ((event.metaKey || event.ctrlKey) && !event.altKey && (key === 'z' || key === 'y')) {
           event.preventDefault();
           restoreEdit(key === 'y' || event.shiftKey);
+          return;
+        }
+        if (!event.metaKey && !event.ctrlKey && !event.altKey &&
+          (event.key === 'Backspace' || event.key === 'Delete') && deleteReference(event.key === 'Backspace')) {
+          event.preventDefault();
           return;
         }
         if (mention && matches.length && ['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) {
