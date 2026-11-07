@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { adminApi } from '@reel/api-client';
 import type { AdminUser } from '@reel/contracts';
+import { uuid } from '@reel/contracts/uuid';
 import { ErrorBox } from '../../components/ui';
 
 export function AdjustmentDialog({ user, close }: { user: AdminUser; close: () => void }) {
@@ -12,7 +13,7 @@ export function AdjustmentDialog({ user, close }: { user: AdminUser; close: () =
   const settings = useQuery({ queryKey: ['settings'], queryFn: adminApi.settings });
   const [amount, setAmount] = useState('100');
   const [reason, setReason] = useState('');
-  const requestId = useRef(crypto.randomUUID());
+  const requestId = useRef(uuid());
   const mutation = useMutation({
     mutationFn: () =>
       adminApi.adjust(user.id, { requestId: requestId.current, amount: Number(amount), reason }),
@@ -78,7 +79,7 @@ export function AdjustmentDialog({ user, close }: { user: AdminUser; close: () =
               value={amount}
               onChange={(event) => {
                 setAmount(event.target.value);
-                requestId.current = crypto.randomUUID();
+                requestId.current = uuid();
               }}
             />
           </Field>
@@ -94,7 +95,7 @@ export function AdjustmentDialog({ user, close }: { user: AdminUser; close: () =
               value={reason}
               onChange={(event) => {
                 setReason(event.target.value);
-                requestId.current = crypto.randomUUID();
+                requestId.current = uuid();
               }}
               placeholder="填写原因，操作将记录到审计日志"
             />

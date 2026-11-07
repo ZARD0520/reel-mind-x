@@ -8,6 +8,18 @@ const { tmpdir } = require('node:os');
   const browser = await chromium.launch({ headless: true, channel: 'chrome' });
   try {
     const page = await browser.newPage({ viewport: { width: 1500, height: 950 } });
+    const upstreamBase = process.env.ADMIN_BASE_URL ?? 'http://127.0.0.1:8898';
+    const insecureHttp = process.env.E2E_INSECURE_HTTP === '1';
+    const base = insecureHttp ? 'http://admin-http.test' : upstreamBase;
+    if (insecureHttp) {
+      await page.route(`${base}/**`, async route => {
+        const target = new URL(route.request().url());
+        const upstream = new URL(upstreamBase);
+        target.protocol = upstream.protocol;
+        target.host = upstream.host;
+        await route.fulfill({ response: await route.fetch({ url: target.toString() }) });
+      });
+    }
     page.setDefaultTimeout(10000);
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
@@ -147,8 +159,11 @@ const { tmpdir } = require('node:os');
       else throw new Error(`Unmocked request: ${path}`);
       await route.fulfill({ json });
     });
-    const base = process.env.ADMIN_BASE_URL ?? 'http://127.0.0.1:8898';
     await page.goto(`${base}/overview`);
+    if (insecureHttp) {
+      expect(await page.evaluate(() => window.isSecureContext)).toBe(false);
+      expect(await page.evaluate(() => typeof globalThis.crypto?.randomUUID)).toBe('undefined');
+    }
     await expect(page).toHaveURL(`${base}/login`);
     const loginButton = page.getByRole('button', { name: '登录管理后台' });
     await expect(loginButton).toHaveCSS('background-color', 'rgb(179, 165, 251)');
@@ -204,7 +219,7 @@ const { tmpdir } = require('node:os');
     await dialog.getByRole('button', { name: '确认调整' }).click();
     await expect(dialog).toHaveCount(0);
     await expect(page.getByRole('cell', { name: '150', exact: true })).toBeVisible();
-    expect(capturedAdjustment.requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(capturedAdjustment.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     await page.getByRole('button', { name: '流水', exact: true }).click();
     await expect(page).toHaveURL(`${base}/ledger?userId=${user.id}`);
     await page.reload();

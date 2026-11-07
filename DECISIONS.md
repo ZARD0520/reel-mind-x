@@ -643,3 +643,8 @@
   - render-graph 里 `audios.push` 增加条件 `asset.hasAudioStream !== false`：无音频流的视频不生成 `[N:a]` 滤镜。
 - **为何不存库**：Asset 未持久化音频流信息，render 时探测最准确（不依赖上传时的探测、无需 schema 迁移）。probe 很快（ffprobe 读头部元信息）。
 - **状态**：✅ typecheck + build 通过。需重启后端 + 重新导出验证。
+
+### D53. 浏览器 UUID 统一使用共享封装（2026-11-07）
+- **决策**：主站和管理后台的客户端 UUID 统一使用 `@reel/contracts/uuid` 的 `uuid()`；主站现有 `lib/uuid` 只转导出共享实现，业务代码禁止直接调用浏览器 `crypto.randomUUID()`。
+- **原因**：HTTP + IP/域名等非安全上下文可能缺少原生 `randomUUID`，导致请求发出前直接失败。共享方法检查原生能力，依次回退到 `getRandomValues` 和已有的兼容实现，保持 UUID v4 格式。
+- **状态**：已统一主站及管理后台调用，并加入共享方法兼容测试和浏览器源码检查，防止新增直接调用。
