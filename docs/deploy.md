@@ -94,3 +94,17 @@ pm2 logs <API进程名> --lines 200
 | `delivery.commit` / `delivery.read` | 对话保存、扣费及结果交付 |
 
 退款、租约释放和错误消息保存失败也会单独记录，避免这些后续错误掩盖原始故障。日志不主动打印对话正文、节点内容、原始计划或图片 base64；数据库异常仅保留错误码、表/字段信息和调用位置。把同一 `requestId` 的日志连同启动时的 `agent.runtime` 一起提供，即可区分环境配置、数据库、积分和模型调用问题。
+
+### 页面秒失败，但没有 Agent 请求日志
+
+浏览器发请求前的异常不会出现在 PM2 后端日志里。已复现的一个原因是通过 HTTP + IP/域名访问时处于非安全上下文，`crypto.randomUUID` 不存在，旧版 Chat 在构造请求体时直接抛错。现已统一使用兼容 UUID 工具，保留合法的 v4 UUID 格式，不要求修改请求 ID 校验。
+
+此修复需要更新前端：运行 `pnpm --filter @reel/web build`，将新 `apps/web/dist` 发布到实际静态站点目录，刷新页面。仅更新 API 构建不会替换浏览器中的代码。
+
+前端提交失败时，浏览器 Console 会出现 `[CanvasAgent] submission failed`，带 `prepare_canvas`、`create_conversation` 或 `send_agent` 阶段，以及安全上下文、UUID API 可用性和错误类型；不打印对话正文或 HTTP 响应体。这些日志应在浏览器中查看。
+
+非安全源回归（从本地测试服务器提供页面资源，浏览器保持真实的 HTTP 非安全上下文）：
+
+```bash
+E2E_BASE_URL=http://127.0.0.1:5173 E2E_INSECURE_HTTP=1 node apps/web/test/canvas-agent.browser.cjs
+```

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
 import { chatErrorMessage } from '@reel/contracts/chat-errors';
 import type { AgentPlanProgress, AgentToolProgress, CanvasAgentBridge, CanvasChatReference, Conversation, ConversationSummary } from './chat-types';
 
@@ -58,15 +58,18 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
     let completed: Conversation | null = null;
     let id = activeId;
     const turnKey = turnCounter.current;
+    let phase = 'prepare_canvas';
     try {
       if (agentBridge && !bridge) throw new Error('画布尚未就绪，请稍后重试');
       const context = await bridge?.prepare();
       if (!id) {
+        phase = 'create_conversation';
         const created = await api.canvasChat.create(canvasId) as ConversationSummary;
         id = created.id;
         setActiveId(id);
         void queryClient.invalidateQueries({ queryKey: ['canvas-conversations', canvasId] });
       }
+      phase = 'send_agent';
       const updated = await api.canvasChat.sendStream(canvasId, id, text, selectedReferences, (delta) => {
         setPending((current) => current ? { ...current, status: '', answer: current.answer + delta } : current);
       }, undefined, {
@@ -79,6 +82,15 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
       });
       completed = updated;
     } catch (cause) {
+      // Failures before fetch (for example a missing browser API) never reach
+      // server logs. Keep client diagnostics free of request/response bodies.
+      console.error('[CanvasAgent] submission failed', {
+        phase, canvasId, conversationId: id,
+        secureContext: globalThis.isSecureContext,
+        nativeRandomUuidAvailable: typeof globalThis.crypto?.randomUUID === 'function',
+        error: cause instanceof ApiError ? { name: cause.name, status: cause.status, message: cause.message }
+          : cause instanceof Error ? { name: cause.name, message: cause.message } : { name: 'UnknownError' },
+      });
       setPending(null);
       setFailedTurns(current => [...current, { key: turnKey, conversationId: id, prompt: text, references: selectedReferences, answer: chatErrorMessage(cause) }]);
       void queryClient.invalidateQueries({ queryKey: ['canvas-conversation', canvasId] });

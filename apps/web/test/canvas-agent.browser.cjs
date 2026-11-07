@@ -5,6 +5,20 @@ const { randomUUID } = require('node:crypto');
   const browser = await chromium.launch({ headless: true, channel: 'chrome' });
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } });
+    const baseUrl = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8899';
+    const insecureHttp = process.env.E2E_INSECURE_HTTP === '1';
+    const browserOrigin = insecureHttp ? 'http://agent-http.test' : baseUrl;
+    if (insecureHttp) {
+      // Keep a genuine non-secure browser origin, while serving the app from
+      // the local test server. API mocks below take precedence over this route.
+      await page.route(`${browserOrigin}/**`, async route => {
+        const target = new URL(route.request().url());
+        const upstream = new URL(baseUrl);
+        target.protocol = upstream.protocol;
+        target.host = upstream.host;
+        await route.fulfill({ response: await route.fetch({ url: target.toString() }) });
+      });
+    }
     await page.addInitScript(() => {
       const original = window.fetch.bind(window);
       window.fetch = async (...args) => {
@@ -28,6 +42,7 @@ const { randomUUID } = require('node:crypto');
     graph.nodes.push(...Array.from({ length: 8 }, (_, index) => ({ id: `existing-${index}`, type: 'workflow', position: { x: 5000, y: index * 560 }, data: { kind: index === 7 ? 'audio' : 'image', title: index === 7 ? '已有音频' : `已有图片${index}`, content: '', prompt: '', status: 'idle' } })));
     const conversation = { id: randomUUID(), title: '分镜创作', messages: [], agentRuns: [] };
     let submitted;
+    let chatRequests = 0;
     let generationRequests = 0;
     let scenario = 'success';
     const rawError = 'GLM API 调用失败 (429): {"error":{"code":"1305","message":"private provider diagnostics"}}';
@@ -43,6 +58,7 @@ const { randomUUID } = require('node:crypto');
       } else if (pathname.endsWith('/conversations')) json = request.method() === 'POST' ? conversation : [conversation];
       else if (pathname.endsWith(`/conversations/${conversation.id}`)) json = conversation;
       else if (pathname.endsWith('/messages')) {
+        chatRequests++;
         submitted = request.postDataJSON();
         if (scenario === 'cached') {
           await route.fulfill({ contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(conversation)}\n\n` });
@@ -78,7 +94,11 @@ const { randomUUID } = require('node:crypto');
       } else if (pathname === '/api/generation-tasks' && request.method() === 'POST') generationRequests++;
       await route.fulfill({ json });
     });
-    await page.goto(`${process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8899'}/canvas/${canvasId}`);
+    await page.goto(`${browserOrigin}/canvas/${canvasId}`);
+    if (insecureHttp) {
+      expect(await page.evaluate(() => window.isSecureContext)).toBe(false);
+      expect(await page.evaluate(() => typeof globalThis.crypto?.randomUUID)).toBe('undefined');
+    }
     await page.getByRole('button', { name: '连接关系', exact: true }).click();
     await page.locator('.react-flow__node[data-id="story"]').click();
     await page.getByRole('button', { name: '选择文本生成模型', exact: true }).click();
@@ -89,6 +109,7 @@ const { randomUUID } = require('node:crypto');
     await page.getByRole('button', { name: '打开 Agent Chat', exact: true }).click();
     await page.locator('aside [role="textbox"]').fill('根据选中的故事创建四个分镜节点');
     await page.locator('aside button[aria-label="发送消息"]').click();
+    await expect.poll(() => chatRequests).toBe(1);
     await expect(page.getByLabel('本轮执行计划')).toContainText('创建四个分镜并引用故事');
     await expect(page.locator('.react-flow__node')).toHaveCount(13);
     await expect(page.locator('.react-flow__edge')).toHaveCount(4);
@@ -151,6 +172,6 @@ const { randomUUID } = require('node:crypto');
     await expect(composer).toHaveText('');
     await expect(drawer.locator('[role="alert"]')).toHaveCount(0);
     expect(errors).toEqual([]);
-    console.log('PASS: canvas agent updates, normal-color error turns, private error sanitization, persistence and legacy stream fallback');
+    console.log(`PASS: ${insecureHttp ? 'insecure HTTP' : 'normal'} canvas agent requests, updates, error sanitization, persistence and legacy stream fallback`);
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

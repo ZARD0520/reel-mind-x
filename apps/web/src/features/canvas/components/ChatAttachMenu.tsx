@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, Loader2, Plus, Upload } from 'lucide-react';
 import { api } from '../../../lib/api';
+import { uuid } from '../../../lib/uuid';
 import type { CanvasChatReference } from '../chat-types';
 import { ChatAssetPickerModal } from './ChatAssetPickerModal';
 
@@ -53,7 +54,7 @@ export function ChatAttachMenu({ canvasId, uploads, draftIds, onPick, onUploaded
         setMenuOpen(false);
       } else {
         // 首页：先以本地预览插入，提交创建画布后由父组件上传
-        const reference: CanvasChatReference = { id: `local-${crypto.randomUUID()}`, kind: 'image', title: file.name, url: URL.createObjectURL(file) };
+        const reference: CanvasChatReference = { id: `local-${uuid()}`, kind: 'image', title: file.name, url: URL.createObjectURL(file) };
         onUploaded?.(reference, file);
         onPick(reference, file);
         setMenuOpen(false);

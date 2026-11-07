@@ -2,6 +2,7 @@ import { SseDecoder } from '@reel/contracts/sse';
 import { chatErrorMessage } from '@reel/contracts/chat-errors';
 import type { AssetReference, CreateGenerationTaskInput, GenerationTask } from '@reel/contracts';
 import type { CanvasChatReference, Conversation } from '../features/canvas/chat-types';
+import { uuid } from './uuid';
 
 const BASE = '/api';
 
@@ -128,7 +129,7 @@ export const api = {
       const response = await fetch(`${BASE}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, references, selectedNodeIds: agent?.selectedNodeIds ?? [], requestId: agent?.requestId ?? crypto.randomUUID(), resume: agent?.resume ?? false }),
+        body: JSON.stringify({ content, references, selectedNodeIds: agent?.selectedNodeIds ?? [], requestId: agent?.requestId ?? uuid(), resume: agent?.resume ?? false }),
         credentials: 'include',
         signal,
       });
