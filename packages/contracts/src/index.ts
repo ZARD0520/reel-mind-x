@@ -4,6 +4,9 @@ export * from './media-capabilities';
 export * from './credits';
 export * from './chat-errors';
 export * from './canvas-layout';
+export * from './canvas-merge';
+export * from './generation-snapshot';
+export * from './agent-lifecycle';
 export { MODEL_BUSY_MESSAGE } from './generation';
 
 /**
@@ -477,6 +480,7 @@ export const UpdateCanvasSchema = z
   .object({
     name: z.string().trim().min(1).max(200).optional(),
     graph: CanvasGraphSchema.optional(),
+    baseGraph: CanvasGraphSchema.optional(),
   })
   .refine((input) => input.name !== undefined || input.graph !== undefined, {
     message: '至少需要更新一个字段',
@@ -772,6 +776,7 @@ export type CreateGenerationTaskInput = z.infer<typeof CreateGenerationTaskSchem
 export const GenerationTaskStateSchema = z.enum(['queued', 'submitting', 'generating', 'saving', 'unknown', 'completed', 'failed']);
 export const GenerationTaskSchema = z.object({
   id: z.string().uuid(), requestId: z.string().uuid(), nodeId: z.string().nullable(),
+  revision: z.number().int().nonnegative().default(0),
   kind: z.enum(['text', 'image', 'video']), model: z.string(),
   status: GenerationTaskStateSchema, error: z.string().nullable(), canResume: z.boolean(),
   createdAt: z.coerce.date(),

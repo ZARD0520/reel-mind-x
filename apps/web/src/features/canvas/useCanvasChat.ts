@@ -3,6 +3,8 @@ import type { MutableRefObject } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { chatErrorMessage } from '@reel/contracts/chat-errors';
+import type { GenerationTask } from '@reel/contracts';
+import { hasPendingAgentMedia } from './agent-background';
 import type { AgentPlanProgress, AgentToolProgress, CanvasAgentBridge, CanvasChatReference, Conversation, ConversationSummary } from './chat-types';
 
 type PendingTurn = {
@@ -29,6 +31,10 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
   const initialPromptStarted = useRef(false);
   const initialReferencesRef = useRef(initialReferences);
   const turnCounter = useRef(0);
+  const taskSnapshots = useQuery<GenerationTask[]>({
+    queryKey: ['generation-tasks', canvasId], queryFn: () => api.generationTasks.list(canvasId), enabled: false,
+  });
+  const taskVersions = (taskSnapshots.data ?? []).map(task => `${task.id}:${task.revision ?? 0}`).join('|');
 
   const list = useQuery<ConversationSummary[]>({
     queryKey: ['canvas-conversations', canvasId],
@@ -38,7 +44,26 @@ export function useCanvasChat(canvasId: string, initialPrompt: string, onInitial
     queryKey: ['canvas-conversation', canvasId, activeId],
     queryFn: () => api.canvasChat.get(canvasId, activeId!) as Promise<Conversation>,
     enabled: !!activeId,
+    refetchInterval: (query) => hasPendingAgentMedia(query.state.data, taskSnapshots.data) ? 3000 : false,
   });
+  const mediaPending = hasPendingAgentMedia(detail.data, taskSnapshots.data);
+  const inspectedTaskVersions = useRef('');
+  useEffect(() => {
+    const key = `${canvasId}:${activeId}:${taskVersions}`;
+    if (!activeId || !mediaPending || inspectedTaskVersions.current === key) return;
+    inspectedTaskVersions.current = key;
+    void queryClient.invalidateQueries({ queryKey: ['canvas-conversation', canvasId, activeId] });
+  }, [taskVersions, mediaPending, activeId, canvasId, queryClient]);
+  const wasGenerating = useRef(false);
+  useEffect(() => {
+    const generating = mediaPending;
+    if (generating || wasGenerating.current) {
+      void queryClient.invalidateQueries({ queryKey: ['generation-tasks', canvasId] });
+      void queryClient.invalidateQueries({ queryKey: ['credits'] });
+      if (!busyRef.current) void agentBridge?.current?.sync?.().catch(() => setError('画布同步失败，请刷新页面查看已执行结果'));
+    }
+    wasGenerating.current = generating;
+  }, [detail.dataUpdatedAt, mediaPending, canvasId, queryClient, agentBridge]);
 
   useEffect(() => {
     if (initialPrompt || initialPromptStarted.current || busy || activeId || !list.data?.length) return;

@@ -1,12 +1,15 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import type { CanvasAgentRun, Prisma } from '@reel/db';
+import { AGENT_ACTIVE_STATES, AGENT_TERMINAL_STATES, AGENT_DELIVERABLE_STATES } from '@reel/contracts';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { CanvasToolScope } from './canvas-tools.service';
 
 export const LEASE_MS = 45000;
-export const ACTIVE_STATUSES = ['planning', 'executing', 'verifying'];
-export const TERMINAL_STATUSES = ['completed', 'awaiting_input'];
+export const ACTIVE_STATUSES: string[] = [...AGENT_ACTIVE_STATES];
+export const TERMINAL_STATUSES: string[] = [...AGENT_TERMINAL_STATES];
+// Delivering a pending media response does not complete the execution run.
+export const DELIVERABLE_STATUSES: string[] = [...AGENT_DELIVERABLE_STATES];
 export type RunTicket = { run: CanvasAgentRun; token: string; scope: CanvasToolScope };
 export const jsonValue = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 function canonical(value: unknown): unknown {
@@ -47,8 +50,8 @@ export class AgentStore {
       }
       let run = await tx.canvasAgentRun.findUnique({ where: { conversationId_requestId: { conversationId, requestId } } });
       if (run && run.inputHash !== inputHash) throw new ConflictException('同一请求ID不能用于不同指令');
-      if (run && !TERMINAL_STATUSES.includes(run.status) && !resume) throw new ConflictException('此请求已执行或中断，请使用恢复操作继续，或发送新的请求');
-      if (run && resume && run.deliveredAt && !TERMINAL_STATUSES.includes(run.status)) throw new ConflictException('已结束的对话不能恢复，请发送新的请求');
+      if (run && !DELIVERABLE_STATUSES.includes(run.status) && !resume) throw new ConflictException('此请求已执行或中断，请使用恢复操作继续，或发送新的请求');
+      if (run && resume && run.deliveredAt && !DELIVERABLE_STATUSES.includes(run.status)) throw new ConflictException('已结束的对话不能恢复，请发送新的请求');
       if (run && resume && ['PRECONDITION_CHANGED', 'VERIFICATION_FAILED', 'INVALID_OPERATION', 'CHECKPOINT_INVALID'].includes(run.errorCode ?? '')) throw new ConflictException('此任务需要根据最新画布重新规划，请发送新指令');
       run ??= await tx.canvasAgentRun.create({ data: { conversationId, requestId, inputHash, input: jsonValue(input), status: 'planning' } });
       const token = randomUUID();

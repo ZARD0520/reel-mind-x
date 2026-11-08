@@ -17,6 +17,9 @@
     "test": {
       "dependsOn": ["^build"]
     },
+    "@reel/contracts#test": {
+      "dependsOn": ["@reel/contracts#build"]
+    },
     "db:generate": {
       "cache": false
     }

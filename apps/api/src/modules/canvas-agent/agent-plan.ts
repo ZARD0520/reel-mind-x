@@ -5,6 +5,7 @@ const nodeRef = z.union([z.string().min(1).max(100), z.object({ stepId: z.string
 const base = { id: z.string().trim().min(1).max(40), description: z.string().min(1).max(200) };
 const createNode = toolSchemas.create_nodes.shape.nodes.element.extend({ referenceNodeIds: z.array(nodeRef).max(8).default([]) }).refine(node => node.kind !== 'video' || node.prompt.length <= 512, '视频节点提示词最多512字');
 const stepSchema = z.discriminatedUnion('tool', [
+  z.object({ ...base, tool: z.literal('generate_image'), arguments: toolSchemas.generate_image.omit({ expectedRevision: true, nodeId: true }).extend({ nodeId: nodeRef }) }).strict(),
   z.object({ ...base, tool: z.literal('rename_node'), arguments: toolSchemas.rename_node.omit({ expectedRevision: true, nodeId: true }).extend({ nodeId: nodeRef }) }).strict(),
   z.object({ ...base, tool: z.literal('update_node_prompt'), arguments: toolSchemas.update_node_prompt.omit({ expectedRevision: true, nodeId: true }).extend({ nodeId: nodeRef }) }).strict(),
   z.object({ ...base, tool: z.literal('create_nodes'), arguments: z.object({ nodes: z.array(createNode).min(1).max(20) }).strict() }).strict(),
@@ -24,6 +25,26 @@ export type StepResult = Record<string, unknown>;
 /** Repair closing delimiters only; never invent fields, values or inner syntax. */
 export function parsePlanJson(text: string): unknown {
   try { return JSON.parse(text); } catch (original) {
+    // Some providers append a stray closing string/container suffix to an
+    // otherwise complete object (e.g. ...]}"}). Only discard that punctuation
+    // suffix: never extract an object from prose or ignore a second JSON value.
+    let depth = 0, inString = false, escape = false;
+    if (text.trimStart().startsWith('{')) for (let index = 0; index < text.length; index++) {
+      const char = text[index];
+      if (inString) {
+        if (escape) escape = false;
+        else if (char === '\\') escape = true;
+        else if (char === '"') inString = false;
+      } else if (char === '"') inString = true;
+      else if (char === '{' || char === '[') depth++;
+      else if (char === '}' || char === ']') {
+        depth--;
+        if (depth === 0) {
+          if (/^"[\]}\s]*$/.test(text.slice(index + 1).trim())) return JSON.parse(text.slice(0, index + 1));
+          break;
+        }
+      }
+    }
     const prefix = text.replace(/[\]}\s]+$/, '');
     const stack: string[] = [];
     let quoted = false;
@@ -117,6 +138,7 @@ export function validateRequestBounds(plan: AgentPlan, request: string) {
   if (plan.mode !== 'execute') return;
   if (requestIsReadOnly(request)) throw new Error('本轮用户只授权问答或查看，禁止写操作；请返回mode=answer或clarify，steps必须为空，只回答当前问题，不要执行历史任务');
   const source = request.split('\n\n用户引用的当前画布节点：')[0]!;
+  if (plan.steps.some(s => s.tool === 'generate_image') && !imageGenerationRequested(source)) throw new Error('用户没有授权实际生成图片，请移除生成步骤；创建节点或编写提示词不代表授权生成媒体');
   const pattern = /(?:创建|新增|添加)\s*(?:且只创建\s*)?([一二三四五六七八九十两\d]+)\s*(?:个|张|段)?\s*(?:新的?)?\s*(文本|图片|视频|音频|分镜)(?:节点)?/g;
   const matches = [...source.matchAll(pattern)];
   if (matches.length !== 1) return;
@@ -131,6 +153,45 @@ export function validateRequestBounds(plan: AgentPlan, request: string) {
   const kind = ({ 文本: 'text', 图片: 'image', 视频: 'video', 音频: 'audio', 分镜: 'image' } as Record<string, string>)[match[2]!];
   const nodes = plan.steps.flatMap(step => step.tool === 'create_nodes' ? step.arguments.nodes : []);
   if (nodes.length !== count || nodes.some(node => node.kind !== kind)) throw new Error(`用户明确要求只创建${count}个${kind}节点，计划不能额外创建其他节点；引用已有素材时不要复制来源节点`);
+}
+
+export function imageGenerationRequested(request: string) {
+  const source = request.split('\n\n用户引用的当前画布节点：')[0]!;
+  if (requestIsReadOnly(source) || /(?:不要|不用|无需|禁止|不需要|别)\s*(?:实际|真正|直接|自动)?(?:生成|绘制|生图|出图)(?:任何|新的?|这些|那些|这张|那张|[一二三四五六七八九十两\d]+张)?(?:图片|图像|媒体|素材|[，。；\s]|$)/.test(source)) return false;
+  const intent = source.replace(/(?:生成|编写|填写|优化|修改|出图|生图)\s*(?:图片|图像|分镜)?的?(?:提示词|prompt)/gi, '');
+  return /生成.{0,20}(?:图片|图像|分镜|张)|(?:图片|图像|分镜).{0,20}(?:生成|出图|重试)|重试.{0,20}(?:图片|图像|分镜)|生图|出图|绘制|画(?:一|两|三|几|张|个)/.test(intent);
+}
+
+/** Phase two supports asynchronous terminal generation steps. Never pretend a
+ * dependent edit can run before its media dependency has finished. */
+export function validateGenerationPlan(plan: AgentPlan, graph: { nodes: Array<{ id: string; data: Record<string, unknown> }> }) {
+  const nodes = new Map(graph.nodes.map(n => [n.id, n.data]));
+  let generating = false;
+  const targets = new Set<string>();
+  const key = (ref: z.infer<typeof nodeRef>) => typeof ref === 'string' ? ref : `${ref.stepId}:${ref.index}`;
+  for (const step of plan.steps) {
+    if (step.tool === 'generate_image') {
+      generating = true;
+      const id = key(step.arguments.nodeId);
+      const node = nodes.get(id);
+      if (!node || node.kind !== 'image' || node.uploaded || node.status === 'generating') throw new Error('生成目标必须是可生成的图片节点');
+      if (targets.has(id)) throw new Error('同一计划不能重复生成同一图片节点');
+      if (!String(node.prompt ?? '').trim()) throw new Error('生成前必须填写图片提示词');
+      for (const ref of (node.referenceNodeIds ?? []) as z.infer<typeof nodeRef>[]) {
+        const source = nodes.get(key(ref));
+        if (source?.kind === 'image' && (source.status !== 'ready' || !source.assetId)) throw new Error('当前阶段不能依赖尚未生成完成的图片，请先生成来源图片');
+      }
+      targets.add(id);
+    } else {
+      if (generating) throw new Error('图片生成步骤必须放在所有画布编辑步骤之后，当前不支持生成完成后的后续操作');
+      if (step.tool === 'create_nodes') step.arguments.nodes.forEach((n, i) => nodes.set(`${step.id}:${i}`, n));
+      if (step.tool === 'update_node_prompt') {
+        const id = key(step.arguments.nodeId);
+        const node = nodes.get(id);
+        if (node) nodes.set(id, { ...node, prompt: step.arguments.prompt });
+      }
+    }
+  }
 }
 
 export function bindRequestReferences(plan: AgentPlan, request: string, explicitNodeIds: Set<string>, selectedNodeIds = new Set<string>()) {
@@ -167,7 +228,7 @@ const PLAN_FORMAT: Record<string, unknown> = {
 
 export function planningProtocol(definitions: Array<{ name: string; description?: string; inputSchema: unknown }>, readOnly = false) {
   const reference = { description: '已有节点填写上下文中的真实ID；本轮新建节点必须用对象{"stepId":"前面创建步骤的id","index":0}。严禁用描述性字符串或猜测ID。', anyOf: [{ type: 'string', minLength: 1, maxLength: 100 }, { type: 'object', additionalProperties: false, required: ['stepId', 'index'], properties: { stepId: { type: 'string' }, index: { type: 'integer', minimum: 0, maximum: 19 } } }] };
-  const tools = definitions.filter(t => t.name !== 'get_canvas_context').map(t => {
+  const tools = definitions.filter(t => !t.name.startsWith('get_')).map(t => {
     const schema = JSON.parse(JSON.stringify(t.inputSchema));
     delete schema.properties.expectedRevision;
     schema.required = (schema.required ?? []).filter((name: string) => name !== 'expectedRevision');
@@ -201,7 +262,7 @@ export function resolveArguments(step: PlanStep, results: Map<string, StepResult
     return id;
   };
   switch (step.tool) {
-    case 'rename_node': case 'update_node_prompt': return { ...step.arguments, nodeId: resolve(step.arguments.nodeId) };
+    case 'rename_node': case 'update_node_prompt': case 'generate_image': return { ...step.arguments, nodeId: resolve(step.arguments.nodeId) };
     case 'create_nodes': return { nodes: step.arguments.nodes.map(n => ({ ...n, referenceNodeIds: n.referenceNodeIds.map(resolve) })) };
     case 'connect_nodes': return { connections: step.arguments.connections.map(c => ({ source: resolve(c.source), target: resolve(c.target) })) };
   }

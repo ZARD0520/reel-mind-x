@@ -27,6 +27,12 @@ import { referenceImagePath, validateReferenceImage } from './reference-image-pa
 export const GENERATION_QUEUE = 'generation-tasks';
 const INCLUDE_TASK = { items: { orderBy: { index: 'asc' as const }, include: { asset: true } } };
 export type TaskRow = Prisma.GenerationTaskGetPayload<{ include: typeof INCLUDE_TASK }>;
+// Internal integration hooks run inside the task/credit transaction. They are
+// never accepted from HTTP input, and must not call external services.
+export type GenerationCommit = {
+  validate: (tx: Prisma.TransactionClient) => Promise<void>;
+  commit: (tx: Prisma.TransactionClient, task: TaskRow) => Promise<void>;
+};
 export const isActive = (status: string) => status !== 'completed' && status !== 'failed';
 export const canResumeItem = (item: {
   status: string;
@@ -35,6 +41,21 @@ export const canResumeItem = (item: {
 }) =>
   (item.status === 'unknown' && (!!item.providerTaskId || !!item.providerResult)) ||
   (item.status === 'failed' && !!item.providerResult);
+
+export function aggregateGenerationStatus(items: { status: string }[]) {
+  const active = items.filter(item => isActive(item.status));
+  if (!active.length) return items.every(item => item.status === 'completed') ? 'completed' : 'failed';
+  for (const state of ['submitting', 'saving', 'generating', 'queued', 'unknown']) if (active.some(item => item.status === state)) return state;
+  return 'unknown';
+}
+
+export function generationTaskView(task: TaskRow): GenerationTask {
+  return GenerationTaskSchema.parse({ ...task, status: aggregateGenerationStatus(task.items),
+    revision: task.items.reduce((total, item) => total + item.revision, 0),
+    error: task.items.find(item => item.error)?.error ?? null, canResume: task.items.some(canResumeItem),
+    items: task.items.map(item => ({ ...item, canResume: canResumeItem(item) })),
+  });
+}
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -78,7 +99,7 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
     if (this.timer) clearInterval(this.timer);
   }
 
-  async create(userId: string, raw: unknown): Promise<GenerationTask> {
+  async create(userId: string, raw: unknown, integration?: GenerationCommit): Promise<GenerationTask> {
     const input = CreateGenerationTaskSchema.parse(raw);
     const inputHash = createHash('sha256').update(stable(input)).digest('hex');
     const existing = await this.prisma.generationTask.findUnique({
@@ -159,6 +180,7 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
               { id: string }[]
             >`SELECT id FROM projects WHERE id = ${input.projectId} AND "userId" = ${userId} AND "deletedAt" IS NULL FOR UPDATE`;
         if (!scope.length) throw new NotFoundException('Generation scope not found');
+        await integration?.validate(tx);
         const quote = await this.credits.quote(
           { kind: input.kind, model, count: input.count, duration: input.duration },
           tx,
@@ -214,6 +236,7 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
             data: { creditHoldId: hold.id },
           });
         }
+        await integration?.commit(tx, created);
         return created;
       });
       void this.dispatchDue().catch((error: Error) =>
@@ -377,22 +400,11 @@ export class GenerationTasksService implements OnModuleInit, OnModuleDestroy {
   }
 
   private aggregate(items: { status: string }[]) {
-    const active = items.filter((item) => isActive(item.status));
-    if (!active.length)
-      return items.every((item) => item.status === 'completed') ? 'completed' : 'failed';
-    for (const state of ['submitting', 'saving', 'generating', 'queued', 'unknown'])
-      if (active.some((item) => item.status === state)) return state;
-    return 'unknown';
+    return aggregateGenerationStatus(items);
   }
 
   private toTask(task: TaskRow): GenerationTask {
-    return GenerationTaskSchema.parse({
-      ...task,
-      status: this.aggregate(task.items),
-      error: task.items.find((item) => item.error)?.error ?? null,
-      canResume: task.items.some(canResumeItem),
-      items: task.items.map((item) => ({ ...item, canResume: canResumeItem(item) })),
-    });
+    return generationTaskView(task);
   }
 
   async dispatchDue() {

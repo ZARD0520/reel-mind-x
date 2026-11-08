@@ -11,6 +11,10 @@ export function verifyPlan(plan: AgentPlan, results: Map<string, StepResult>, gr
     const result = results.get(step.id);
     if (!result) throw new AgentFailure('VERIFICATION_FAILED', `步骤 ${step.id} 没有提交结果`);
     const args = resolveArguments(step, results);
+    if (step.tool === 'generate_image') {
+      const node = graph.nodes.find(n => n.id === args.nodeId);
+      if (!result.generationTaskId || result.generatedNodeId !== args.nodeId || node?.data.generationTaskId !== result.generationTaskId) throw new AgentFailure('VERIFICATION_FAILED', '图片生成任务与目标节点不匹配');
+    }
     if (step.tool === 'rename_node') patch(String(args.nodeId), { title: args.title });
     if (step.tool === 'update_node_prompt') {
       const state = (result.nodeStates as Graph['nodes'] | undefined)?.find(n => n.id === args.nodeId)?.data;
@@ -59,10 +63,18 @@ export function assertPreconditions(tool: string, args: Record<string, unknown>,
   const check = (id: string, fields: string[]) => {
     const before = states.get(id);
     const actual = current.nodes.find(n => n.id === id)?.data;
-    const value = (data: Record<string, unknown>, key: string) => data[key] ?? ({ uploaded: false, prompt: '', content: '', referenceNodeIds: [] } as Record<string, unknown>)[key] ?? null;
+    const value = (data: Record<string, unknown>, key: string) => data[key] ?? ({ uploaded: false, generationDetached: false, prompt: '', content: '', referenceNodeIds: [] } as Record<string, unknown>)[key] ?? null;
     if (!before || !actual || fields.some(key => JSON.stringify(value(before, key)) !== JSON.stringify(value(actual, key)))) throw new AgentFailure('PRECONDITION_CHANGED', '目标节点已被其他操作修改，请根据最新画布发送新指令');
   };
   if (tool === 'rename_node') check(String(args.nodeId), ['title']);
+  if (tool === 'generate_image') {
+    check(String(args.nodeId), ['kind', 'prompt', 'referenceNodeIds', 'model', 'uploaded', 'generationSize', 'generationQuality', 'assetId', 'generationTaskId', 'generationRequestId', 'generationDetached']);
+    const target = current.nodes.find(n => n.id === args.nodeId);
+    for (const id of (target?.data.referenceNodeIds ?? []) as string[]) {
+      const source = current.nodes.find(n => n.id === id);
+      check(id, source?.data.kind === 'image' ? ['kind', 'assetId', 'url'] : ['kind', 'content', 'prompt']);
+    }
+  }
   if (tool === 'update_node_prompt') check(String(args.nodeId), ['prompt', 'kind', 'uploaded']);
   if (tool === 'connect_nodes') for (const c of args.connections as { source: string; target: string }[]) { check(c.source, ['kind']); check(c.target, ['kind', 'prompt', 'referenceNodeIds', 'model', 'uploaded']); }
   if (tool === 'create_nodes') for (const n of args.nodes as { referenceNodeIds: string[] }[]) for (const id of n.referenceNodeIds) check(id, ['kind']);

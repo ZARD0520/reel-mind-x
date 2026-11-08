@@ -17,7 +17,7 @@ export type ConversationSummary = {
 };
 
 export type Conversation = ConversationSummary & {
-  agentRuns?: { id: string; status: string; events: AgentToolProgress[]; error?: string | null }[];
+  agentRuns?: { id: string; status: string; backgroundPending?: boolean; steps?: { tool: string; generationTaskId?: string; generationRevision?: number }[]; events: AgentToolProgress[]; error?: string | null }[];
   messages: { id: string; role: 'user' | 'assistant'; content: string; references: CanvasChatReference[]; createdAt: string }[];
 };
 export type AgentPlanProgress = { runId: string; goal: string; mode: 'execute' | 'answer' | 'clarify'; steps: { id: string; description: string; tool: string }[] };
@@ -28,4 +28,5 @@ export type CanvasAgentBridge = {
   prepare: () => Promise<{ selectedNodeIds: string[] }>;
   apply: (graph: CanvasGraph) => void;
   release: () => Promise<void>;
+  sync?: () => Promise<void>;
 };

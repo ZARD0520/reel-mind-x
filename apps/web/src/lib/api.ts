@@ -102,12 +102,13 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(name ? { name } : {}),
       }),
-    get: (id: string) => request(`/canvases/${id}`),
-    update: (id: string, body: object) =>
+    get: (id: string, signal?: AbortSignal) => request(`/canvases/${id}`, { signal }),
+    update: (id: string, body: object, signal?: AbortSignal) =>
       request(`/canvases/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal,
       }),
     remove: (id: string) => requestVoid(`/canvases/${id}`, { method: 'DELETE' }),
   },

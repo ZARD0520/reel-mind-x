@@ -9,10 +9,10 @@ import { MAX_REFERENCE_IMAGES, readLocalImageAsDataUrl } from '../llm/asset-imag
 import { CanvasChatReferenceSchema, type CanvasChatReference } from './canvas-chat.dto';
 import { CreditsService } from '../credits/credits.service';
 import type { Env } from '../../config/env';
-import { chatErrorMessage } from '@reel/contracts';
+import { AGENT_ACTIVE_STATES, agentHasBackgroundWork, chatErrorMessage } from '@reel/contracts';
 import { CanvasAgentService, CREATIVE_AGENT_PROMPT } from '../canvas-agent/canvas-agent.service';
 import { PRIMARY_AGENT_MODEL } from '../canvas-agent/model-retry';
-import { TERMINAL_STATUSES } from '../canvas-agent/agent-store';
+import { DELIVERABLE_STATUSES } from '../canvas-agent/agent-store';
 import { createAgentDiagnostics } from '../canvas-agent/agent-diagnostics';
 
 const CHAT_MODEL = PRIMARY_AGENT_MODEL;
@@ -102,8 +102,13 @@ export class CanvasChatService {
     });
     return {
       ...conversation,
-      agentRuns: (await this.prisma.canvasAgentRun.findMany({ where: { conversationId }, orderBy: { createdAt: 'asc' }, select: { id: true, requestId: true, status: true, plan: true, errorCode: true, events: true, error: true, lease: { select: { expiresAt: true } }, steps: { orderBy: { ordinal: 'asc' }, select: { stepKey: true, tool: true, status: true, attempts: true, errorCode: true } } } })).map(({ lease, ...run }) => ({ ...run,
-        status: ['planning', 'executing', 'verifying'].includes(run.status) && (!lease || lease.expiresAt <= new Date()) ? 'interrupted' : run.status,
+      agentRuns: (await this.prisma.canvasAgentRun.findMany({ where: { conversationId }, orderBy: { createdAt: 'asc' }, select: { id: true, requestId: true, status: true, plan: true, deliveredAt: true, errorCode: true, events: true, error: true, lease: { select: { expiresAt: true } }, steps: { orderBy: { ordinal: 'asc' }, select: { stepKey: true, tool: true, status: true, attempts: true, errorCode: true, result: true } } } })).map(({ lease, deliveredAt, ...run }) => ({ ...run,
+        steps: (run.steps ?? []).map(({ result, ...step }) => {
+          const receipt = result as { generationTaskId?: string; generationRevision?: number } | null;
+          return { ...step, ...(step.tool === 'generate_image' && receipt?.generationTaskId ? { generationTaskId: receipt.generationTaskId, generationRevision: receipt.generationRevision ?? 0 } : {}) };
+        }),
+        backgroundPending: agentHasBackgroundWork({ ...run, delivered: !!deliveredAt, hasGeneration: run.steps.some(step => step.tool === 'generate_image') }),
+        status: (AGENT_ACTIVE_STATES as readonly string[]).includes(run.status) && (!lease || lease.expiresAt <= new Date()) ? 'interrupted' : run.status,
         error: run.error ? chatErrorMessage({ code: run.errorCode, message: run.error }) : null,
       })),
       messages: messages.map((message) => ({
@@ -171,7 +176,7 @@ export class CanvasChatService {
       const conversation = await this.requireConversation(userId, canvasId, conversationId);
       trace.stage('request.lookup');
       const cached = await this.prisma.canvasAgentRun.findUnique({ where: { conversationId_requestId: { conversationId, requestId } }, select: { status: true, deliveredAt: true } });
-      if (cached && TERMINAL_STATUSES.includes(cached.status) && cached.deliveredAt) {
+      if (cached && DELIVERABLE_STATUSES.includes(cached.status) && cached.deliveredAt) {
         trace.stage('request.replay');
         // A delivered replay does not depend on assets still existing or on the
         // current prompt/context budget. Claim verifies the original input hash.
@@ -263,7 +268,7 @@ export class CanvasChatService {
       let settled = false;
       let executed = false;
       try {
-        if (ticket.run.deliveredAt && TERMINAL_STATUSES.includes(ticket.run.status)) {
+        if (ticket.run.deliveredAt && DELIVERABLE_STATUSES.includes(ticket.run.status)) {
           yield { event: 'done', data: await this.get(userId, canvasId, conversationId) };
           return;
         }
@@ -288,6 +293,22 @@ export class CanvasChatService {
         executed = true;
         trace.stage('agent.execute', { runId: ticket.run.id });
         for await (const event of this.agent.execute(ticket, messages, CHAT_MODEL, signal)) {
+          if (event.event === 'plan' && (event.data.steps as { tool: string }[] | undefined)?.some(step => step.tool === 'generate_image') && !ticket.run.deliveredAt) {
+            // A paid media plan outlives this SSE connection. Deliver the saved
+            // plan before its first submission, so a disconnected browser can
+            // recover both the conversation and execution without re-planning.
+            await this.prisma.$transaction(async tx => {
+              await tx.$queryRaw`SELECT id FROM canvases WHERE id = ${canvasId} FOR UPDATE`;
+              if (!await tx.canvasAgentLease.findFirst({ where: { runId: ticket.run.id, token: ticket.token, expiresAt: { gt: new Date() } } })) throw new ConflictException('任务执行权已失效');
+              await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: ticket.run.id, role: 'user' } }, create: { conversationId, runId: ticket.run.id, role: 'user', content: prompt, references: resolvedReferences as Prisma.InputJsonValue }, update: {} });
+              await tx.canvasChatMessage.upsert({ where: { runId_role: { runId: ticket.run.id, role: 'assistant' } }, create: { conversationId, runId: ticket.run.id, role: 'assistant', content: '计划已保存，正在执行图片任务。' }, update: {} });
+              const billing = await this.credits.settle(tx, holdId!, true);
+              if (billing.status !== 'captured') throw new BadRequestException('对话已超时，积分已退还，请恢复任务');
+              await tx.canvasAgentRun.update({ where: { id: ticket.run.id }, data: { deliveredAt: new Date() } });
+              if (!history.length) await tx.canvasConversation.update({ where: { id: conversationId }, data: { title: [...readablePrompt(prompt).replace(/\s+/g, ' ')].slice(0, 24).join('') || '新对话' } });
+            });
+            settled = true;
+          }
           if (event.event === 'delta') answer += String(event.data.text ?? '');
           yield event;
         }
@@ -312,6 +333,9 @@ export class CanvasChatService {
       } catch (error) {
         // Capture the original failure before refund/lease cleanup can also fail.
         trace.failure(error, 'agent.execution_or_billing_failed');
+        if (settled) await this.prisma.canvasChatMessage.updateMany({ where: { runId: ticket.run.id, role: 'assistant', run: { lease: { is: { token: ticket.token, expiresAt: { gt: new Date() } } } } }, data: {
+          content: signal.aborted ? '计划已保存，图片任务将在后台继续执行。' : '图片计划未能全部执行，已提交的任务会继续生成。请检查画布节点状态后重试未完成的图片。',
+        } }).catch(checkpointError => trace.failure(checkpointError, 'agent.media_delivery_failed'));
         throw error;
       } finally {
         try {

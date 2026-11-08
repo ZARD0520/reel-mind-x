@@ -12,6 +12,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:agent": "node scripts/check-agent.cjs",
     "db:generate": "pnpm --filter @reel/db db:generate",
     "db:migrate": "pnpm --filter @reel/db db:migrate",
     "db:deploy": "pnpm --filter @reel/db db:deploy"

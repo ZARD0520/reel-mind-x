@@ -268,8 +268,9 @@ test('real MCP discovery, scoped reads, validation, prompt updates, connections 
   const session = await f.mcp.connect(f.scope);
   try {
     const names = (await session.client.listTools()).tools.map(tool => tool.name);
-    assert.deepEqual(names.sort(), ['connect_nodes', 'create_nodes', 'get_canvas_context', 'rename_node', 'update_node_prompt']);
-    assert(!names.some(name => /generation|render|delete/.test(name)));
+    assert.deepEqual(names.sort(), ['connect_nodes', 'create_nodes', 'generate_image', 'get_canvas_context', 'get_image_generation_status', 'rename_node', 'update_node_prompt']);
+    assert(!names.some(name => /render|delete/.test(name)));
+    assert((await session.client.callTool({ name: 'generate_image', arguments: { nodeId: 'story', expectedRevision: new Date().toISOString() } })).isError, 'generation without a persisted execution scope must be rejected');
     const context = (await session.client.callTool({ name: 'get_canvas_context', arguments: {} })).structuredContent;
     assert.deepEqual(context.selectedNodeIds, ['story']);
     const created = await session.client.callTool({ name: 'create_nodes', arguments: { expectedRevision: context.revision, nodes: [{ kind: 'image', title: '镜头1', prompt: '小狗出门' }] } });
@@ -314,7 +315,7 @@ test('MCP HTTP endpoint supports SDK initialize/list/call and rejects untrusted 
   const client = new Client({ name: 'integration-test', version: '1.0.0' });
   try {
     await client.connect(new StreamableHTTPClientTransport(url));
-    assert.equal((await client.listTools()).tools.length, 5);
+    assert.equal((await client.listTools()).tools.length, 7);
     const context = await client.callTool({ name: 'get_canvas_context', arguments: {} });
     assert.equal(context.structuredContent.nodes[0].id, 'story');
     const response = await fetch(url, { method: 'POST', headers: { origin: 'https://untrusted.test', 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) });

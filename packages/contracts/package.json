@@ -5,6 +5,16 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./generation-snapshot": {
+      "types": "./src/generation-snapshot.ts",
+      "browser": "./src/generation-snapshot.ts",
+      "default": "./dist/generation-snapshot.js"
+    },
+    "./canvas-merge": {
+      "types": "./src/canvas-merge.ts",
+      "browser": "./src/canvas-merge.ts",
+      "default": "./dist/canvas-merge.js"
+    },
     "./uuid": {
       "types": "./src/uuid.ts",
       "browser": "./src/uuid.ts",

@@ -70,6 +70,8 @@ pnpm --filter @reel/db db:deploy
 
 ## PM2：Agent 部署诊断日志
 
+Agent 第二阶段图片生成需要同时发布 API 和主站静态文件。复用现有 PostgreSQL、Redis 和生成 worker（当前 API 的 `GenerationTasksWorkerModule`），不需要新增数据库迁移或独立 Agent 进程。API 内的持久化扫描器会恢复已交付的图片计划；多个 PM2 实例共用数据库租约防止重复提交。实际出图仍需要现有图片模型配置、积分价格和生成服务可用。详细执行边界见 [画布 Agent 架构](./canvas-agent-plan-execute.md)。
+
 API 默认读取工作目录 `cwd` 下的 `.env`，不会自动读取 `.env.production`。PM2 或启动脚本已注入的同名环境变量优先。更新 API 代码后重新构建，再重启实际的 API 进程：
 
 ```bash

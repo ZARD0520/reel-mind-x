@@ -14,7 +14,7 @@ export class CanvasMcpService {
     for (const name of Object.keys(toolSchemas) as CanvasToolName[]) {
       server.registerTool(name, {
         description: toolDescriptions[name], inputSchema: toolSchemas[name].shape,
-        annotations: { readOnlyHint: name === 'get_canvas_context', destructiveHint: name === 'update_node_prompt', openWorldHint: false },
+        annotations: { readOnlyHint: name.startsWith('get_'), destructiveHint: name === 'update_node_prompt', openWorldHint: name === 'generate_image' },
       }, async (args: Record<string, unknown>) => {
         try {
           const result = await this.tools.execute(scope, name, args);

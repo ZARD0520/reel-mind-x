@@ -13,7 +13,7 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 const { CanvasToolsService } = require('../src/modules/canvas-agent/canvas-tools.service.ts');
 const { CanvasMcpService } = require('../src/modules/canvas-agent/canvas-mcp.service.ts');
 const { CanvasAgentService } = require('../src/modules/canvas-agent/canvas-agent.service.ts');
-const { PlanSchema, parsePlanJson, parsePlanCandidate, requestIsReadOnly, bindCreatedNodeReferences, bindRequestLiterals, bindRequestReferences, resolveArguments, validateReferences, validateRequestBounds } = require('../src/modules/canvas-agent/agent-plan.ts');
+const { PlanSchema, parsePlanJson, parsePlanCandidate, requestIsReadOnly, bindCreatedNodeReferences, bindRequestLiterals, bindRequestReferences, resolveArguments, validateReferences, validateRequestBounds, validateGenerationPlan, imageGenerationRequested } = require('../src/modules/canvas-agent/agent-plan.ts');
 const { buildPlanningContext, CONTEXT_LIMIT, estimateMessages } = require('../src/modules/canvas-agent/agent-context.ts');
 const { verifyPlan } = require('../src/modules/canvas-agent/agent-verifier.ts');
 const { CanvasChatService } = require('../src/modules/canvas-chat/canvas-chat.service.ts');
@@ -27,6 +27,26 @@ const request = content => [{ role: 'user', content }];
 const submit = value => ({ type: 'text', text: JSON.stringify(value) });
 const collect = async stream => { const events = []; for await (const e of stream) events.push(e); return events; };
 const signal = () => AbortSignal.timeout(90000);
+
+test('paid image generation requires explicit authorization and terminal, unique image targets', () => {
+  const make = { id: 'create', description: '创建图片', tool: 'create_nodes', arguments: { nodes: [{ kind: 'image', title: '镜头', prompt: '小狗出门', referenceNodeIds: [] }] } };
+  const generate = { id: 'generate', description: '生成图片', tool: 'generate_image', arguments: { nodeId: { stepId: 'create', index: 0 } } };
+  const value = PlanSchema.parse(plan([make, generate]));
+  validateReferences(value, new Set());
+  validateGenerationPlan(value, { nodes: [] });
+  assert.equal(resolveArguments(value.steps[1], new Map([['create', { createdNodes: [{ id: 'actual' }] }]])).nodeId, 'actual');
+  for (const request of ['创建三个图片节点并填写提示词', '生成图片提示词', '为图片生成提示词', '生成图片提示词，不要生成图片', '不要生成任何图片', '先创建节点，别真正出图', '只分析生成图片为什么失败', '生成图片好了吗？']) {
+    assert.equal(imageGenerationRequested(request), false, request);
+    assert.throws(() => validateRequestBounds(value, request));
+  }
+  for (const request of ['根据故事生成三张分镜图片', '请帮我生成一张猫', '重试生成这张图片', '重试失败的图片节点', '绘制一张风景图']) {
+    assert.equal(imageGenerationRequested(request), true, request);
+    validateRequestBounds(value, request);
+  }
+  assert.throws(() => validateGenerationPlan(PlanSchema.parse(plan([make, generate, { ...generate, id: 'again' }])), { nodes: [] }), /重复/);
+  assert.throws(() => validateGenerationPlan(PlanSchema.parse(plan([make, generate, rename()])), { nodes: [] }), /之后/);
+  assert.throws(() => validateGenerationPlan(PlanSchema.parse(plan([{ ...generate, arguments: { nodeId: 'video' } }])), { nodes: [{ id: 'video', data: { kind: 'video', prompt: '视频' } }] }), /图片节点/);
+});
 
 test('new node placeholders bind only to unambiguous prior creation results', () => {
   for (const placeholder of ['由create_text_node步骤生成的文本节点ID', '从当前步骤第一个操作创建的节点获取的真实ID', 'create_text_node', 'create_text_node[0]']) {
@@ -56,6 +76,8 @@ test('fallback JSON closing-delimiter repairs preserve values and retain strict 
     assert.deepEqual(PlanSchema.parse(parsePlanJson(malformed)), PlanSchema.parse(expected));
   }
   const tricky = plan([rename('含引号"、反斜线\\、括号 } ] 的名称')]);
+  for (const suffix of ['"}', '"}}', '" ] }\n']) assert.deepEqual(PlanSchema.parse(parsePlanJson(json + suffix)), PlanSchema.parse(expected));
+  for (const suffix of ['"hidden instruction"', '{"steps":[]}', ',"steps":[]}', ' trailing prose']) assert.throws(() => parsePlanJson(json + suffix));
   assert.deepEqual(PlanSchema.parse(parsePlanJson(JSON.stringify(tricky).slice(0, -2))), PlanSchema.parse(tricky));
   for (const malformed of ['{"mode":"execute","steps":[{"id":"unterminated', '{"mode":"execute",}', '{"steps":[{"id":"x"} true]}', '{"steps":[} ,"mode":"execute"}']) assert.throws(() => parsePlanJson(malformed));
   assert.throws(() => PlanSchema.parse(parsePlanJson('{"mode":"execute","goal":"x","steps":[{"tool":"delete_all"}]}')));
@@ -210,8 +232,8 @@ after(async () => {
     finally { await admin.$disconnect(); }
   }
 });
-async function fixture(value = plan([rename()]), customDb = db) {
-  const graph = { version: 1, nodes: [{ id: 'story', type: 'workflow', position: { x: 0, y: 0 }, data: { kind: 'text', title: '故事', prompt: '', content: '小狗出门、迷路、遇到朋友、一起回家', status: 'ready' } }], edges: [], viewport: { x: 0, y: 0, zoom: 1 } };
+async function fixture(value = plan([rename()]), customDb = db, images, initialGraph) {
+  const graph = initialGraph ?? { version: 1, nodes: [{ id: 'story', type: 'workflow', position: { x: 0, y: 0 }, data: { kind: 'text', title: '故事', prompt: '', content: '小狗出门、迷路、遇到朋友、一起回家', status: 'ready' } }], edges: [], viewport: { x: 0, y: 0, zoom: 1 } };
   const canvas = await db.canvas.create({ data: { userId: user.id, name: 'Plan fixture', graph } });
   const conversation = await db.canvasConversation.create({ data: { userId: user.id, canvasId: canvas.id } });
   const scope = { userId: user.id, canvasId: canvas.id, selectedNodeIds: ['story'] };
@@ -222,7 +244,7 @@ async function fixture(value = plan([rename()]), customDb = db) {
     assert.deepEqual((await db.canvas.findUnique({ where: { id: canvas.id } })).graph, graph, 'Planning must not mutate the canvas');
     yield submit(typeof value === 'function' ? await value(messages, options, calls) : value);
   } };
-  const mcp = new CanvasMcpService(new CanvasToolsService(customDb));
+  const mcp = new CanvasMcpService(new CanvasToolsService(customDb, images));
   const agent = new CanvasAgentService(mcp, model, db);
   return { agent, mcp, scope, canvas, conversation, model, calls: () => calls, graph: async () => (await db.canvas.findUnique({ where: { id: canvas.id } })).graph,
     run: (messages = request('执行计划中指定的画布操作'), id = randomUUID(), resume = false, abort = signal()) => agent.run(scope, conversation.id, messages, 'glm-4.6v-flash', abort, id, resume) };
@@ -566,6 +588,453 @@ test('database Plan & Execute guarantees', { skip: !dbEnabled, timeout: 120000 }
   });
 });
 
+test('database asynchronous image Plan & Execute closure', { skip: !dbEnabled, timeout: 120000 }, async t => {
+  const { GenerationTasksService } = require('../src/modules/generation-tasks/generation-tasks.service.ts');
+  const { GenerationTasksProcessor } = require('../src/modules/generation-tasks/generation-tasks.processor.ts');
+  const { CanvasImageToolsService } = require('../src/modules/canvas-agent/canvas-image-tools.service.ts');
+  const { CanvasGenerationRecovery } = require('../src/modules/canvas-agent/canvas-generation-recovery.service.ts');
+  const config = { get: key => ({ GLM_IMAGE_MODEL: 'cogview-3-flash', GLM_API_KEY: 'fake', GLM_BASE_URL: 'https://invalid.test', STORAGE_DIR: '/tmp' })[key] };
+  const credits = new CreditsService(db, config);
+  await credits.balance(user.id);
+  await db.creditAccount.update({ where: { userId: user.id }, data: { available: 1000 } });
+  await db.platformSetting.upsert({ where: { key: 'maxConcurrent' }, create: { key: 'maxConcurrent', value: 2 }, update: { value: 2 } });
+  const queue = { add: async () => {} };
+  const makePlan = count => plan([
+    { id: 'shots', description: '创建分镜并引用故事', tool: 'create_nodes', arguments: { nodes: Array.from({ length: count }, (_, i) => ({ kind: 'image', title: `镜头${i + 1}`, prompt: `镜头${i + 1}，小狗冒险`, referenceNodeIds: ['story'] })) } },
+    ...Array.from({ length: count }, (_, i) => ({ id: `generate${i}`, description: `生成镜头${i + 1}`, tool: 'generate_image', arguments: { nodeId: { stepId: 'shots', index: i } } })),
+  ]);
+  const processItem = async (worker, itemId) => {
+    const item = await db.generationTaskItem.findUniqueOrThrow({ where: { id: itemId } });
+    await db.generationTaskItem.update({ where: { id: itemId }, data: { nextRunAt: new Date(0) } });
+    await worker.process({ data: { id: itemId, revision: item.revision } });
+  };
+  await t.test('three images survive capacity suspension, restart, mixed failure and an independent retry without re-planning or duplicate charges', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const images = new CanvasImageToolsService(db, tasks, config);
+    const f = await fixture(makePlan(3), db, images);
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    const content = '根据story生成三张分镜图片'; const requestId = randomUUID();
+    const before = await credits.balance(user.id);
+    const send = () => collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, content, [], signal(), ['story'], requestId));
+    const events = await send();
+    assert(events.some(e => e.event === 'plan'));
+    const run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+    assert.equal(run.status, 'waiting_generation');
+    assert(run.deliveredAt);
+    assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 2, 'only available generation slots may be submitted; other steps must remain durable');
+    assert.equal((await db.canvasAgentStep.findMany({ where: { runId: run.id, status: 'pending' } })).length, 1);
+    await send();
+    assert.equal(f.calls(), 1);
+    assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 2);
+    const firstTask = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id }, include: { items: true } });
+    assert((firstTask.input).prompt.includes('小狗出门、迷路、遇到朋友、一起回家'));
+    const raw = await f.graph();
+    assert.equal(raw.edges.length, 3);
+    assert(raw.nodes.slice(1).every((n, i, nodes) => !i || n.position.y > nodes[i - 1].position.y));
+    let providerCalls = 0;
+    const worker = new GenerationTasksProcessor(db, tasks, config, {});
+    worker.provider = { generateImage: async input => {
+      providerCalls++;
+      if (input.prompt.includes('镜头2')) throw new (apiRequire('@reel/ai-gen').AiGenError)('fixture rejection', 400);
+      return { url: 'https://invalid.test/fake.png', model: 'cogview-3-flash' };
+    } };
+    worker.saveMedia = async id => ({ url: `/files/users/${user.id}/generated/${id}.png`, localPath: `/tmp/${id}.png`, width: 1024, height: 1024 });
+    await processItem(worker, firstTask.items[0].id);
+    await processItem(worker, firstTask.items[0].id);
+    // Fresh coordinator/service instances simulate an API restart. The planner
+    // throws if invoked: continuation must use only the persisted plan.
+    const restartedAgent = new CanvasAgentService(f.mcp, { chatStreamEvents: async function* () { throw new Error('must not re-plan'); } }, db);
+    const recovery = new CanvasGenerationRecovery(db, restartedAgent, f.mcp);
+    await recovery.tick();
+    assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 3);
+    const rest = await db.generationTask.findMany({ where: { canvasId: f.canvas.id, id: { not: firstTask.id } }, include: { items: true } });
+    for (const task of rest) { await processItem(worker, task.items[0].id); await processItem(worker, task.items[0].id); }
+    await recovery.tick();
+    const done = await db.canvasAgentRun.findUniqueOrThrow({ where: { id: run.id } });
+    assert.equal(done.status, 'completed_with_errors');
+    assert.match(done.response, /2 张成功，1 张失败/);
+    assert.equal(providerCalls, 3);
+    const balance = await credits.balance(user.id);
+    assert.equal(balance.spent - before.spent, 21, 'one chat plus two successful pictures; failed picture is refunded');
+    assert.equal(balance.frozen, 0);
+    const graph = await f.graph();
+    assert.equal(graph.nodes.filter(n => n.data.status === 'ready' && n.data.kind === 'image').length, 2);
+    const failedNode = graph.nodes.find(n => n.data.kind === 'image' && n.data.status === 'failed');
+    assert(failedNode);
+    await send(); await recovery.tick();
+    assert.equal(f.calls(), 1); assert.equal(providerCalls, 3);
+    assert.equal((await credits.balance(user.id)).spent, balance.spent);
+    assert.equal((await chat.get(user.id, f.canvas.id, f.conversation.id)).messages.at(-1).content, done.response);
+    // A new explicit user request retries only the failed target, with its own
+    // operation identity. Successful siblings are retained.
+    const retryPlan = plan([{ id: 'retry', description: '重试失败图片', tool: 'generate_image', arguments: { nodeId: failedNode.id } }]);
+    const retryModel = { chatStreamEvents: async function* () { yield submit(retryPlan); } };
+    const retryAgent = new CanvasAgentService(f.mcp, retryModel, db);
+    const retryChat = new CanvasChatService(db, retryModel, credits, config, retryAgent);
+    await collect(retryChat.sendStream(user.id, f.canvas.id, f.conversation.id, '重试生成这张图片', [], signal(), [failedNode.id], randomUUID()));
+    const retried = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id, nodeId: failedNode.id, id: { not: failedNode.data.generationTaskId } }, include: { items: true } });
+    worker.provider.generateImage = async () => { providerCalls++; return { url: 'https://invalid.test/retry.png', model: 'cogview-3-flash' }; };
+    await processItem(worker, retried.items[0].id); await processItem(worker, retried.items[0].id);
+    await recovery.tick();
+    const final = await f.graph();
+    assert.equal(final.nodes.filter(n => n.data.kind === 'image' && n.data.status === 'ready').length, 3);
+    for (const n of graph.nodes.filter(n => n.data.kind === 'image' && n.data.status === 'ready')) assert.equal(final.nodes.find(current => current.id === n.id).data.assetId, n.data.assetId);
+  });
+  await t.test('disconnect immediately after planning continues in the background and never re-plans or bills chat twice', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const images = new CanvasImageToolsService(db, tasks, config);
+    const f = await fixture(makePlan(1), db, images);
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    const before = await credits.balance(user.id);
+    const stream = chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成一张图片', [], signal(), ['story'], randomUUID());
+    while (true) { const event = await stream.next(); if (event.done || event.value.event === 'plan') break; }
+    await stream.return();
+    let run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+    assert(run.deliveredAt); assert.equal(run.status, 'interrupted');
+    assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 0);
+    const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+    await recovery.tick();
+    const task = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id }, include: { items: true } });
+    assert.equal(f.calls(), 1);
+    // Active executors fence the reconciliation writer as well.
+    const lease = await f.agent.claim(f.scope, f.conversation.id, run.requestId, run.input, true);
+    await db.generationTaskItem.update({ where: { id: task.items[0].id }, data: { status: 'completed' } });
+    await db.asset.update({ where: { id: task.items[0].assetId }, data: { status: 'ready', url: '/files/fixture.png' } });
+    await tasks.refresh(task.id);
+    await recovery.tick();
+    assert.equal((await f.graph()).nodes[1].data.status, 'generating');
+    await f.agent.store.release(lease);
+    // Deleting a target never resurrects it; the generated asset stays in history.
+    const graph = await f.graph(); graph.nodes = graph.nodes.filter(n => n.id !== task.nodeId); graph.edges = [];
+    await db.canvas.update({ where: { id: f.canvas.id }, data: { graph } });
+    await recovery.tick();
+    run = await db.canvasAgentRun.findUniqueOrThrow({ where: { id: run.id } });
+    assert.equal(run.status, 'completed'); assert.match(run.response, /生成历史/);
+    assert.equal((await f.graph()).nodes.length, 1);
+    assert.equal((await credits.balance(user.id)).spent - before.spent, 11);
+    assert.equal(await db.canvasChatMessage.count({ where: { runId: run.id } }), 2);
+    const session = await f.mcp.connect({ ...f.scope, canvasId: randomUUID() });
+    try { assert((await session.client.callTool({ name: 'get_image_generation_status', arguments: { taskId: task.id } })).isError); }
+    finally { await session.close(); }
+  });
+  await t.test('lost submission responses use the atomic receipt; unknown provider outcomes never resubmit automatically', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const original = tasks.create.bind(tasks);
+    let submissions = 0;
+    tasks.create = async (...args) => { submissions++; const result = await original(...args); if (submissions === 1) throw new Error('lost response after commit'); return result; };
+    const f = await fixture(makePlan(1), db, new CanvasImageToolsService(db, tasks, config));
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成一张图片', [], signal(), ['story'], randomUUID()));
+    assert.equal(submissions, 1);
+    const run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+    assert(run.events.some(event => event.recoveredReceipt));
+    const task = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id }, include: { items: true } });
+    await db.generationTaskItem.update({ where: { id: task.items[0].id }, data: { status: 'unknown', error: '提交结果待确认', errorCode: 'SUBMISSION_UNKNOWN' } });
+    await tasks.refresh(task.id);
+    const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+    await recovery.tick(); await recovery.tick();
+    assert.equal(submissions, 1); assert.equal(f.calls(), 1);
+    assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 1);
+    assert.match((await db.canvasAgentRun.findUniqueOrThrow({ where: { id: run.id } })).response, /结果待确认/);
+    await db.generationTaskItem.update({ where: { id: task.items[0].id }, data: { status: 'failed' } });
+    await tasks.refresh(task.id); await recovery.tick();
+    assert.equal((await db.canvasAgentRun.findUniqueOrThrow({ where: { id: run.id } })).status, 'completed_with_errors');
+  });
+  await t.test('failure to commit the MCP receipt rolls back the task, asset, graph flags and credit holds', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const original = tasks.create.bind(tasks);
+    tasks.create = (userId, input, hooks) => original(userId, input, { ...hooks, commit: async (tx, task) => { await hooks.commit(tx, task); throw new Error('receipt transaction failed'); } });
+    const images = new CanvasImageToolsService(db, tasks, config);
+    const f = await fixture(makePlan(1), db, images);
+    const before = await credits.balance(user.id);
+    await assert.rejects(collect(f.run(request('根据story生成一张图片'))), /receipt transaction failed/);
+    assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 0);
+    assert.equal(await db.asset.count({ where: { canvasId: f.canvas.id } }), 0);
+    assert.equal((await f.graph()).nodes[1].data.status, 'idle');
+    const after = await credits.balance(user.id);
+    assert.equal(after.available, before.available); assert.equal(after.frozen, before.frozen);
+  });
+  await t.test('an older status snapshot cannot regress an already completed image or response', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const f = await fixture(makePlan(1), db, new CanvasImageToolsService(db, tasks, config));
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成一张图片', [], signal(), ['story'], randomUUID()));
+    const run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id }, include: { steps: true } });
+    const step = run.steps.find(s => s.tool === 'generate_image');
+    const taskId = step.result.generationTaskId;
+    const old = await tasks.get(user.id, taskId);
+    const item = old.items[0];
+    await db.generationTaskItem.update({ where: { id: item.id }, data: { status: 'completed' } });
+    await db.asset.update({ where: { id: item.asset.id }, data: { status: 'ready', url: '/files/completed.png' } });
+    await tasks.refresh(taskId);
+    const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+    await recovery.reconcile(run.id, f.scope, new Map([[step.id, await tasks.get(user.id, taskId)]]));
+    assert.equal((await f.graph()).nodes[1].data.status, 'ready');
+    await recovery.reconcile(run.id, f.scope, new Map([[step.id, old]]));
+    assert.equal((await f.graph()).nodes[1].data.status, 'ready', 'a second PM2 instance may still hold a queued snapshot');
+    assert.equal((await db.canvasAgentStep.findUniqueOrThrow({ where: { id: step.id } })).result.generationStatus, 'completed');
+  });
+  await t.test('queued generation stops when the user changes generation settings before submission', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const f = await fixture(makePlan(3), db, new CanvasImageToolsService(db, tasks, config));
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成三张分镜图片', [], signal(), ['story'], randomUUID()));
+    const existing = await db.generationTask.findMany({ where: { canvasId: f.canvas.id }, include: { items: true } });
+    for (const task of existing) {
+      await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'failed' } });
+      await tasks.refresh(task.id);
+    }
+    const graph = await f.graph();
+    const pending = graph.nodes.find(n => n.data.kind === 'image' && !n.data.generationTaskId);
+    pending.data.generationSize = '1344x768';
+    await db.canvas.update({ where: { id: f.canvas.id }, data: { graph } });
+    const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+    await recovery.tick();
+    const all = await db.generationTask.findMany({ where: { canvasId: f.canvas.id } });
+    // Always clean up paid fixtures, including when this regression fails.
+    for (const task of all) { await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'failed' } }); await tasks.refresh(task.id); }
+    assert.equal(all.length, existing.length, 'saved plans must not silently use newly selected generation settings');
+    const run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+    assert.equal(run.errorCode, 'PRECONDITION_CHANGED');
+    assert.equal((await f.graph()).nodes.find(n => n.id === pending.id).data.generationSize, '1344x768');
+  });
+  await t.test('stale whole-canvas autosave retains concurrent agent nodes and completed assets without losing local edits', async () => {
+    const { CanvasesService } = require('../src/modules/canvases/canvases.service.ts');
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const f = await fixture(makePlan(1), db, new CanvasImageToolsService(db, tasks, config));
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成一张图片', [], signal(), ['story'], randomUUID()));
+    const base = await f.graph(), local = structuredClone(base);
+    local.nodes[0].data.title = '本地修改保留'; local.nodes[0].position.x = 100;
+    const task = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id }, include: { items: true } });
+    await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'completed' } });
+    await db.asset.update({ where: { id: task.items[0].assetId }, data: { status: 'ready', url: '/files/autosave-result.png' } });
+    await tasks.refresh(task.id);
+    const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+    await recovery.tick();
+    const current = await db.canvas.findUniqueOrThrow({ where: { id: f.canvas.id } });
+    await f.mcp.tools.execute(f.scope, 'create_nodes', { expectedRevision: current.updatedAt.toISOString(), nodes: [{ kind: 'image', title: '后台新增', prompt: '新图片', referenceNodeIds: ['story'] }] });
+    const canvases = new CanvasesService(db, credits);
+    const updated = await canvases.update(user.id, f.canvas.id, { graph: local, baseGraph: base });
+    assert.equal(updated.graph.nodes.length, 3);
+    assert.equal(updated.graph.nodes[0].data.title, '本地修改保留'); assert.equal(updated.graph.nodes[0].position.x, 100);
+    assert.equal(updated.graph.nodes.find(n => n.id === task.nodeId).data.status, 'ready');
+    assert.equal(updated.graph.nodes.find(n => n.id === task.nodeId).data.url, '/files/autosave-result.png');
+    assert.equal(updated.graph.edges.length, 2);
+    await assert.rejects(canvases.update('foreign-user', f.canvas.id, { graph: local, baseGraph: base }), /not found/);
+  });
+  await t.test('two background API instances resume one saved plan without duplicate jobs, receipts or holds', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const f = await fixture(makePlan(3), db, new CanvasImageToolsService(db, tasks, config));
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成三张分镜图片', [], signal(), ['story'], randomUUID()));
+    const initial = await db.generationTask.findMany({ where: { canvasId: f.canvas.id } });
+    for (const task of initial) { await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'failed' } }); await tasks.refresh(task.id); }
+    const first = new CanvasGenerationRecovery(db, f.agent, f.mcp), second = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+    await Promise.all([first.tick(), second.tick()]);
+    await Promise.all([first.tick(), second.tick()]);
+    const all = await db.generationTask.findMany({ where: { canvasId: f.canvas.id } });
+    for (const task of all) { await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'failed' } }); await tasks.refresh(task.id); }
+    await first.tick();
+    assert.equal(all.length, 3);
+    assert.equal(new Set(all.map(task => task.nodeId)).size, 3);
+    assert.equal(await db.creditHold.count({ where: { referenceId: { in: all.map(task => task.id) } } }), 3);
+    assert.equal(f.calls(), 1);
+    assert.equal(await db.canvasChatMessage.count({ where: { conversationId: f.conversation.id } }), 2);
+  });
+  await t.test('insufficient media credits stop the saved plan without orphan assets, frozen credits or automatic retries', async () => {
+    const before = await credits.balance(user.id);
+    await db.creditAccount.update({ where: { userId: user.id }, data: { available: 1 } });
+    try {
+      const tasks = new GenerationTasksService(db, config, queue, credits);
+      const f = await fixture(makePlan(1), db, new CanvasImageToolsService(db, tasks, config));
+      const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+      await assert.rejects(collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成一张图片', [], signal(), ['story'], randomUUID())), /积分不足/);
+      const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+      await recovery.tick(); await recovery.tick();
+      assert.equal(f.calls(), 1);
+      assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 0);
+      assert.equal(await db.asset.count({ where: { canvasId: f.canvas.id } }), 0);
+      const balance = await credits.balance(user.id);
+      assert.equal(balance.frozen, 0); assert.equal(balance.spent - before.spent, 1);
+      const detail = await chat.get(user.id, f.canvas.id, f.conversation.id);
+      assert.equal(detail.agentRuns[0].backgroundPending, false);
+      assert.equal(detail.agentRuns[0].status, 'partial');
+    } finally { await db.creditAccount.update({ where: { userId: user.id }, data: { available: before.available } }); }
+  });
+  await t.test('a missing saved plan stops background execution instead of making a new model call', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const f = await fixture(makePlan(1), db, new CanvasImageToolsService(db, tasks, config));
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    const stream = chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成一张图片', [], signal(), ['story'], randomUUID());
+    while (true) { const next = await stream.next(); if (next.done || next.value.event === 'plan') break; }
+    await stream.return();
+    const run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+    await db.canvasAgentRun.update({ where: { id: run.id }, data: { plan: apiRequire('@reel/db').Prisma.JsonNull } });
+    const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+    await recovery.tick();
+    const updated = await db.canvasAgentRun.findUniqueOrThrow({ where: { id: run.id } });
+    assert.equal(updated.status, 'failed'); assert.equal(updated.errorCode, 'CHECKPOINT_INVALID');
+    assert.equal(f.calls(), 1); assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 0);
+    assert.equal((await f.graph()).nodes.length, 1);
+  });
+  await t.test('image-reference MCP generation uses the compatible model and rejects foreign assets before reserving generation credits', async () => {
+    const storage = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'agent-image-reference-'));
+    const localConfig = { get: key => key === 'STORAGE_DIR' ? storage : config.get(key) };
+    const foreign = await db.user.create({ data: { email: `${randomUUID()}@invalid.test`, name: 'Foreign fixture' } });
+    try {
+      for (const owner of [user, foreign]) {
+        const directory = path.join(storage, 'users', owner.id, 'uploads'); fs.mkdirSync(directory, { recursive: true });
+        const file = path.join(directory, 'reference.png');
+        fs.writeFileSync(file, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK0cAAAAASUVORK5CYII=', 'base64'));
+        const folder = await db.assetFolder.create({ data: { userId: owner.id, name: '参考图片测试' } });
+        const asset = await db.asset.create({ data: { userId: owner.id, folderId: folder.id, kind: 'image', source: 'upload', status: 'ready', name: '参考图片', url: `/files/users/${owner.id}/uploads/reference.png`, localPath: file } });
+        const graph = { version: 1, nodes: [{ id: 'photo', type: 'workflow', position: { x: 0, y: 0 }, data: { kind: 'image', title: '参考图片', prompt: '', content: '', status: 'ready', uploaded: true, assetId: asset.id, url: asset.url } }], edges: [], viewport: { x: 0, y: 0, zoom: 1 } };
+        const value = makePlan(1); value.steps[0].arguments.nodes[0].referenceNodeIds = ['photo'];
+        const tasks = new GenerationTasksService(db, localConfig, queue, credits);
+        const f = await fixture(value, db, new CanvasImageToolsService(db, tasks, localConfig), graph);
+        const chat = new CanvasChatService(db, f.model, credits, localConfig, f.agent);
+        const before = await credits.balance(user.id);
+        const send = () => collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '基于photo生成一张图片', [], signal(), ['photo'], randomUUID()));
+        if (owner.id !== user.id) {
+          await assert.rejects(send(), /参考图片不可用/);
+          assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 0);
+          assert.equal((await credits.balance(user.id)).frozen, before.frozen);
+        } else {
+          await send();
+          const task = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id } });
+          assert.equal(task.model, 'Kwai-Kolors/Kolors'); assert.deepEqual(task.input.imageAssetIds, [asset.id]);
+          assert.equal(task.input.references[0].assetId, asset.id);
+          const session = await f.mcp.connect(f.scope);
+          try {
+            const response = await session.client.callTool({ name: 'generate_image', arguments: { nodeId: task.nodeId, expectedRevision: new Date().toISOString() } });
+            assert(response.isError); assert.match(response.content[0].text, /已持久化/);
+          } finally { await session.close(); }
+          await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'failed' } }); await tasks.refresh(task.id);
+          await new CanvasGenerationRecovery(db, f.agent, f.mcp).tick();
+        }
+      }
+    } finally { fs.rmSync(storage, { recursive: true, force: true }); }
+  });
+  await t.test('renaming a queued target and deleting an already submitted sibling do not invalidate the remaining media plan', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const f = await fixture(makePlan(3), db, new CanvasImageToolsService(db, tasks, config));
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成三张分镜图片', [], signal(), ['story'], randomUUID()));
+    const initial = await db.generationTask.findMany({ where: { canvasId: f.canvas.id } });
+    for (const task of initial) { await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'failed' } }); await tasks.refresh(task.id); }
+    const graph = await f.graph();
+    const pending = graph.nodes.find(n => n.data.kind === 'image' && !n.data.generationTaskId);
+    pending.data.title = '用户重命名的镜头';
+    const deleted = initial[0].nodeId;
+    graph.nodes = graph.nodes.filter(n => n.id !== deleted); graph.edges = graph.edges.filter(e => e.source !== deleted && e.target !== deleted);
+    await db.canvas.update({ where: { id: f.canvas.id }, data: { graph } });
+    const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+    await recovery.tick();
+    let run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+    const all = await db.generationTask.findMany({ where: { canvasId: f.canvas.id } });
+    for (const task of all) { await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'failed' } }); await tasks.refresh(task.id); }
+    assert.equal(run.status, 'waiting_generation', 'previously verified edits must not be checked against stale titles or intentionally deleted nodes');
+    await recovery.tick();
+    run = await db.canvasAgentRun.findUniqueOrThrow({ where: { id: run.id } });
+    assert.equal(run.status, 'completed_with_errors'); assert.equal(f.calls(), 1);
+    assert.equal((await f.graph()).nodes.find(n => n.id === pending.id).data.title, '用户重命名的镜头');
+    assert(!(await f.graph()).nodes.some(n => n.id === deleted));
+  });
+  await t.test('explicitly resuming a failed save on the same generation task updates its original Agent run and message', async () => {
+    for (const finishesBeforeScan of [false, true]) {
+      const tasks = new GenerationTasksService(db, config, queue, credits);
+      const f = await fixture(makePlan(1), db, new CanvasImageToolsService(db, tasks, config));
+      const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+      const before = await credits.balance(user.id);
+      await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成一张图片', [], signal(), ['story'], randomUUID()));
+      const task = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id }, include: { items: true } });
+      await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'failed', providerResult: { url: 'https://invalid.test/result.png', model: task.model } } });
+      await tasks.refresh(task.id);
+      const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+      await recovery.tick();
+      const run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+      assert.equal(run.status, 'completed_with_errors');
+      await tasks.resume(user.id, task.id);
+      const finish = async () => {
+        await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'completed', revision: { increment: 1 } } });
+        await db.asset.update({ where: { id: task.items[0].assetId }, data: { status: 'ready', url: '/files/resumed.png' } });
+        await tasks.refresh(task.id);
+      };
+      if (finishesBeforeScan) await finish();
+      await recovery.tick();
+      const active = await db.canvasAgentRun.findUniqueOrThrow({ where: { id: run.id } });
+      // Clean up even before the assertion, so a failed regression cannot strand
+      // a credit hold in the remaining scenarios.
+      if (!finishesBeforeScan) await finish();
+      assert.equal(active.status, finishesBeforeScan ? 'completed' : 'waiting_generation');
+      await recovery.tick();
+      const completed = await chat.get(user.id, f.canvas.id, f.conversation.id);
+      assert.equal(completed.agentRuns[0].status, 'completed');
+      assert.match(completed.messages.at(-1).content, /1 张成功/);
+      assert.equal(f.calls(), 1); assert.equal((await credits.balance(user.id)).spent - before.spent, 11);
+    }
+  });
+  await t.test('an older task finishing reconciliation cannot overwrite a newer task or its chat reply on the same node', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const f = await fixture(makePlan(1), db, new CanvasImageToolsService(db, tasks, config));
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成一张图片', [], signal(), ['story'], randomUUID()));
+    const old = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id } });
+    await db.generationTaskItem.updateMany({ where: { taskId: old.id }, data: { status: 'failed', revision: { increment: 1 } } });
+    await tasks.refresh(old.id);
+    const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp);
+    await recovery.tick();
+    const oldRun = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id }, include: { steps: true } });
+    const oldStep = oldRun.steps.find(step => step.tool === 'generate_image');
+    const snapshot = await tasks.get(user.id, old.id);
+    const retryPlan = plan([{ id: 'new-task', description: '生成新的图片', tool: 'generate_image', arguments: { nodeId: old.nodeId } }]);
+    const model = { chatStreamEvents: async function* () { yield submit(retryPlan); } };
+    const retryAgent = new CanvasAgentService(f.mcp, model, db);
+    const retryChat = new CanvasChatService(db, model, credits, config, retryAgent);
+    await collect(retryChat.sendStream(user.id, f.canvas.id, f.conversation.id, '给这个图片节点生成一张新图片', [], signal(), [old.nodeId], randomUUID()));
+    const current = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id, id: { not: old.id } }, include: { items: true } });
+    await recovery.reconcile(oldRun.id, f.scope, new Map([[oldStep.id, snapshot]]));
+    let node = (await f.graph()).nodes.find(n => n.id === old.nodeId);
+    assert.equal(node.data.generationTaskId, current.id); assert.equal(node.data.status, 'generating');
+    await db.generationTaskItem.updateMany({ where: { taskId: current.id }, data: { status: 'completed', revision: { increment: 1 } } });
+    await db.asset.update({ where: { id: current.items[0].assetId }, data: { status: 'ready', url: '/files/new-task.png' } });
+    await tasks.refresh(current.id); await recovery.tick();
+    await recovery.reconcile(oldRun.id, f.scope, new Map([[oldStep.id, snapshot]]));
+    node = (await f.graph()).nodes.find(n => n.id === old.nodeId);
+    assert.equal(node.data.assetId, current.items[0].assetId); assert.equal(node.data.url, '/files/new-task.png');
+    const detail = await retryChat.get(user.id, f.canvas.id, f.conversation.id);
+    assert.match(detail.messages.at(-1).content, /1 张成功/);
+    assert.equal(detail.messages.length, 4);
+  });
+  await t.test('resuming a submitted item of a stopped plan refreshes its receipt without restarting rejected pending steps', async () => {
+    const tasks = new GenerationTasksService(db, config, queue, credits);
+    const f = await fixture(makePlan(3), db, new CanvasImageToolsService(db, tasks, config));
+    const chat = new CanvasChatService(db, f.model, credits, config, f.agent);
+    await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据story生成三张分镜图片', [], signal(), ['story'], randomUUID()));
+    const initial = await db.generationTask.findMany({ where: { canvasId: f.canvas.id }, include: { items: true } });
+    for (const task of initial) {
+      await db.generationTaskItem.updateMany({ where: { taskId: task.id }, data: { status: 'failed', revision: { increment: 1 }, providerResult: { url: 'https://invalid.test/result.png', model: task.model } } }); await tasks.refresh(task.id);
+    }
+    const graph = await f.graph(); graph.nodes.find(n => n.data.kind === 'image' && !n.data.generationTaskId).data.generationSize = '1344x768';
+    await db.canvas.update({ where: { id: f.canvas.id }, data: { graph } });
+    const recovery = new CanvasGenerationRecovery(db, f.agent, f.mcp); await recovery.tick();
+    let run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+    assert.equal(run.status, 'partial'); assert.equal(run.errorCode, 'PRECONDITION_CHANGED');
+    const resumed = await tasks.resume(user.id, initial[0].id); await recovery.tick();
+    run = await db.canvasAgentRun.findUniqueOrThrow({ where: { id: run.id } });
+    assert.equal(run.status, 'partial');
+    const step = await db.canvasAgentStep.findUniqueOrThrow({ where: { id: resumed.requestId } });
+    assert.equal(step.result.generationRevision, resumed.revision);
+    await db.generationTaskItem.updateMany({ where: { taskId: resumed.id }, data: { status: 'completed', revision: { increment: 1 } } });
+    await db.asset.update({ where: { id: initial[0].items[0].assetId }, data: { status: 'ready', url: '/files/partial-resume.png' } });
+    await tasks.refresh(resumed.id); await recovery.tick();
+    assert.equal((await f.graph()).nodes.find(n => n.id === resumed.nodeId).data.url, '/files/partial-resume.png');
+    assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 2); assert.equal(f.calls(), 1);
+  });
+  await db.platformSetting.update({ where: { key: 'maxConcurrent' }, data: { value: 3 } });
+});
+
 test('live creation with content then rename resolves outputs on primary and fallback models', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 240000 }, async () => {
   assert(process.env.GLM_API_KEY);
   const f = await fixture();
@@ -591,6 +1060,51 @@ test('live creation with content then rename resolves outputs on primary and fal
     assert(run.plan.steps.some(step => step.tool === 'create_nodes'), name);
     assert(run.plan.steps.some(step => step.tool === 'rename_node'), name);
   }
+});
+
+test('live phase two planner creates, references and generates three images through MCP', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 180000 }, async () => {
+  assert(process.env.GLM_API_KEY);
+  const { GenerationTasksService } = require('../src/modules/generation-tasks/generation-tasks.service.ts');
+  const { CanvasImageToolsService } = require('../src/modules/canvas-agent/canvas-image-tools.service.ts');
+  const { CanvasGenerationRecovery } = require('../src/modules/canvas-agent/canvas-generation-recovery.service.ts');
+  const { GenerationTasksProcessor } = require('../src/modules/generation-tasks/generation-tasks.processor.ts');
+  const config = { get: key => ({ GLM_IMAGE_MODEL: 'cogview-3-flash', GLM_API_KEY: 'fake', STORAGE_DIR: '/tmp' })[key] };
+  const credits = new CreditsService(db, config);
+  await credits.balance(user.id);
+  await db.creditAccount.update({ where: { userId: user.id }, data: { available: 1000 } });
+  const tasks = new GenerationTasksService(db, config, { add: async () => {} }, credits);
+  const f = await fixture(undefined, db, new CanvasImageToolsService(db, tasks, config));
+  const provider = new (apiRequire('@reel/llm').GlmProvider)({ apiKey: process.env.GLM_API_KEY, baseUrl: process.env.GLM_BASE_URL });
+  const outputs = [];
+  const llm = { chatStreamEvents: async function* (...args) {
+    let text = '';
+    try { for await (const event of provider.chatStreamEvents(...args)) { if (event.type === 'text') text += event.text; yield event; } }
+    finally { outputs.push(text); }
+  } };
+  const agent = new CanvasAgentService(f.mcp, llm, db);
+  const chat = new CanvasChatService(db, llm, credits, config, agent);
+  const events = await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, '根据故事节点story拆成三个分镜，创建三个图片节点，分别填写画面提示词并实际生成三张图片。每个图片节点都引用故事。', [], AbortSignal.timeout(150000), ['story'], randomUUID())).catch(error => {
+    // Only this synthetic test story and model-generated plan are included.
+    throw new Error(`${error.message}\nFixture planner outputs: ${JSON.stringify(outputs)}`, { cause: error });
+  });
+  assert(events.findIndex(e => e.event === 'plan') < events.findIndex(e => e.event === 'canvas'));
+  const run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+  assert.equal(run.plan.steps.filter(step => step.tool === 'generate_image').length, 3);
+  assert.equal((await f.graph()).nodes.length, 4);
+  assert.equal((await f.graph()).edges.length, 3);
+  const worker = new GenerationTasksProcessor(db, tasks, config, {});
+  let providerCalls = 0;
+  worker.provider = { generateImage: async () => { providerCalls++; return { url: 'https://invalid.test/fixture.png', model: 'cogview-3-flash' }; } };
+  worker.saveMedia = async id => ({ url: `/files/users/${user.id}/generated/${id}.png`, localPath: `/tmp/${id}.png`, width: 1024, height: 1024 });
+  const recovery = new CanvasGenerationRecovery(db, agent, f.mcp);
+  for (let round = 0; round < 5; round++) {
+    const pending = await db.generationTaskItem.findMany({ where: { task: { canvasId: f.canvas.id }, status: { in: ['queued', 'saving'] } } });
+    for (const item of pending) await worker.process({ data: { id: item.id, revision: item.revision } });
+    await recovery.tick();
+  }
+  assert.equal(providerCalls, 3);
+  assert.equal((await db.canvasAgentRun.findUniqueOrThrow({ where: { id: run.id } })).status, 'completed');
+  assert.equal((await f.graph()).nodes.filter(n => n.data.kind === 'image' && n.data.status === 'ready' && n.data.assetId && n.data.url).length, 3);
 });
 
 test('live Plan & Execute renames then creates a referenced video on a populated canvas', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 120000 }, async () => {

@@ -8,7 +8,7 @@ import type { CanvasToolScope } from './canvas-tools.service';
 import { streamAgentModel } from './model-retry';
 import { AgentStore, AgentFailure, TERMINAL_STATUSES, classifyError, jsonValue, type RunTicket } from './agent-store';
 import { buildPlanningContext, CONTEXT_LIMIT, estimateMessages, type CanvasContext } from './agent-context';
-import { PlanSchema, parsePlanJson, parsePlanCandidate, requestIsReadOnly, bindCreatedNodeReferences, bindRequestLiterals, bindRequestReferences, planningProtocol, resolveArguments, validateReferences, validateRequestBounds, type AgentPlan, type StepResult } from './agent-plan';
+import { PlanSchema, parsePlanJson, parsePlanCandidate, requestIsReadOnly, bindCreatedNodeReferences, bindRequestLiterals, bindRequestReferences, planningProtocol, resolveArguments, validateReferences, validateRequestBounds, validateGenerationPlan, type AgentPlan, type StepResult } from './agent-plan';
 import { assertPreconditions, verifyPlan } from './agent-verifier';
 import { createAgentDiagnostics } from './agent-diagnostics';
 
@@ -26,9 +26,11 @@ export const CREATIVE_AGENT_PROMPT = `你是 Reel Mind 画布助手的 Planner�
 创建引用视频的完整格式示例：{"mode":"execute","goal":"创建引用视频节点","answer":"","steps":[{"id":"create","description":"创建视频节点并引用来源","tool":"create_nodes","arguments":{"nodes":[{"kind":"video","title":"新视频","prompt":"用户需要的提示词","referenceNodeIds":["真实来源ID"]}]}}]}。注意steps和nodes均为数组，必须完整闭合。
 基于、根据或拆分某节点创建新节点时，每个新节点都必须通过referenceNodeIds建立对来源节点的依赖连线；同批多个节点放在同一个create_nodes步骤的nodes数组中。自动位置由服务端排在已有节点群右侧，从上到下纵向排列，不要填写position。
 已有上下文可以直接使用，不需要额外读取。节点内容截断处不能当作完整内容；缺少关键材料时请澄清。上下文未收录的节点不能凭空引用。
-只支持读取、创建text/image/video/audio节点、重命名、修改提示词、连线。不支持生成媒体、删除、剪辑和导出，遇到这些请求说明当前能力，不声称已完成。
+支持读取、创建text/image/video/audio节点、重命名、修改提示词、连线，以及通过generate_image实际生成图片。只创建节点、编写提示词不代表授权实际生成图片；只有用户明确要求生成图片/出图时才能添加generate_image步骤。视频、音频生成、删除、剪辑和导出尚不支持。
+图片生成必须先完成创建、提示词和依赖操作，再把所有generate_image步骤放在计划末尾。每个节点一次生成一张，多张分别创建节点并分别生成。新节点使用步骤引用对象。提交生成会预留模型对应积分，提交成功不代表图片已完成，后台会等待并核验结果。当前不能规划依赖尚未生成图片的后续操作。
+生成三张分镜图片的步骤结构：先create_nodes创建三个image节点，分别填写完整提示词和referenceNodeIds；然后三个generate_image步骤，nodeId分别为{"stepId":"create","index":0}、{"stepId":"create","index":1}、{"stepId":"create","index":2}。保留用户要求的数量，不复制来源节点。
 execute时answer留空。计划简洁，只包含当前请求必需的操作，最多12步、单步创建最多20个节点。`;
-const labels: Record<string, string> = { get_canvas_context: '读取画布', create_nodes: '创建节点', rename_node: '重命名节点', update_node_prompt: '修改提示词', connect_nodes: '建立连接' };
+const labels: Record<string, string> = { generate_image: '生成图片', get_canvas_context: '读取画布', create_nodes: '创建节点', rename_node: '重命名节点', update_node_prompt: '修改提示词', connect_nodes: '建立连接' };
 
 @Injectable()
 export class CanvasAgentService {
@@ -65,6 +67,7 @@ export class CanvasAgentService {
     const audit: unknown[] = Array.isArray(ticket.run.events) ? [...ticket.run.events] : [];
     const record = async (entry: Record<string, unknown>) => {
       audit.push(jsonValue({ ...entry, at: new Date().toISOString() }));
+      if (audit.length > 256) audit.splice(0, audit.length - 256);
       await this.store.update(ticket, { events: jsonValue(audit) });
     };
     const read = async () => {
@@ -156,6 +159,7 @@ export class CanvasAgentService {
             bindRequestReferences(candidate, [...messages].reverse().find(m => m.role === 'user')?.content ?? '', context.explicitNodeIds, new Set(baseline.selectedNodeIds));
             validateRequestBounds(candidate, [...messages].reverse().find(m => m.role === 'user')?.content ?? '');
             validateReferences(candidate, context.nodeIds);
+            validateGenerationPlan(candidate, baseline);
             if (candidate.mode !== 'execute' && !finalAnswerText(candidate.answer)) throw new Error('普通回答必须包含有效的最终回复');
             if (!readOnly && candidate.mode !== 'execute' && /已(?:经)?(?:为你|帮你|成功)?(?:创建|修改|重命名|连接|建立|更新)/.test(candidate.answer)) throw new Error('尚未执行任何操作，不能声称操作已完成');
             break;
@@ -186,12 +190,22 @@ export class CanvasAgentService {
       yield { event: 'plan', data: { runId: ticket.run.id, goal: plan.goal, mode: plan.mode, steps: plan.steps.map(s => ({ id: s.id, description: s.description, tool: s.tool })) } };
       const results = new Map<string, StepResult>();
       const savedSteps = await this.prisma.canvasAgentStep.findMany({ where: { runId: ticket.run.id }, orderBy: { ordinal: 'asc' } });
+      let editsVerified = (ticket.run.context as { editsVerified?: boolean } | null)?.editsVerified === true;
       await this.store.update(ticket, { status: 'executing', error: null, errorCode: null });
       for (const step of plan.steps) {
         signal.throwIfAborted();
         const saved = savedSteps.find(s => s.stepKey === step.id);
         if (!saved) throw new AgentFailure('CHECKPOINT_INVALID', '计划执行检查点不完整');
         if (saved.status === 'completed') { results.set(step.id, saved.result as StepResult); continue; }
+        if (step.tool === 'generate_image' && !editsVerified) {
+          // Finish verifying the canvas-edit phase before starting asynchronous
+          // media work. Subsequent user edits do not invalidate that history;
+          // relevant generation inputs are still checked before submission.
+          verifyPlan({ ...plan, steps: plan.steps.filter(s => s.tool !== 'generate_image') }, results, await read());
+          const checkpoint = await this.prisma.canvasAgentRun.findUniqueOrThrow({ where: { id: ticket.run.id }, select: { context: true } });
+          await this.store.update(ticket, { context: jsonValue({ ...checkpoint.context as Record<string, unknown>, editsVerified: true }) });
+          editsVerified = true;
+        }
         const args = resolveArguments(step, results);
         const progress = { id: saved.id, name: step.tool, title: labels[step.tool], runId: ticket.run.id };
         await record({ ...progress, status: 'running', arguments: args });
@@ -209,7 +223,7 @@ export class CanvasAgentService {
             if (response.isError) {
               const detail = Array.isArray(response.content) ? response.content.map(c => c.type === 'text' ? c.text : '').join('\n') : '工具执行失败';
               const code = (response.structuredContent as { code?: string } | undefined)?.code;
-              throw new AgentFailure(code && ['REVISION_CONFLICT', 'TRANSIENT', 'LEASE_LOST', 'INVALID_OPERATION'].includes(code) ? code : /画布已变化/.test(detail) ? 'REVISION_CONFLICT' : /LEASE_LOST/.test(detail) ? 'LEASE_LOST' : 'INVALID_OPERATION', detail);
+              throw new AgentFailure(code && ['REVISION_CONFLICT', 'TRANSIENT', 'LEASE_LOST', 'INVALID_OPERATION', 'GENERATION_CAPACITY'].includes(code) ? code : /画布已变化/.test(detail) ? 'REVISION_CONFLICT' : /LEASE_LOST/.test(detail) ? 'LEASE_LOST' : 'INVALID_OPERATION', detail);
             }
             const result = response.structuredContent as StepResult;
             if (!result) throw new AgentFailure('INVALID_RECEIPT', '工具未返回提交凭证');
@@ -235,6 +249,16 @@ export class CanvasAgentService {
               completed = true; break;
             }
             const code = classifyError(error);
+            if (step.tool === 'generate_image' && code === 'GENERATION_CAPACITY') {
+              // A capacity limit is a durable suspension, not a failed paid
+              // generation. The background executor retries this saved step.
+              await this.store.updateStep(ticket, saved.id, { status: 'pending', errorCode: null, error: null });
+              const response = '计划已保存，图片任务正在排队，将在有可用生成名额后继续执行。';
+              await this.store.update(ticket, { status: 'waiting_generation', response, error: null, errorCode: null });
+              terminal = true;
+              yield { event: 'delta', data: { text: response, runId: ticket.run.id } };
+              return;
+            }
             await this.store.updateStep(ticket, saved.id, { status: 'failed', errorCode: code, error: String(error).slice(0, 2000) });
             if (attempt < 2 && (code === 'REVISION_CONFLICT' || code === 'TRANSIENT')) continue;
             await record({ ...progress, status: 'failed', code });
@@ -249,15 +273,18 @@ export class CanvasAgentService {
       yield { event: 'status', data: { message: '正在核验执行结果…', runId: ticket.run.id } };
       const actual = await read();
       trace.stage('result.verify');
-      verifyPlan(plan, results, actual);
+      const verification = editsVerified ? { ...plan, steps: plan.steps.filter(step => step.tool === 'generate_image' && savedSteps.find(saved => saved.stepKey === step.id)?.status !== 'completed') } : plan;
+      verifyPlan(verification, results, actual);
       const renames = plan.steps.filter(s => s.tool === 'rename_node');
       const response = plan.mode !== 'execute' ? finalAnswerText(plan.answer) : renames.length === plan.steps.length
         ? renames.map(s => `已将节点名称改为「${s.arguments.title}」。`).join('\n')
         : `已完成并核验 ${plan.steps.length} 个操作步骤。${[...results.values()].flatMap(r => r.createdNodes as { title: string }[] ?? []).map(n => `「${n.title}」`).join('、')}`;
-      await this.store.update(ticket, { status: plan.mode === 'clarify' ? 'awaiting_input' : 'completed', response, error: null, errorCode: null });
+      const hasGeneration = plan.steps.some(step => step.tool === 'generate_image');
+      const deliveredResponse = hasGeneration ? `已提交 ${plan.steps.filter(step => step.tool === 'generate_image').length} 个图片生成任务，正在后台生成，完成后会自动更新画布和本条结果。` : response;
+      await this.store.update(ticket, { status: hasGeneration ? 'waiting_generation' : plan.mode === 'clarify' ? 'awaiting_input' : 'completed', response: deliveredResponse, error: null, errorCode: null });
       terminal = true;
       trace.stage('engine.completed', { mode: plan.mode, stepCount: plan.steps.length });
-      yield { event: 'delta', data: { text: response, runId: ticket.run.id } };
+      yield { event: 'delta', data: { text: deliveredResponse, runId: ticket.run.id } };
     } catch (error) {
       trace.failure(error);
       const committed = await this.prisma.canvasAgentStep.count({ where: { runId: ticket.run.id, status: 'completed' } });

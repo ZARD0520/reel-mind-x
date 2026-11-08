@@ -103,7 +103,7 @@ export class GenerationTasksProcessor extends WorkerHost {
       await this.prisma.$transaction(async (tx) => {
         const changed = await tx.generationTaskItem.updateMany({
           where: { id: item.id, leaseToken: token },
-          data,
+          data: { ...data, revision: { increment: 1 } },
         });
         if (!changed.count) throw new LeaseLost();
         if (asset && item.assetId)

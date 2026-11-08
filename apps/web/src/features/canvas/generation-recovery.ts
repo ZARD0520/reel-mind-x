@@ -1,6 +1,7 @@
 import type { GenerationTask } from '@reel/contracts';
 import { isGenerationActive } from '@reel/contracts/generation';
 import { CANVAS_NODE_GAP, canvasNodeBounds, layoutVerticalNodes } from '@reel/contracts/canvas-layout';
+import { acceptsGenerationSnapshot, generationSnapshot } from '@reel/contracts/generation-snapshot';
 import type { Edge, Node } from '@xyflow/react';
 
 /** Unknown tasks are paused for manual verification, not actively executing. */
@@ -35,6 +36,7 @@ type GenerationNodeData = Record<string, unknown> & {
   content: string;
   generationRequestId?: string;
   generationTaskId?: string;
+  generationRevision?: number;
   generationAppliedTaskId?: string;
   generationBatchResultsTaskId?: string;
   generationBatchTaskId?: string;
@@ -51,14 +53,11 @@ export function recoverGenerationTasks<D extends GenerationNodeData>(
   let nextEdges = edges;
   for (const task of tasks) {
     const node = nextNodes.find((candidate) => candidate.id === task.nodeId);
-    if (
-      !node ||
-      node.data.generationDetached ||
-      (node.data.generationRequestId && node.data.generationRequestId !== task.requestId)
-    )
-      continue;
+    const snapshot = generationSnapshot(task);
+    if (!node || !acceptsGenerationSnapshot(node.data, snapshot)) continue;
     const alreadyApplied =
       node.data.generationAppliedTaskId === task.id &&
+      (node.data.generationRevision ?? 0) === (task.revision ?? 0) &&
       !isGenerationActive(task.status) &&
       node.data.generationStatus === task.status &&
       node.data.status !== 'generating';
@@ -74,9 +73,7 @@ export function recoverGenerationTasks<D extends GenerationNodeData>(
       : [...successful, ...task.items.filter((item) => !successful.includes(item))];
     const asset = results[0]?.status === 'completed' ? results[0].asset : undefined;
     const patch = {
-      generationTaskId: task.id,
-      generationRequestId: task.requestId,
-      generationStatus: task.status,
+      ...snapshot,
       generationFailureVisible: active || node.data.generationFailureVisible !== false,
       // A failed sibling can be resumable while the rest of a batch is still running.
       // Let the batch finish before exposing recovery actions.

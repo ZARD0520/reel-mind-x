@@ -45,6 +45,8 @@ const { randomUUID } = require('node:crypto');
     let chatRequests = 0;
     let generationRequests = 0;
     let scenario = 'success';
+    let mediaTask = null;
+    let detailReads = 0;
     const rawError = 'GLM API 调用失败 (429): {"error":{"code":"1305","message":"private provider diagnostics"}}';
     const friendlyError = '当前业务模型繁忙，请稍后再试。';
     await page.route('**/api/**', async route => {
@@ -56,10 +58,22 @@ const { randomUUID } = require('node:crypto');
         if (request.method() === 'PATCH') graph = request.postDataJSON().graph ?? graph;
         json = { id: canvasId, name: 'Agent integration', graph, updatedAt: new Date().toISOString() };
       } else if (pathname.endsWith('/conversations')) json = request.method() === 'POST' ? conversation : [conversation];
-      else if (pathname.endsWith(`/conversations/${conversation.id}`)) json = conversation;
+      else if (pathname.endsWith(`/conversations/${conversation.id}`)) { detailReads++; json = conversation; }
       else if (pathname.endsWith('/messages')) {
         chatRequests++;
         submitted = request.postDataJSON();
+        if (scenario === 'media-waiting') {
+          const runId = randomUUID();
+          const node = graph.nodes.find(n => n.id === 'shot-0');
+          mediaTask = { id: randomUUID(), requestId: randomUUID(), nodeId: node.id, model: 'cogview-3-flash', revision: 0, createdAt: new Date().toISOString(), status: 'queued', error: null, canResume: false,
+            items: [{ id: randomUUID(), index: 0, status: 'queued', asset: null }] };
+          node.data = { ...node.data, status: 'generating', generationStatus: 'queued', generationRevision: 0,
+            generationTaskId: mediaTask.id, generationRequestId: mediaTask.requestId, generationStartedAt: mediaTask.createdAt };
+          conversation.messages.push({ id: randomUUID(), role: 'user', content: submitted.content, references: [] }, { id: randomUUID(), role: 'assistant', content: '已提交图片生成任务，正在后台生成。', references: [] });
+          conversation.agentRuns.push({ id: runId, status: 'waiting_generation', events: [] });
+          await route.fulfill({ contentType: 'text/event-stream', body: `event: canvas\ndata: ${JSON.stringify({ graph })}\n\nevent: delta\ndata: ${JSON.stringify({ text: conversation.messages.at(-1).content })}\n\nevent: done\ndata: ${JSON.stringify(conversation)}\n\n` });
+          return;
+        }
         if (scenario === 'cached') {
           await route.fulfill({ contentType: 'text/event-stream', body: `event: done\ndata: ${JSON.stringify(conversation)}\n\n` });
           return;
@@ -91,7 +105,10 @@ const { randomUUID } = require('node:crypto');
         ];
         await route.fulfill({ contentType: 'text/event-stream', body: events.map(event => `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`).join('') });
         return;
-      } else if (pathname === '/api/generation-tasks' && request.method() === 'POST') generationRequests++;
+      } else if (pathname === '/api/generation-tasks') {
+        if (request.method() === 'POST') generationRequests++;
+        else json = mediaTask ? [mediaTask] : [];
+      }
       await route.fulfill({ json });
     });
     await page.goto(`${browserOrigin}/canvas/${canvasId}`);
@@ -171,7 +188,47 @@ const { randomUUID } = require('node:crypto');
     await expect(drawer).not.toContainText('GLM API');
     await expect(composer).toHaveText('');
     await expect(drawer.locator('[role="alert"]')).toHaveCount(0);
+    scenario = 'media-waiting';
+    await page.locator('.react-flow__node[data-id="shot-0"]').evaluate(element => {
+      window.__imageHiddenFrames = [];
+      new MutationObserver(() => {
+        if (element.style.visibility === 'hidden') window.__imageHiddenFrames.push(element.getAttribute('style'));
+      }).observe(element, { attributes: true, attributeFilter: ['style'] });
+    });
+    for (const round of [1, 2]) {
+      await composer.fill('为出门分镜生成一张图片');
+      await drawer.locator('button[aria-label="发送消息"]').click();
+      await expect(drawer).toContainText('已提交图片生成任务，正在后台生成。');
+      await expect(drawer.locator('button[aria-label="发送消息"] svg.animate-spin')).toHaveCount(0);
+      const beforePolling = detailReads;
+      await expect.poll(() => detailReads, { timeout: 8000 }).toBeGreaterThan(beforePolling);
+      mediaTask.status = 'completed'; mediaTask.items[0].status = 'completed';
+      const imageUrl = `/files/phase2-${round}.png`;
+      mediaTask.items[0].asset = { id: randomUUID(), kind: 'image', status: 'ready', url: imageUrl, content: null, model: 'cogview-3-flash' };
+      Object.assign(graph.nodes.find(node => node.id === 'shot-0').data, {
+        status: 'ready', generationStatus: 'completed', generationRevision: 2,
+        generationAppliedTaskId: mediaTask.id, generationBatchResultsTaskId: mediaTask.id,
+        assetId: mediaTask.items[0].asset.id, url: mediaTask.items[0].asset.url,
+      });
+      mediaTask.revision = 2;
+      conversation.agentRuns.at(-1).status = 'completed';
+      conversation.messages.at(-1).content = '图片生成完成：1 张成功。结果已更新到画布。';
+      await page.route(`**${imageUrl}`, route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="blue"/></svg>' }));
+      await expect(drawer).toContainText('图片生成完成：1 张成功。结果已更新到画布。', { timeout: 10000 });
+      await expect(page.locator('.react-flow__node[data-id="shot-0"] img').first()).toHaveAttribute('src', imageUrl);
+      await expect(page.locator('.react-flow__node[data-id="shot-0"]')).toBeVisible();
+      await expect.poll(() => page.locator('.react-flow__node[data-id="shot-0"] img').evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
+      expect(await page.evaluate(() => window.__imageHiddenFrames)).toEqual([]);
+      await page.waitForTimeout(1200);
+      expect(graph.nodes).toHaveLength(13);
+      await expect(page.locator('.react-flow__node')).toHaveCount(13);
+    }
+    await page.reload();
+    await expect(page.locator('.react-flow__node')).toHaveCount(13);
+    await expect(page.locator('.react-flow__node[data-id="shot-0"]')).toBeVisible();
+    await expect(page.locator('.react-flow__node[data-id="shot-0"] img').first()).toHaveAttribute('src', '/files/phase2-2.png');
+    expect(generationRequests).toBe(0, 'browser observes backend generation; it must not submit duplicate jobs');
     expect(errors).toEqual([]);
-    console.log(`PASS: ${insecureHttp ? 'insecure HTTP' : 'normal'} canvas agent requests, updates, error sanitization, persistence and legacy stream fallback`);
+    console.log(`PASS: ${insecureHttp ? 'insecure HTTP' : 'normal'} canvas agent requests, updates, error sanitization, persistence, legacy fallback and repeated image generation without hiding existing nodes`);
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

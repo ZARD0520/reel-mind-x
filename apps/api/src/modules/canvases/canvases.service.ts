@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   CanvasGraphSchema,
   CanvasSchema,
+  mergeCanvasGraphs,
   type Canvas,
   type CanvasGraph,
   type CreateCanvasInput,
@@ -65,13 +66,16 @@ export class CanvasesService {
   }
 
   async update(userId: string, id: string, input: UpdateCanvasInput): Promise<Canvas> {
-    await this.findOne(userId, id);
-    const row = await this.prisma.canvas.update({
-      where: { id },
-      data: {
+    const row = await this.prisma.$transaction(async tx => {
+      const owned = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM canvases WHERE id = ${id} AND "userId" = ${userId} FOR UPDATE`;
+      if (!owned.length) throw new NotFoundException(`Canvas ${id} not found`);
+      const current = await tx.canvas.findUniqueOrThrow({ where: { id } });
+      const graph = input.graph && input.baseGraph ? mergeCanvasGraphs(input.baseGraph, input.graph, CanvasGraphSchema.parse(current.graph)) : input.graph;
+      return tx.canvas.update({ where: { id }, data: {
         ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.graph !== undefined ? { graph: this.toInputJson(input.graph) } : {}),
-      },
+        ...(graph !== undefined ? { graph: this.toInputJson(graph) } : {}),
+        updatedAt: new Date(Math.max(Date.now(), current.updatedAt.getTime() + 1)),
+      } });
     });
     return this.toCanvas(row);
   }

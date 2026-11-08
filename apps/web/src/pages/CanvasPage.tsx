@@ -14,6 +14,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { imageSizesForModel, VIDEO_SIZES } from '@reel/contracts/media-capabilities';
 import { MediaGenerationSettings } from '../features/canvas/components/MediaGenerationSettings';
 import { MODEL_BUSY_MESSAGE, isGenerationActive } from '@reel/contracts/generation';
+import { canvasGraphsEqual } from '@reel/contracts/canvas-merge';
+import { generationSnapshot } from '@reel/contracts/generation-snapshot';
+import { CanvasPersistence } from '../features/canvas/canvas-persistence';
 import type {
   Asset,
   AssetReference,
@@ -171,6 +174,8 @@ type WorkflowNodeData = {
   generationTaskId?: string;
   generationRequestId?: string;
   generationStatus?: GenerationTask['status'];
+  generationRevision?: number;
+  generationStartedAt?: string;
   generationAppliedTaskId?: string;
   generationBatchResultsTaskId?: string;
   generationBatchTaskId?: string;
@@ -521,9 +526,12 @@ function normalizeNode(node: CanvasGraph['nodes'][number]): WorkflowNode {
           : 'idle',
       error: typeof rawData.error === 'string' ? rawData.error : '',
       generationTaskId: rawData.generationTaskId,
-      // Server history is authoritative on reload; the request token only fences in-flight UI updates.
-      generationRequestId: undefined,
+      // Keep the binding for committed server tasks; uncommitted browser
+      // attempts can still recover from authoritative history on reload.
+      generationRequestId: rawData.generationTaskId ? rawData.generationRequestId : undefined,
       generationStatus: rawData.generationStatus,
+      generationRevision: rawData.generationRevision,
+      generationStartedAt: rawData.generationStartedAt,
       generationAppliedTaskId: rawData.generationAppliedTaskId,
       generationBatchResultsTaskId: rawData.generationBatchResultsTaskId,
       generationBatchTaskId: rawData.generationBatchTaskId,
@@ -692,11 +700,11 @@ function NodeGenerationPrompt({
       });
     },
     onMutate: ({ prompt: nextPrompt, count, requestId }) => {
-      updateNodeData(nodeId, { prompt: nextPrompt, model, generationCount: count, generationRequestId: requestId, generationTaskId: undefined, generationDetached: false, generationStatus: 'queued', generationCanResume: false, generationMessage: '', generationProgress: '', generationFailureVisible: true,
+      updateNodeData(nodeId, { prompt: nextPrompt, model, generationCount: count, generationRequestId: requestId, generationTaskId: undefined, generationStartedAt: undefined, generationRevision: undefined, generationAppliedTaskId: undefined, generationBatchResultsTaskId: undefined, generationDetached: false, generationStatus: 'queued', generationCanResume: false, generationMessage: '', generationProgress: '', generationFailureVisible: true,
         ...(kind !== 'text' ? { aspectRatio, generationSize, generationQuality, videoFps } : {}), ...(kind === 'video' ? { videoDuration, videoWithAudio } : {}), status: 'generating', error: '' });
     },
     onSuccess: (task) => {
-      updateNodeData(nodeId, { generationTaskId: task.id, generationRequestId: task.requestId, generationStatus: task.status });
+      updateNodeData(nodeId, generationSnapshot(task));
       invalidateTasks();
     },
     onError: (error, request) => {
@@ -1050,7 +1058,7 @@ function MediaWorkflowCard({ id, data, selected }: NodeProps<MediaWorkflowNode>)
   const resume = useMutation({
     mutationFn: () => api.generationTasks.resume(data.generationTaskId!),
     onSuccess: (task) => {
-      updateNodeData(id, { generationStatus: task.status, generationAppliedTaskId: undefined, generationCanResume: false, generationFailureVisible: true, status: 'generating', error: '', generationMessage: '' });
+      updateNodeData(id, { generationStatus: task.status, generationRevision: task.revision, generationAppliedTaskId: undefined, generationCanResume: false, generationFailureVisible: true, status: 'generating', error: '', generationMessage: '' });
       void queryClient.invalidateQueries({ queryKey: ['generation-tasks', canvasId] });
     },
     onError: (error) => toast.error(generationErrorMessage(error)),
@@ -1452,8 +1460,6 @@ function InfiniteCanvas({
   const agentPreparedRef = useRef(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
-  const lastSavedGraphRef = useRef(JSON.stringify(canvas.graph));
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowNode>(
     canvas.graph.nodes.map(normalizeNode),
   );
@@ -1462,6 +1468,8 @@ function InfiniteCanvas({
     canvas.graph.edges.filter((edge) => !canvas.graph.nodes.some((node) => node.id === edge.target && node.data.uploaded === true)).map(normalizeEdge),
   );
   const { undo, redo, breakGroup } = useCanvasHistory(nodes, edges, setNodes, setEdges);
+  const liveGraphRef = useRef({ nodes, edges });
+  liveGraphRef.current = { nodes, edges };
   const generationTasks = useQuery({
     queryKey: ['generation-tasks', canvas.id],
     queryFn: () => api.generationTasks.list(canvas.id),
@@ -1475,9 +1483,11 @@ function InfiniteCanvas({
     // Do not treat stale query-cache statuses as tasks observed running in this visit.
     if (!taskRecoveryReady.current && (!generationTasks.isFetchedAfterMount || generationTasks.isError)) return;
     taskRecoveryReady.current = true;
-    const recovered = recoverGenerationTasks(nodes, edges, generationTasks.data);
-    if (recovered.nodes !== nodes) setNodes(recovered.nodes as WorkflowNode[]);
-    if (recovered.edges !== edges) setEdges(recovered.edges);
+    const current = liveGraphRef.current;
+    const recovered = recoverGenerationTasks(current.nodes, current.edges, generationTasks.data);
+    liveGraphRef.current = { nodes: recovered.nodes as WorkflowNode[], edges: recovered.edges };
+    if (recovered.nodes !== current.nodes) setNodes(recovered.nodes as WorkflowNode[]);
+    if (recovered.edges !== current.edges) setEdges(recovered.edges);
   }, [generationTasks.data, generationTasks.isFetchedAfterMount, generationTasks.isError, nodes, edges, setNodes, setEdges]);
   const [instance, setInstance] = useState<ReactFlowInstance<WorkflowNode, Edge> | null>(null);
   const [zoom, setZoom] = useState(Math.round(canvas.graph.viewport.zoom * 100));
@@ -1620,49 +1630,78 @@ function InfiniteCanvas({
     });
   }, [edges, nodes, showEdges]);
 
+  const displayGraph = (graph: CanvasGraph) => {
+    const current = liveGraphRef.current;
+    if (canvasGraphsEqual(serializeCanvasGraph(current.nodes, current.edges, viewportRef.current), graph)) return;
+    const existingNodes = new globalThis.Map(current.nodes.map(node => [node.id, node]));
+    if (graph.edges.some(edge => !current.edges.some(existing => existing.id === edge.id))) setShowEdges(true);
+    // Server graphs contain persisted fields only. Keep React Flow's measured
+    // dimensions on existing nodes: dropping them hides the node until another
+    // measurement arrives, even though its DOM and size have not changed.
+    const nextNodes = graph.nodes.map(node => ({
+      ...existingNodes.get(node.id),
+      ...normalizeNode(node),
+      selected: existingNodes.get(node.id)?.selected ?? false,
+    }));
+    const nextEdges = graph.edges.map(normalizeEdge);
+    liveGraphRef.current = { nodes: nextNodes, edges: nextEdges };
+    setNodes(nextNodes); setEdges(nextEdges);
+  };
   const saveGraph = useMutation({
-    mutationFn: (graph: CanvasGraph) =>
-      api.canvases.update(canvas.id, { graph }) as Promise<Canvas>,
-    onSuccess: (updatedCanvas) => {
-      queryClient.setQueryData(['canvas', canvas.id], updatedCanvas);
+    mutationFn: ({ graph, baseGraph, signal }: { graph: CanvasGraph; baseGraph: CanvasGraph; signal: AbortSignal }) =>
+      api.canvases.update(canvas.id, { graph, baseGraph }, signal) as Promise<Canvas>,
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['canvases'] });
     },
     onError: () => toast.error('画布保存失败，请稍后重试'),
   });
+  const remoteCanvases = useRef(new WeakMap<CanvasGraph, Canvas>());
+  const persistenceRef = useRef<CanvasPersistence | null>(null);
+  if (!persistenceRef.current) persistenceRef.current = new CanvasPersistence(canvas.graph, {
+    local: () => serializeCanvasGraph(liveGraphRef.current.nodes, liveGraphRef.current.edges, viewportRef.current),
+    apply: displayGraph,
+    read: async signal => {
+      const latest = await api.canvases.get(canvas.id, signal) as Canvas;
+      remoteCanvases.current.set(latest.graph, latest);
+      return latest.graph;
+    },
+    write: async input => {
+      const latest = await saveGraph.mutateAsync(input);
+      remoteCanvases.current.set(latest.graph, latest);
+      return latest.graph;
+    },
+    acknowledged: graph => {
+      const latest = remoteCanvases.current.get(graph);
+      queryClient.setQueryData<Canvas>(['canvas', canvas.id], current => latest ?? (current ? { ...current, graph } : current));
+    },
+  });
+  const persistence = persistenceRef.current;
+  useEffect(() => {
+    persistence.activate();
+    return () => persistence.dispose();
+  }, [persistence]);
 
   useLayoutEffect(() => {
-    const apply = (graph: CanvasGraph) => {
-      const selected = new Set(nodes.filter(node => node.selected).map(node => node.id));
-      if (graph.edges.some(edge => !edges.some(current => current.id === edge.id))) setShowEdges(true);
-      lastSavedGraphRef.current = JSON.stringify(graph);
-      setNodes(graph.nodes.map(node => ({ ...normalizeNode(node), selected: selected.has(node.id) })));
-      setEdges(graph.edges.map(normalizeEdge));
-      queryClient.setQueryData<Canvas>(['canvas', canvas.id], current => current ? { ...current, graph } : current);
-    };
     agentBridge.current = {
       prepare: async () => {
         agentBusyRef.current = true;
         setAgentBusy(true);
         if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-        await saveQueueRef.current;
-        const graph = serializeCanvasGraph(nodes, edges, viewportRef.current);
-        await saveGraph.mutateAsync(graph);
-        lastSavedGraphRef.current = JSON.stringify(graph);
+        await persistence.beginAgent();
         agentPreparedRef.current = true;
-        return { selectedNodeIds: nodes.filter(node => node.selected).map(node => node.id) };
+        return { selectedNodeIds: liveGraphRef.current.nodes.filter(node => node.selected).map(node => node.id) };
       },
-      apply,
+      apply: graph => {
+        persistence.acceptRemote(graph);
+      },
+      sync: () => persistence.sync(),
       release: async () => {
-        try {
-          if (agentPreparedRef.current) {
-            const latest = await api.canvases.get(canvas.id) as Canvas;
-            apply(latest.graph);
-            queryClient.setQueryData(['canvas', canvas.id], latest);
-          }
-        } finally {
+        try { await persistence.endAgent(agentPreparedRef.current); }
+        finally {
           agentPreparedRef.current = false;
           agentBusyRef.current = false;
           setAgentBusy(false);
+          void queryClient.invalidateQueries({ queryKey: ['generation-tasks', canvas.id] });
         }
       },
     };
@@ -1678,7 +1717,7 @@ function InfiniteCanvas({
 
   const editComposition = useMutation<Project, Error, string>({
     mutationFn: async (nodeId) => {
-      await saveGraph.mutateAsync(serializeCanvasGraph(nodes, edges, viewportRef.current));
+      await persistence.saveNow();
       const project = await api.projects.openCanvasEdit({ canvasId: canvas.id, nodeId }) as Project;
       // The server persists this association atomically with project creation.
       setNodes(current => current.map(node => node.id === nodeId ? { ...node, data: { ...node.data, editorProjectId: project.id } } : node));
@@ -1722,14 +1761,9 @@ function InfiniteCanvas({
     }
     if (agentBusyRef.current) return;
     const graph = serializeCanvasGraph(nodes, edges, viewportRef.current);
-    if (JSON.stringify(graph) === lastSavedGraphRef.current) return;
+    if (!persistence.hasChanges(graph)) return;
     const timeout = window.setTimeout(() => {
-      if (agentBusyRef.current) return;
-      saveQueueRef.current = saveQueueRef.current.catch(() => undefined).then(async () => {
-        if (agentBusyRef.current) return;
-        await saveGraph.mutateAsync(graph);
-        lastSavedGraphRef.current = JSON.stringify(graph);
-      }).catch(() => undefined);
+      if (!agentBusyRef.current) void persistence.save().catch(() => undefined);
     }, 800);
     autosaveTimerRef.current = timeout;
     return () => window.clearTimeout(timeout);

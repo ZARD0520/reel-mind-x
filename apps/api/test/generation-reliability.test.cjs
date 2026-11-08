@@ -54,6 +54,32 @@ const { CanvasesService } = require('../src/modules/canvases/canvases.service.ts
 const { PrismaService } = require('../src/prisma/prisma.service.ts');
 const { AssetFoldersService } = require('../src/modules/asset-folders/asset-folders.service.ts');
 const repo = path.resolve(__dirname, '../../..');
+
+test('resumed task versions keep chat polling until its original Agent receipt catches up', () => {
+  const { hasPendingAgentMedia } = require('../../web/src/features/canvas/agent-background.ts');
+  const conversation = { agentRuns: [{ status: 'completed_with_errors', steps: [{ tool: 'generate_image', generationTaskId: 'task', generationRevision: 2 }] }] };
+  assert.equal(hasPendingAgentMedia(conversation, [{ id: 'task', revision: 3, status: 'saving' }]), true);
+  assert.equal(hasPendingAgentMedia(conversation, [{ id: 'task', revision: 4, status: 'completed' }]), true, 'fast completion before the scanner must still refresh the old reply');
+  conversation.agentRuns[0].steps[0].generationRevision = 4;
+  assert.equal(hasPendingAgentMedia(conversation, [{ id: 'task', revision: 4, status: 'completed' }]), false);
+  assert.equal(hasPendingAgentMedia(conversation, [{ id: 'unrelated', revision: 10, status: 'saving' }]), false);
+});
+
+test('stale active task snapshots cannot undo an observed completed result, while explicit resume can still proceed', () => {
+  const nodes = [{ id: 'image', position: { x: 0, y: 0 }, data: { kind: 'image', title: '图片', content: '', status: 'ready',
+    assetId: 'asset', url: '/ready.png', generationTaskId: 'task', generationRequestId: 'request', generationStatus: 'completed', generationAppliedTaskId: 'task', generationBatchResultsTaskId: 'task' } }];
+  const stale = { id: 'task', requestId: 'request', nodeId: 'image', model: 'model', status: 'generating', items: [{ id: 'item', index: 0, status: 'generating', asset: { id: 'asset', status: 'generating', url: null } }] };
+  const result = recoverGenerationTasks(nodes, [], [stale]);
+  assert.equal(result.nodes[0].data.status, 'ready'); assert.equal(result.nodes[0].data.url, '/ready.png');
+  const resuming = [{ ...nodes[0], data: { ...nodes[0].data, generationAppliedTaskId: undefined, generationStatus: 'generating', status: 'generating' } }];
+  assert.equal(recoverGenerationTasks(resuming, [], [stale]).nodes[0].data.status, 'generating');
+  const newer = [{ ...resuming[0], data: { ...resuming[0].data, generationRevision: 10 } }];
+  const oldFailure = { ...stale, revision: 9, status: 'failed', items: [{ ...stale.items[0], status: 'failed' }] };
+  assert.equal(recoverGenerationTasks(newer, [], [oldFailure]).nodes[0].data.status, 'generating');
+  const resumed = { ...stale, revision: 11 };
+  const olderApplied = [{ ...nodes[0], data: { ...nodes[0].data, generationRevision: 9 } }];
+  assert.equal(recoverGenerationTasks(olderApplied, [], [resumed]).nodes[0].data.status, 'generating');
+});
 const { referenceImagePath } = require('../src/modules/generation-tasks/reference-image-path.ts');
 const { canvasNodeBounds } = require('../../../packages/contracts/src/canvas-layout.ts');
 
@@ -1808,14 +1834,14 @@ test(
           const resumed = recoverGenerationTasks(
             recovered.nodes,
             recovered.edges,
-            [{ ...result, status: 'saving' }],
+            [{ ...result, status: 'saving', revision: result.revision + 1 }],
             () => 400,
           );
           assert.equal(resumed.nodes[0].data.generationAppliedTaskId, undefined);
           const finished = recoverGenerationTasks(
             resumed.nodes,
             resumed.edges,
-            [{ ...result, status: 'completed', error: null }],
+            [{ ...result, status: 'completed', error: null, revision: result.revision + 2 }],
             () => 400,
           );
           assert.equal(finished.nodes[0].data.status, 'ready');
