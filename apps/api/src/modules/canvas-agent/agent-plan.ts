@@ -22,8 +22,36 @@ export type AgentPlan = z.infer<typeof PlanSchema>;
 export type PlanStep = AgentPlan['steps'][number];
 export type StepResult = Record<string, unknown>;
 
-/** Repair closing delimiters only; never invent fields, values or inner syntax. */
+/** Resolve an explicitly quoted rename source without guessing from selection
+ * or conversation history. Creation + rename plans use step references instead. */
+export function namedRenameTarget(request: string, nodes: Array<{ id: string; data: Record<string, unknown> }>) {
+  const instruction = request.split('\n\n用户引用的当前画布节点：')[0]!;
+  const positiveCreation = instruction.replace(/(?:不要|禁止|不用|无需|不需要|不许|不能|别)\s*(?:再|额外)?(?:创建|新建|新增|添加)/g, '');
+  if (!/重命名|改名/.test(instruction) || /创建|新建|新增|添加/.test(positiveCreation)) return undefined;
+  const matches = [...instruction.matchAll(/(?:把|将|对|给|重命名)\s*(?:名为|名称为|名字为|叫做|叫)?\s*(?:「([^」]+)」|“([^”]+)”|"([^"]+)"|'([^']+)')/g)];
+  if (matches.length !== 1) return undefined;
+  const match = matches[0]!;
+  const title = match[1] ?? match[2] ?? match[3] ?? match[4]!;
+  return { title, nodeIds: nodes.filter(node => node.data.title === title).map(node => node.id) };
+}
+
+/** Escape literal string control characters and repair closing delimiters;
+ * never invent fields, values or missing inner syntax. */
 export function parsePlanJson(text: string): unknown {
+  let normalizeControls = false;
+  try { return JSON.parse(text); }
+  catch (error) { normalizeControls = /control character/.test(String(error)); }
+  if (normalizeControls) {
+    let normalized = '', quotedString = false, escapedChar = false;
+    for (const char of text) {
+      if (quotedString && !escapedChar && char.charCodeAt(0) < 32) { normalized += JSON.stringify(char).slice(1, -1); continue; }
+      normalized += char;
+      if (escapedChar) { escapedChar = false; continue; }
+      if (quotedString && char === '\\') escapedChar = true;
+      else if (char === '"') quotedString = !quotedString;
+    }
+    text = normalized;
+  }
   try { return JSON.parse(text); } catch (original) {
     // Some providers append a stray closing string/container suffix to an
     // otherwise complete object (e.g. ...]}"}). Only discard that punctuation
@@ -68,12 +96,12 @@ export function parsePlanJson(text: string): unknown {
 export function requestIsReadOnly(request: string) {
   const text = request.split('\n\n用户引用的当前画布节点：')[0]!.trim();
   const deny = /(?:不要|禁止|不许|不能|无需|不用|不需要)\s*(?:实际|直接|自动)?(?:修改|更改|改动|编辑|操作)(?:任何|当前|这个|此)?画布|(?:不要|禁止|不许|无需|不用|不需要)\s*执行(?:任何|实际)?(?:操作|计划|步骤)?/;
-  if (deny.test(text) || /只(?:回答|分析|解释|讨论|查看)(?:数量|问题|原因|内容|建议|一下|即可|就好|[，。！？\s]|$)/.test(text)) return true;
+  if (deny.test(text) || /只(?:回答|分析|解释|讨论|查看)(?:数量|问题|原因|内容|建议|方法|步骤|流程|教程|一下|即可|就好|[，。！？\s]|$)/.test(text)) return true;
   const mutation = /创建|新增|添加|修改|更改|改为|改成|改名|重命名|命名|起名|取名|更新|连接|连线|拆分|拆成|改写|扩写|续写|生成|制作|执行|操作|优化|润色|转换|整理|设计|调整|做(?:一|个|套)|来(?:一|个|段)|换.{0,12}(?:名|提示词)/;
   // Asking how/why an operation works does not authorize repeating it. A
   // separate affirmative clause can still request an action in the same turn.
-  const explanation = /为什么|为何|怎么回事|什么是|是什么|哪些|怎么(?:创建|修改|生成|使用|操作)|如何(?:创建|修改|生成|使用|操作)/.test(text);
-  const affirmativeClause = /(?:^|[，。；,;])\s*(?:请|帮我|麻烦|然后|接着|再|并).{0,80}(?:创建|新增|添加|修改|更改|改名|重命名|更新|连接|拆分|生成|制作|执行|优化)/.test(text);
+  const explanation = /为什么|为何|怎么回事|什么是|是什么|哪些|(?:怎么|如何).{0,60}(?:创建|修改|更改|改名|重命名|生成|使用|操作|连接|连线|出图)/.test(text);
+  const affirmativeClause = /(?:^|[，。；,;！？!?])\s*(?:请|帮我|麻烦|然后|接着|再|并).{0,80}(?:创建|新增|添加|修改|更改|改名|重命名|更新|连接|拆分|生成|制作|执行|优化)/.test(text);
   const statusQuestion = /(?:好了吗|好了没|完成了吗|完成了没|成功了吗|成功了没|创建了吗|改了吗|做了吗)[?？]?$/.test(text);
   const question = /[?？]|几个|多少|为什么|为何|是什么|什么是|如何|怎么|是否|有没有/.test(text);
   return (explanation || statusQuestion) && !affirmativeClause || question && !mutation.test(text);

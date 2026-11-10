@@ -48,6 +48,7 @@ const { AuthGuard } = require('../src/modules/auth/auth.guard.ts');
 const { ZodExceptionFilter } = require('../src/filters/zod-exception.filter.ts');
 const { CanvasChatService } = require('../src/modules/canvas-chat/canvas-chat.service.ts');
 const { CanvasAgentService } = require('../src/modules/canvas-agent/canvas-agent.service.ts');
+const { INTENT_ROUTER_PROMPT } = require('../src/modules/canvas-agent/agent-intent.ts');
 const { CanvasToolsService } = require('../src/modules/canvas-agent/canvas-tools.service.ts');
 const { CanvasMcpService } = require('../src/modules/canvas-agent/canvas-mcp.service.ts');
 const { CanvasesService } = require('../src/modules/canvases/canvases.service.ts');
@@ -648,8 +649,8 @@ test(
           });
           const llm = {
             chat: async () => ({ text: '测试标题' }),
-            chatStreamEvents: async function* () {
-              yield { type: 'text', text: JSON.stringify({ mode: 'answer', goal: '回答问题', answer: '测试回答', steps: [] }) };
+            chatStreamEvents: async function* (messages) {
+              yield { type: 'text', text: messages[0]?.content === INTENT_ROUTER_PROMPT ? 'chat' : '测试回答' };
             },
           };
           // Exercise the durable agent contract instead of the old run-only stub.
@@ -674,7 +675,8 @@ test(
             await prisma.canvasChatMessage.count({ where: { conversationId: conversation.id } }),
             2,
           );
-          llm.chatStreamEvents = async function* () {
+          llm.chatStreamEvents = async function* (messages) {
+            if (messages[0]?.content === INTENT_ROUTER_PROMPT) { yield { type: 'text', text: 'chat' }; return; }
             yield { type: 'text', text: '部分计划' };
             throw new Error('provider disconnected');
           };
@@ -689,7 +691,8 @@ test(
             ))
               void event;
           }, /provider disconnected/);
-          llm.chatStreamEvents = async function* () {
+          llm.chatStreamEvents = async function* (messages) {
+            if (messages[0]?.content === INTENT_ROUTER_PROMPT) { yield { type: 'text', text: 'chat' }; return; }
             yield { type: 'text', text: '部分计划' };
             yield { type: 'text', text: '剩余计划' };
           };

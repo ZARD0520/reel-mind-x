@@ -1,0 +1,166 @@
+[
+  {
+    "name": "自我介绍保持小X身份",
+    "request": "你是谁？",
+    "passed": true,
+    "reply": "你好，我是小X。今天想创作点什么？",
+    "nodeCountBefore": 1,
+    "nodeCountAfter": 1,
+    "tools": [],
+    "status": "completed"
+  },
+  {
+    "name": "询问技能说明实际画布能力",
+    "request": "你会什么技能？",
+    "passed": true,
+    "reply": "我会协助构思、写作与分镜，创建各类节点，修改提示词，还有用户明确要求时生成图片（暂不支持生成视频、音频等特定操作）。",
+    "nodeCountBefore": 1,
+    "nodeCountAfter": 1,
+    "tools": [],
+    "status": "completed"
+  },
+  {
+    "name": "只在对话中写故事不创建节点",
+    "request": "只在聊天中写一个小猫回家的短故事，不要修改画布。",
+    "passed": true,
+    "reply": "好的，我来帮你构思一个小猫回家的故事。\n\n故事内容：\n一只名叫咪咪的小猫，因为好奇出门玩耍，结果迷了路。它四处张望，看到一只大狗，又看到一只小松鼠，还闻到了花香。它害怕地躲在灌木丛里，直到听到妈妈在门口呼唤它的名字。咪咪赶紧跑回家，妈妈给它准备了热乎乎的牛奶和它最爱的小鱼干。从此，它再也不敢乱跑了。",
+    "nodeCountBefore": 1,
+    "nodeCountAfter": 1,
+    "tools": [],
+    "status": "completed"
+  },
+  {
+    "name": "读取引用故事不修改画布",
+    "request": "这个故事里小狗遇到了什么事情？只回答，不要修改画布。",
+    "passed": true,
+    "reply": "遇到大狗（或类似简洁表述，如“看到大狗”“遇到朋友”等符合原故事内容的回答均可）。",
+    "nodeCountBefore": 1,
+    "nodeCountAfter": 1,
+    "tools": [],
+    "status": "completed"
+  },
+  {
+    "name": "创建文本并填写正文",
+    "request": "创建一个文本节点，名称为「旁白」，正文为「这是旁白正文。」，不创建其他节点。",
+    "passed": true,
+    "reply": "已创建「旁白」。",
+    "nodeCountBefore": 1,
+    "nodeCountAfter": 2,
+    "tools": [
+      "create_nodes"
+    ],
+    "status": "completed"
+  },
+  {
+    "name": "明确引用优先于选中的故事节点",
+    "request": "把这个节点重命名为「开场旁白」。",
+    "passed": true,
+    "reply": "已将名称改为「开场旁白」。",
+    "nodeCountBefore": 2,
+    "nodeCountAfter": 2,
+    "tools": [
+      "rename_node"
+    ],
+    "status": "completed"
+  },
+  {
+    "name": "修改提示词不修改正文或标题",
+    "request": "把引用节点的提示词改为「清晨阳光照亮木屋」。只修改提示词。",
+    "passed": true,
+    "reply": "已更新提示词。",
+    "nodeCountBefore": 2,
+    "nodeCountAfter": 2,
+    "tools": [
+      "update_node_prompt"
+    ],
+    "status": "completed"
+  },
+  {
+    "name": "创建图片节点与故事建立依赖但不出图",
+    "request": "基于引用的故事创建且只创建一个图片节点，名称为「清晨镜头」，提示词为「小狗走出木屋，清晨阳光，绘本风格」。只创建节点，不实际生成图片。",
+    "passed": true,
+    "reply": "已创建「清晨镜头」。",
+    "nodeCountBefore": 2,
+    "nodeCountAfter": 3,
+    "tools": [
+      "create_nodes"
+    ],
+    "status": "completed"
+  },
+  {
+    "name": "图片引用创建视频节点但不生成视频",
+    "request": "基于引用的图片创建一个视频节点，名称为「清晨视频」，提示词为「镜头缓缓推进，小狗走出木屋」。只创建视频节点，不生成媒体。",
+    "passed": true,
+    "reply": "已创建「清晨视频」。",
+    "nodeCountBefore": 3,
+    "nodeCountAfter": 4,
+    "tools": [
+      "create_nodes"
+    ],
+    "status": "completed"
+  },
+  {
+    "name": "创建音频节点但不生成音频",
+    "request": "创建一个独立的音频节点，名称为「晨间旁白」，提示词为「温柔清晰的旁白」。只创建节点，不生成音频。",
+    "passed": true,
+    "reply": "已创建「晨间旁白」。",
+    "nodeCountBefore": 4,
+    "nodeCountAfter": 5,
+    "tools": [
+      "create_nodes"
+    ],
+    "status": "completed"
+  },
+  {
+    "name": "已有文本和音频建立引用连接",
+    "request": "将「开场旁白」作为「晨间旁白」的参考来源建立连接，只连线，不创建节点。",
+    "passed": true,
+    "reply": "已添加引用连接。",
+    "nodeCountBefore": 5,
+    "nodeCountAfter": 5,
+    "tools": [
+      "connect_nodes"
+    ],
+    "status": "completed"
+  },
+  {
+    "name": "操作后询问数量不重放前一轮操作",
+    "request": "画布现在有几个节点？只回答数量，不要修改画布。",
+    "passed": true,
+    "reply": "5个。",
+    "nodeCountBefore": 5,
+    "nodeCountAfter": 5,
+    "tools": [],
+    "status": "completed"
+  },
+  {
+    "name": "询问如何出图不授权实际生成",
+    "request": "如何为这个图片节点生成图片？只解释方法，这次不要实际生成。",
+    "passed": true,
+    "reply": "选中「清晨镜头」图片节点，在节点对应的提示词区域确认提示词为「小狗走出木屋, 清早阳光, 绘本风格 【故事】」，然后点击节点旁的「生成」按钮。",
+    "nodeCountBefore": 5,
+    "nodeCountAfter": 5,
+    "tools": [],
+    "status": "completed"
+  },
+  {
+    "name": "不支持的视频生成不得假报成功",
+    "request": "为引用的视频节点实际生成一个视频。",
+    "passed": true,
+    "reply": "无法为视频节点实际生成视频，该功能目前暂不支持。",
+    "nodeCountBefore": 5,
+    "nodeCountAfter": 5,
+    "tools": [],
+    "status": "completed"
+  },
+  {
+    "name": "找不到目标时澄清而不是改选中节点",
+    "request": "把名为「不存在的目标XYZ」的节点重命名为「不能误改」。",
+    "passed": true,
+    "reply": "没有找到名为「不存在的目标XYZ」的节点，请确认名称或引用要重命名的节点。",
+    "nodeCountBefore": 5,
+    "nodeCountAfter": 5,
+    "tools": [],
+    "status": "awaiting_input"
+  }
+]

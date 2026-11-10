@@ -3,7 +3,6 @@ import type { MutableRefObject } from 'react';
 import { Loader2, Maximize2, Minimize2, X } from 'lucide-react';
 import { useCanvasChat } from '../useCanvasChat';
 import type { CanvasAgentBridge, CanvasChatReference } from '../chat-types';
-import { AgentOperations } from './AgentOperations';
 import { CanvasChatComposer } from './CanvasChatComposer';
 import { CanvasChatHistory } from './CanvasChatHistory';
 import { CanvasChatMessage } from './CanvasChatMessage';
@@ -44,7 +43,7 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
 
         <div className="reel-scroll min-h-0 flex-1 overflow-y-auto px-5 py-5">
           {chat.detail.isLoading && chat.activeId && !chat.pending && <div className="flex justify-center pt-8"><Loader2 className="h-5 w-5 animate-spin text-[#99999d]" /></div>}
-          {!chat.detail.data?.messages.length && !chat.pending && !chat.failedTurns.length && !chat.error && !chat.detail.isLoading && <div className="flex h-full flex-col items-center justify-center text-center"><h2 className="text-xl font-semibold text-[#dededb]">Hi～{userName}</h2><p className="mt-2 text-sm text-[#89898d]">今天想创作点什么？</p></div>}
+          {!chat.detail.data?.messages.length && !chat.pending && !chat.failedTurns.length && !chat.error && !chat.detail.isLoading && <div className="flex h-full flex-col items-center justify-center text-center"><h2 className="text-xl font-semibold text-[#dededb]">Hi～{userName}，我是小X</h2><p className="mt-2 text-sm text-[#89898d]">今天想创作点什么？</p></div>}
           <div className="mx-auto flex max-w-3xl flex-col gap-5">
             {chat.detail.data?.messages.map((message) => <CanvasChatMessage key={message.id} role={message.role} content={message.content} references={message.references} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />)}
             {!chat.pending && chat.detail.data?.agentRuns?.filter(run => run.error && !chat.failedTurns.length && !chat.detail.data?.messages.some(message => message.role === 'assistant' && message.content === chatErrorMessage(run.error))).map(run => <CanvasChatMessage key={run.id} role="assistant" content={chatErrorMessage(run.error)} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />)}
@@ -55,12 +54,9 @@ export function CanvasChatDrawer({ canvasId, nodes, open, fullscreen, initialPro
             {chat.error && <CanvasChatMessage role="assistant" content={chatErrorMessage(chat.error)} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />}
             {chat.pending && <>
               <CanvasChatMessage role="user" content={chat.pending.prompt} references={chat.pending.references} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} />
-              {!chat.pending.completed && chat.pending.plan?.mode === 'execute' && <div aria-label="本轮执行计划" className="rounded-xl border border-white/[0.08] bg-white/[0.03] px-4 py-3 text-xs text-[#b8b8bd]"><p className="mb-2 text-[#dededb]">{chat.pending.plan.goal}</p><ol className="list-inside list-decimal space-y-1.5">{chat.pending.plan.steps.map(step => <li key={step.id}>{step.description}</li>)}</ol></div>}
-              {!chat.pending.completed && <AgentOperations operations={chat.pending.operations} />}
-              {!chat.pending.completed && chat.pending.status && <div role="status" className="flex items-center gap-2 text-xs text-[#99999d]"><Loader2 className="h-4 w-4 animate-spin" />{chat.pending.status}</div>}
               {chat.pending.answer
                 ? <CanvasChatMessage key={chat.pending.key} role="assistant" content={chat.pending.answer} availableNodeIds={availableNodeIds} onFocusNode={onFocusNode} typing complete={!!chat.pending.completed} onTypingComplete={chat.finishTurn} onTypingProgress={() => bottomRef.current?.scrollIntoView({ block: 'end' })} />
-                : !chat.pending.completed && !chat.pending.status && <div className="flex items-center gap-2 text-sm text-[#99999d]"><Loader2 className="h-4 w-4 animate-spin" />思考中...</div>}
+                : !chat.pending.completed && <div role="status" aria-label="小X正在回复" className="flex items-center gap-2 text-sm text-[#99999d]"><Loader2 className="h-4 w-4 animate-spin" />思考中...</div>}
             </>}
             <div ref={bottomRef} />
           </div>

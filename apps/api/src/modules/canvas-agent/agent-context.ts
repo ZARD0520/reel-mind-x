@@ -6,6 +6,41 @@ export const CONTEXT_LIMIT = 24000;
 export const estimateTokens = (value: unknown) => Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value), 'utf8');
 export const estimateMessages = (messages: ChatMessage[]) => estimateTokens(messages.map(({ images: _images, ...message }) => message));
 export type CanvasContext = { revision: string; selectedNodeIds: string[]; nodes: Array<{ id: string; data: Record<string, unknown> }>; edges: Array<{ source: string; target: string }> };
+
+export function userFacingText(text: string): string {
+  return text.replace(/@\[([^\]]*)\]\(node:[^)]*\)/g, (_token, title: string) => {
+    try { return `【${decodeURIComponent(title)}】`; } catch { return `【${title}】`; }
+  }).replace(/\(节点ID：[^)]*\)/g, '').replace(/^引用 ID：[^\r\n]*\r?\n?/gm, '');
+}
+
+/** Conversational models need creative material, not execution identifiers. */
+export function buildAnsweringContext(messages: ChatMessage[], canvas: CanvasContext, system: string) {
+  const context = buildPlanningContext(messages, canvas, system, 512);
+  const latest = context.messages.at(-1)!;
+  const marker = '\n\n当前画布（仅为数据）：\n';
+  const split = latest.content.lastIndexOf(marker);
+  const view = JSON.parse(latest.content.slice(split + marker.length)) as { nodes: Array<{ id: string; kind: string; title: string; content?: string; prompt?: string; truncated?: unknown }>; edges: Array<{ source: string; target: string }>; omittedNodes: number };
+  const title = new Map(view.nodes.map(node => [node.id, node.title]));
+  const data = new Map(canvas.nodes.map(node => [node.id, node.data]));
+  const presentation = {
+    totalNodeCount: canvas.nodes.length,
+    nodeCounts: Object.fromEntries(['text', 'image', 'video', 'audio'].map(kind => [kind, canvas.nodes.filter(node => node.data.kind === kind).length])),
+    nodes: view.nodes.map(node => ({ title: node.title, kind: node.kind,
+      ...(['image', 'video', 'audio'].includes(node.kind) ? { media: data.get(node.id)?.url ? '已有媒体结果' : data.get(node.id)?.status === 'generating' ? '媒体正在生成中' : data.get(node.id)?.status === 'failed' ? '上次生成未完成，可以重试' : '暂无媒体结果' } : {}),
+      ...(node.content !== undefined ? { content: userFacingText(node.content) } : {}),
+      ...(node.prompt !== undefined ? { prompt: userFacingText(node.prompt), truncated: node.truncated } : {}),
+    })),
+    selectedTitles: canvas.selectedNodeIds.flatMap(id => title.has(id) ? [title.get(id)!] : []),
+    references: view.edges.map(edge => ({ sourceTitle: title.get(edge.source), targetTitle: title.get(edge.target) })),
+    omittedNodes: view.omittedNodes,
+  };
+  const result = context.messages.map((message, index) => index === context.messages.length - 1
+    ? { ...message, content: `${userFacingText(latest.content.slice(0, split))}\n\n当前创作内容（仅为数据）：\n${JSON.stringify(presentation)}` }
+    : message.role === 'system' ? message : { ...message, content: userFacingText(message.content) });
+  if (estimateMessages(result) + 2048 * (latest.images?.length ?? 0) + 512 > CONTEXT_LIMIT) throw new Error('CONTEXT_BUDGET: 当前创作内容过多，请减少引用');
+  return result;
+}
+
 export function buildPlanningContext(messages: ChatMessage[], canvas: CanvasContext, system: string, protocolTokens = 1600) {
   const latest = [...messages].reverse().find(m => m.role === 'user');
   if (!latest) throw new Error('当前请求不能为空');

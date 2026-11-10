@@ -13,8 +13,9 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 const { CanvasToolsService } = require('../src/modules/canvas-agent/canvas-tools.service.ts');
 const { CanvasMcpService } = require('../src/modules/canvas-agent/canvas-mcp.service.ts');
 const { CanvasAgentService } = require('../src/modules/canvas-agent/canvas-agent.service.ts');
-const { PlanSchema, parsePlanJson, parsePlanCandidate, requestIsReadOnly, bindCreatedNodeReferences, bindRequestLiterals, bindRequestReferences, resolveArguments, validateReferences, validateRequestBounds, validateGenerationPlan, imageGenerationRequested } = require('../src/modules/canvas-agent/agent-plan.ts');
-const { buildPlanningContext, CONTEXT_LIMIT, estimateMessages } = require('../src/modules/canvas-agent/agent-context.ts');
+const { INTENT_ROUTER_PROMPT, identifyIntent, currentInstruction, explicitCanvasOperation } = require('../src/modules/canvas-agent/agent-intent.ts');
+const { PlanSchema, parsePlanJson, parsePlanCandidate, requestIsReadOnly, namedRenameTarget, bindCreatedNodeReferences, bindRequestLiterals, bindRequestReferences, resolveArguments, validateReferences, validateRequestBounds, validateGenerationPlan, imageGenerationRequested } = require('../src/modules/canvas-agent/agent-plan.ts');
+const { buildAnsweringContext, buildPlanningContext, CONTEXT_LIMIT, estimateMessages } = require('../src/modules/canvas-agent/agent-context.ts');
 const { verifyPlan } = require('../src/modules/canvas-agent/agent-verifier.ts');
 const { CanvasChatService } = require('../src/modules/canvas-chat/canvas-chat.service.ts');
 const { CreditsService } = require('../src/modules/credits/credits.service.ts');
@@ -27,6 +28,235 @@ const request = content => [{ role: 'user', content }];
 const submit = value => ({ type: 'text', text: JSON.stringify(value) });
 const collect = async stream => { const events = []; for await (const e of stream) events.push(e); return events; };
 const signal = () => AbortSignal.timeout(90000);
+// Existing executor fixtures isolate planning/execution from intent recognition.
+const withWriteIntent = model => ({ chatStreamEvents: async function* (messages, options) {
+  if (messages[0]?.content === INTENT_ROUTER_PROMPT) { yield { type: 'text', text: 'canvas_write' }; return; }
+  yield* model.chatStreamEvents(messages, options);
+} });
+
+function dialogueFixture(intent, answer) {
+  const calls = [], tools = [], updates = [];
+  const ticket = { run: { id: 'dialogue', requestId: 'request', conversationId: 'conversation', status: 'planning' }, token: 'token', scope: { userId: 'owner', canvasId: 'canvas', selectedNodeIds: ['story'] } };
+  const model = { chatStreamEvents: async function* (messages, options) {
+    calls.push({ messages, options });
+    yield { type: 'text', text: messages[0].content === INTENT_ROUTER_PROMPT ? intent : answer };
+  } };
+  const mcp = { connect: async () => ({
+    client: { callTool: async ({ name }) => {
+      tools.push(name);
+      assert.equal(name, 'get_canvas_context');
+      return { structuredContent: { revision: new Date().toISOString(), selectedNodeIds: ['story'], nodes: [{ id: 'story', data: { kind: 'text', title: '故事', content: '小猫回家', status: 'ready' } }], edges: [] } };
+    }, listTools: async () => { assert.fail('dialogue must not discover execution tools'); } }, close: async () => {},
+  }) };
+  const agent = new CanvasAgentService(mcp, model, { canvasAgentStep: { count: async () => 0 } });
+  agent.store.update = async (_ticket, data) => { updates.push(data); };
+  return { agent, ticket, calls, tools, updates };
+}
+
+test('identity questions and greetings use natural dialogue without any canvas or planning dependency', async () => {
+  for (const question of ['你是谁', '介绍一下自己', '你好']) {
+    const f = dialogueFixture('chat', '你好，我是小X。今天想创作点什么？');
+    const messages = [{ role: 'system', content: '旧的Planner提示词，仅返回计划JSON' },
+      { role: 'user', content: '生成三张图片' }, { role: 'assistant', content: '上轮失败' },
+      ...request(question + '\n\n用户引用的当前画布节点：\n引用 ID：story')];
+    const events = await collect(f.agent.execute(f.ticket, messages, 'glm-4.6v-flash', signal()));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event, 'delta');
+    assert.equal(events[0].data.text, '你好，我是小X。今天想创作点什么？');
+    assert.deepEqual(f.tools, []);
+    assert.equal(f.updates.at(-1).status, 'completed');
+    assert.equal(f.calls.length, 2);
+    assert(!f.calls[1].messages.some(message => message.content.includes('旧的Planner')));
+    assert.equal(f.calls[1].options.tools, undefined);
+  }
+});
+
+test('canvas questions read context and answer directly without plan JSON or write tools', async () => {
+  const f = dialogueFixture('canvas_read', '故事讲的是小猫回家。');
+  const events = await collect(f.agent.execute(f.ticket, request('选中的故事讲了什么？'), 'glm-4.6v-flash', signal()));
+  assert.deepEqual(f.tools, ['get_canvas_context']);
+  assert.equal(events.at(-1).data.text, '故事讲的是小猫回家。');
+  assert(f.calls.at(-1).messages.at(-1).content.includes('小猫回家'));
+  assert(!f.calls.at(-1).messages[0].content.includes('计划JSON Schema'));
+});
+
+test('conversational canvas context contains creative content without internal node IDs or statuses', () => {
+  const graph = { revision: new Date().toISOString(), selectedNodeIds: ['hidden-id-1'], nodes: [
+    { id: 'hidden-id-1', data: { kind: 'text', title: '故事', content: '小猫回家', status: 'ready', prompt: '@[旁白](node:hidden-id-2)' } },
+    { id: 'hidden-id-2', data: { kind: 'text', title: '旁白', content: '温柔的声音', status: 'idle' } },
+  ], edges: [{ source: 'hidden-id-2', target: 'hidden-id-1' }] };
+  const messages = buildAnsweringContext(request('【故事】(节点ID：hidden-id-1) 讲了什么？\n\n用户引用的当前画布节点：\n引用 ID：hidden-id-1\n内容：小猫回家'), graph, '直接回答');
+  const text = JSON.stringify(messages);
+  assert(text.includes('小猫回家'));
+  assert(text.includes('旁白'));
+  assert(text.includes('totalNodeCount'));
+  assert(text.includes('nodeCounts'));
+  assert(!/hidden-id|节点ID|引用 ID|revision|ready|idle/.test(text));
+});
+
+test('conversational replies containing execution details are regenerated before any output is delivered', async () => {
+  const f = dialogueFixture('canvas_read', '选中图片节点，填写提示词后点击生成。');
+  const original = f.agent.llm;
+  let attempts = 0;
+  f.agent.llm = { chatStreamEvents: async function* (messages, options) {
+    if (messages[0].content !== INTENT_ROUTER_PROMPT && ++attempts === 1) {
+      yield { type: 'text', text: '使用 generate_image，nodeId 为 12345678-1234-1234-1234-123456789abc，status=idle。' };
+      return;
+    }
+    yield* original.chatStreamEvents(messages, options);
+  } };
+  const events = await collect(f.agent.execute(f.ticket, request('如何给图片出图？只解释方法'), 'glm-4.6v-flash', signal()));
+  assert.equal(attempts, 2);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].data.text, '选中图片节点，填写提示词后点击生成。');
+  assert.deepEqual(f.tools, ['get_canvas_context']);
+});
+
+test('repeated internal-detail replies stop without delivering any leaked text', async () => {
+  const f = dialogueFixture('chat', '调用 generate_image，节点ID：internal-node');
+  const events = [];
+  await assert.rejects(async () => {
+    for await (const event of f.agent.execute(f.ticket, request('如何出图？'), 'glm-4.6v-flash', signal())) events.push(event);
+  }, error => error.code === 'INVALID_RESPONSE');
+  assert.deepEqual(events, []);
+  assert.deepEqual(f.tools, []);
+  assert.equal(f.calls.length, 3, 'one classification and two bounded answer attempts');
+});
+
+test('indirect how-to questions remain read-only while separate affirmative commands retain operation intent', () => {
+  for (const question of ['如何为这个图片节点生成图片？', '怎么把这个节点重命名？', '如何给这两个节点建立连线？', '只解释方法，这次不要实际生成。']) assert.equal(requestIsReadOnly(question), true, question);
+  assert.equal(requestIsReadOnly('如何为这个节点生成图片？然后帮我生成一张图片。'), false);
+});
+
+test('questions about this referenced story cannot be routed back to a previously written chat story', async () => {
+  const llm = { chatStreamEvents: async function* () { assert.fail('explicit current-canvas questions do not depend on semantic classification'); } };
+  const messages = [
+    ...request('写一个小猫回家的故事'), { role: 'assistant', content: '小猫碰到一只流浪狗。' },
+    ...request('这个故事里小狗遇到了什么事情？只回答，不要修改画布。\n\n用户引用的当前画布节点：\n引用 ID：story\n内容：小狗迷路后遇到朋友'),
+  ];
+  assert.equal(await identifyIntent(llm, messages, 'glm-4.6v-flash', signal()), 'canvas_read');
+});
+
+test('planner literal newlines and tabs are normalized without altering string values or accepting missing keys', () => {
+  const source = '{"mode":"answer","goal":"回答","answer":"第一行\n第二行\t末尾","steps":[]}';
+  const value = parsePlanJson(source);
+  assert.equal(value.answer, '第一行\n第二行\t末尾');
+  assert.equal(PlanSchema.parse(value).mode, 'answer');
+  assert.throws(() => parsePlanJson('{mode:"answer",answer:"第一行\n第二行"}'));
+});
+
+test('quoted rename targets resolve exactly, exposing missing or duplicate names instead of guessing', () => {
+  const nodes = [{ id: 'a', data: { title: '目标' } }, { id: 'b', data: { title: '重复' } }, { id: 'c', data: { title: '重复' } }];
+  assert.deepEqual(namedRenameTarget('把名为「目标」的节点重命名为「新名」', nodes).nodeIds, ['a']);
+  assert.deepEqual(namedRenameTarget('把名为「不存在」的节点重命名为「新名」', nodes).nodeIds, []);
+  assert.deepEqual(namedRenameTarget('把名为「不存在」的节点重命名为「新名」，不要创建其他节点', nodes).nodeIds, []);
+  assert.deepEqual(namedRenameTarget('把「重复」重命名为「新名」', nodes).nodeIds, ['b', 'c']);
+  assert.equal(namedRenameTarget('创建名为「新节点」的文本节点，再把「新节点」重命名为「新名」', nodes), undefined);
+});
+
+test('ambiguous intent asks for clarification without reading or changing the canvas', async () => {
+  const f = dialogueFixture('clarify', '你希望调整哪部分内容？');
+  await collect(f.agent.execute(f.ticket, request('帮我处理一下'), 'glm-4.6v-flash', signal()));
+  assert.deepEqual(f.tools, []);
+  assert.equal(f.updates.at(-1).status, 'awaiting_input');
+});
+
+test('explicit canvas operations enter planning after intent identification', async () => {
+  const f = dialogueFixture('canvas_write', 'unused');
+  await assert.rejects(() => collect(f.agent.execute(f.ticket, request('创建一个图片节点'), 'glm-4.6v-flash', signal())), /must not discover/);
+  assert.deepEqual(f.tools, ['get_canvas_context']);
+  assert.equal(f.calls.length, 0, 'an explicit operation must not depend on a classification model');
+  assert(f.updates.some(update => update.status === 'planning'));
+});
+
+test('invalid intent classification has a bounded retry and never falls through to execution', async () => {
+  let calls = 0;
+  const llm = { chatStreamEvents: async function* () { calls++; yield { type: 'text', text: '{"mode":"execute"}' }; } };
+  await assert.rejects(() => identifyIntent(llm, request('你是谁'), 'glm-4.6v-flash', signal()), error => error.code === 'INVALID_INTENT');
+  assert.equal(calls, 2);
+});
+
+test('routing accepts provider box wrappers and retries invalid labels without granting writes', async () => {
+  let calls = 0;
+  const llm = { chatStreamEvents: async function* () {
+    yield { type: 'text', text: ++calls === 1 ? '问候' : '<|begin_of_box|>chat<|end_of_box|>' };
+  } };
+  assert.equal(await identifyIntent(llm, request('你好'), 'glm-4.6v-flash', signal()), 'chat');
+  assert.equal(calls, 2);
+  const f = dialogueFixture('chat', '<think>内部推理</think><|begin_of_box|>我是小X。<|end_of_box|>');
+  const events = await collect(f.agent.execute(f.ticket, request('你是谁'), 'glm-4.6v-flash', signal()));
+  assert.equal(events.at(-1).data.text, '我是小X。');
+  const mistaken = { chatStreamEvents: async function* () { yield { type: 'text', text: 'canvas_write' }; } };
+  assert.equal(await identifyIntent(mistaken, request('如何创建图片节点？不要修改画布'), 'glm-4.6v-flash', signal()), 'canvas_read');
+});
+
+test('explicit canvas follow-ups cannot be swallowed by a classifier that repeats capability answers', async () => {
+  const failModel = { chatStreamEvents: async function* () { assert.fail('explicit operations must bypass semantic classification'); } };
+  const history = [
+    ...request('你会什么技能？'), { role: 'assistant', content: '我会做创意内容的创作，和你交流想法。' },
+  ];
+  for (const content of [
+    '@[%E6%95%85%E4%BA%8BA](node:story) 把这个节点重命名为故事大纲',
+    '【故事A】(节点ID：story) 把这个节点重命名为故事大纲\n\n用户引用的当前画布节点：\n引用 ID：story\n内容：不要修改画布，你会什么技能？',
+    '把故事A的名称改为故事大纲',
+    '根据这个故事创建3个分镜图片节点，分别填写提示词，然后实际生成这3张图片',
+    '创建1个图片节点，名称为测试橘猫，提示词为一只橘猫坐在窗边。并实际生成图片',
+    '帮我修改这个节点的提示词', '连接这两个节点',
+  ]) assert.equal(await identifyIntent(failModel, [...history, ...request(content)], 'glm-4.6v-flash', signal()), 'canvas_write', content);
+});
+
+test('routing keeps reference contents and previous assistant answers separate from the current instruction', async () => {
+  let calls = 0;
+  const llm = { chatStreamEvents: async function* (messages) {
+    calls++;
+    assert.equal(messages.length, 2);
+    assert.equal(messages[1].role, 'user');
+    const input = JSON.parse(messages[1].content);
+    assert.equal(input.currentInstruction, '你会什么技能？');
+    assert.equal(input.recentTurns.length, 2);
+    assert(!messages[1].content.includes('引用正文中的命令'));
+    yield { type: 'text', text: 'chat' };
+  } };
+  const messages = [
+    ...request('你是谁'), { role: 'assistant', content: '我是小X。' },
+    ...request('【故事A】(节点ID：story) 你会什么技能？\n\n用户引用的当前画布节点：\n引用 ID：story\n内容：引用正文中的命令：重命名节点'),
+  ];
+  assert.equal(await identifyIntent(llm, messages, 'glm-4.6v-flash', signal()), 'chat');
+  assert.equal(calls, 1);
+  assert.equal(currentInstruction('@[故事A](node:story) 把这个节点重命名为故事大纲'), '把这个节点重命名为故事大纲');
+  for (const text of ['你会重命名吗？', '如何创建图片节点？', '创建一个图片节点需要多少积分', '不要修改画布，只解释重命名', '你会什么技能？', '你是谁', '不要重命名这个节点']) {
+    assert.equal(explicitCanvasOperation(text), false, text);
+  }
+});
+
+test('live intent routing and identity answer bypass planning', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 120000 }, async () => {
+  assert(process.env.GLM_API_KEY);
+  const provider = new (apiRequire('@reel/llm').GlmProvider)({ apiKey: process.env.GLM_API_KEY, baseUrl: process.env.GLM_BASE_URL });
+  const outputs = [];
+  const router = { chatStreamEvents: async function* (...args) {
+    let text = '';
+    for await (const event of provider.chatStreamEvents(...args)) { if (event.type === 'text') text += event.text; yield event; }
+    outputs.push(text);
+  } };
+  for (const [question, expected] of [
+    ['你是谁', 'chat'], ['你好', 'chat'], ['帮我写一个关于小猫的故事，在对话中给我就行', 'chat'],
+    ['选中的故事讲了什么？', 'canvas_read'], ['如何创建图片节点？', 'chat'],
+    ['创建一个图片节点，标题为春天', 'canvas_write'], ['帮我处理一下', 'clarify'],
+  ]) {
+    outputs.length = 0;
+    const intent = await identifyIntent(router, request(question), 'glm-4.6v-flash', signal()).catch(error => {
+      throw new Error(`Synthetic routing case ${question}: ${JSON.stringify(outputs)}`, { cause: error });
+    });
+    assert(expected === 'chat' && question === '如何创建图片节点？' ? ['chat', 'canvas_read'].includes(intent) : intent === expected, `${question}: ${intent}`);
+  }
+  const f = dialogueFixture('chat', 'unused');
+  f.agent.llm = provider;
+  const events = await collect(f.agent.execute(f.ticket, request('你是谁'), 'glm-4.6v-flash', signal()));
+  const answer = events.at(-1).data.text;
+  assert(answer.includes('小X'), answer);
+  assert(!/JSON|Planner|Executor|节点ID|有效计划|工具|revision/i.test(answer), answer);
+  assert.deepEqual(f.tools, []);
+});
 
 test('paid image generation requires explicit authorization and terminal, unique image targets', () => {
   const make = { id: 'create', description: '创建图片', tool: 'create_nodes', arguments: { nodes: [{ kind: 'image', title: '镜头', prompt: '小狗出门', referenceNodeIds: [] }] } };
@@ -245,12 +475,42 @@ async function fixture(value = plan([rename()]), customDb = db, images, initialG
     yield submit(typeof value === 'function' ? await value(messages, options, calls) : value);
   } };
   const mcp = new CanvasMcpService(new CanvasToolsService(customDb, images));
-  const agent = new CanvasAgentService(mcp, model, db);
+  const agent = new CanvasAgentService(mcp, withWriteIntent(model), db);
   return { agent, mcp, scope, canvas, conversation, model, calls: () => calls, graph: async () => (await db.canvas.findUnique({ where: { id: canvas.id } })).graph,
     run: (messages = request('执行计划中指定的画布操作'), id = randomUUID(), resume = false, abort = signal()) => agent.run(scope, conversation.id, messages, 'glm-4.6v-flash', abort, id, resume) };
 }
 
 test('database Plan & Execute guarantees', { skip: !dbEnabled, timeout: 120000 }, async t => {
+  await t.test('missing or ambiguous named rename sources never reach the planner or mutate another node', async () => {
+    for (const title of ['不存在的目标XYZ', '重复名称']) {
+      const f = await fixture();
+      if (title === '重复名称') {
+        const graph = await f.graph();
+        graph.nodes[0].data.title = title;
+        graph.nodes.push({ ...structuredClone(graph.nodes[0]), id: 'duplicate' });
+        await db.canvas.update({ where: { id: f.canvas.id }, data: { graph } });
+      }
+      const before = await f.graph();
+      await collect(f.run(request(`把名为「${title}」的节点重命名为「不能误改」，不要创建其他节点`)));
+      assert.equal(f.calls(), 0);
+      assert.deepEqual(await f.graph(), before);
+      const run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id } });
+      assert.equal(run.status, 'awaiting_input');
+      assert.equal(await db.canvasAgentStep.count({ where: { runId: run.id } }), 0);
+    }
+  });
+  await t.test('an explicitly referenced duplicate and a uniquely named target override a guessed selected node', async () => {
+    for (const referenced of [false, true]) {
+      const graph = { version: 1, nodes: ['story', 'target'].map(id => ({ id, type: 'workflow', position: { x: id === 'story' ? 0 : 500, y: 0 }, data: { kind: 'text', title: referenced || id === 'target' ? '目标' : '其他节点', content: '保留正文', prompt: '', status: 'ready' } })), edges: [], viewport: { x: 0, y: 0, zoom: 1 } };
+      const f = await fixture(plan([rename('新名字')]), db, undefined, graph);
+      const input = '把名为「目标」的节点重命名为「新名字」' + (referenced ? '\n\n用户引用的当前画布节点：\n引用 ID：target' : '');
+      await collect(f.run(request(input)));
+      const result = await f.graph();
+      assert.equal(result.nodes.find(node => node.id === 'target').data.title, '新名字');
+      assert.deepEqual(result.nodes.find(node => node.id === 'story'), graph.nodes[0]);
+      assert.equal(f.calls(), 1);
+    }
+  });
   await t.test('creation split across steps stays in the same vertical column', async () => {
     const f = await fixture(plan([create('first'), create('second')]));
     await collect(f.run());
@@ -279,15 +539,19 @@ test('database Plan & Execute guarantees', { skip: !dbEnabled, timeout: 120000 }
     assert.equal(run.status, 'completed');
     assert.deepEqual(run.plan.steps[1].arguments.nodeId, { stepId: 'create_text_node', index: 0 });
   });
-  await t.test('a stale write plan for a read-only question is rejected before any tool execution', async () => {
-    const f = await fixture((_messages, _options, attempts) => attempts === 1 ? plan([rename()]) : { mode: 'answer', goal: '回答当前节点数量', answer: '当前有1个节点。', steps: [] });
-    await collect(f.run(request('这个画布有几个节点？只回答数量，不要修改画布。')));
-    assert.equal(f.calls(), 2);
+  await t.test('a read-only question bypasses planning even when the classifier suggests a write', async () => {
+    const f = await fixture();
+    let calls = 0;
+    const model = withWriteIntent({ chatStreamEvents: async function* () { calls++; yield { type: 'text', text: '当前有1个节点。' }; } });
+    const agent = new CanvasAgentService(f.mcp, model, db);
+    await collect(agent.run(f.scope, f.conversation.id, request('这个画布有几个节点？只回答数量，不要修改画布。'), 'glm-4.6v-flash', signal()));
+    assert.equal(calls, 1);
     assert.equal((await f.graph()).nodes[0].data.title, '故事');
     assert.equal(await db.canvasAgentStep.count({ where: { run: { conversationId: f.conversation.id } } }), 0);
     const run = await db.canvasAgentRun.findFirst({ where: { conversationId: f.conversation.id } });
-    assert.equal(run.plan.mode, 'answer');
-    assert(run.events.some(event => event.phase === 'planning' && event.status === 'rejected'));
+    assert.equal(run.plan, null);
+    assert.equal(run.response, '当前有1个节点。');
+    assert(!run.events.some(event => event.phase === 'planning'));
   });
   await t.test('unavailable context reads retry within a bound and do not execute a partial plan', async () => {
     const f = await fixture();
@@ -389,6 +653,18 @@ test('database Plan & Execute guarantees', { skip: !dbEnabled, timeout: 120000 }
     assert.equal(f.calls(), 3);
     assert.equal((await f.graph()).nodes[0].data.title, '故事');
     assert.equal((await db.canvasAgentRun.findFirst({ where: { conversationId: f.conversation.id } })).errorCode, 'INVALID_PLAN');
+  });
+  await t.test('invalid model output is corrected without replaying it as an assistant answer', async () => {
+    const f = await fixture((messages, _options, attempts) => {
+      if (attempts === 1) return plan([{ ...rename(), arguments: { nodeId: 'missing', title: 'bad' } }]);
+      assert.equal(messages.at(-1).role, 'user');
+      assert(messages[0].content.includes('所有对象键名必须使用英文双引号'));
+      assert(!messages.some(message => message.role === 'assistant'));
+      return plan([rename()]);
+    });
+    await collect(f.run());
+    assert.equal(f.calls(), 2);
+    assert.equal((await f.graph()).nodes[0].data.title, '测试agent');
   });
   await t.test('created-node references resolve deterministically and verification checks the resulting edges', async () => {
     const f = await fixture(plan([create(), { id: 'renameVideo', description: '重命名刚创建的视频', tool: 'rename_node', arguments: { nodeId: { stepId: 'create', index: 0 }, title: '新视频' } }]));
@@ -554,22 +830,22 @@ test('database Plan & Execute guarantees', { skip: !dbEnabled, timeout: 120000 }
   });
   await t.test('429 fallback changes only the planner model and does not replay writes', async () => {
     const f = await fixture(); let calls = 0;
-    f.agent = new CanvasAgentService(f.mcp, { chatStreamEvents: async function* (_messages, options) {
+    f.agent = new CanvasAgentService(f.mcp, withWriteIntent({ chatStreamEvents: async function* (_messages, options) {
       calls++;
       if (options.model === 'glm-4.6v-flash') throw new LlmError('busy', 429);
       yield submit(plan([rename()]));
-    } }, db);
+    } }), db);
     await collect(f.agent.run(f.scope, f.conversation.id, request('重命名story为测试agent'), 'glm-4.6v-flash', signal()));
     assert.equal(calls, 2);
     assert.equal((await f.graph()).nodes[0].data.title, '测试agent');
   });
   await t.test('transient model failure retries planning within a bound before any mutation', async () => {
     const f = await fixture(); let attempts = 0;
-    const agent = new CanvasAgentService(f.mcp, { chatStreamEvents: async function* () {
+    const agent = new CanvasAgentService(f.mcp, withWriteIntent({ chatStreamEvents: async function* () {
       attempts++;
       if (attempts === 1) throw new LlmError('unavailable', 503);
       yield submit(plan([rename()]));
-    } }, db);
+    } }), db);
     await collect(agent.run(f.scope, f.conversation.id, request('重命名'), 'glm-4.6v-flash', signal()));
     assert.equal(attempts, 2);
     assert.equal((await f.graph()).nodes[0].data.title, '测试agent');
@@ -669,7 +945,7 @@ test('database asynchronous image Plan & Execute closure', { skip: !dbEnabled, t
     // operation identity. Successful siblings are retained.
     const retryPlan = plan([{ id: 'retry', description: '重试失败图片', tool: 'generate_image', arguments: { nodeId: failedNode.id } }]);
     const retryModel = { chatStreamEvents: async function* () { yield submit(retryPlan); } };
-    const retryAgent = new CanvasAgentService(f.mcp, retryModel, db);
+    const retryAgent = new CanvasAgentService(f.mcp, withWriteIntent(retryModel), db);
     const retryChat = new CanvasChatService(db, retryModel, credits, config, retryAgent);
     await collect(retryChat.sendStream(user.id, f.canvas.id, f.conversation.id, '重试生成这张图片', [], signal(), [failedNode.id], randomUUID()));
     const retried = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id, nodeId: failedNode.id, id: { not: failedNode.data.generationTaskId } }, include: { items: true } });
@@ -990,7 +1266,7 @@ test('database asynchronous image Plan & Execute closure', { skip: !dbEnabled, t
     const snapshot = await tasks.get(user.id, old.id);
     const retryPlan = plan([{ id: 'new-task', description: '生成新的图片', tool: 'generate_image', arguments: { nodeId: old.nodeId } }]);
     const model = { chatStreamEvents: async function* () { yield submit(retryPlan); } };
-    const retryAgent = new CanvasAgentService(f.mcp, model, db);
+    const retryAgent = new CanvasAgentService(f.mcp, withWriteIntent(model), db);
     const retryChat = new CanvasChatService(db, model, credits, config, retryAgent);
     await collect(retryChat.sendStream(user.id, f.canvas.id, f.conversation.id, '给这个图片节点生成一张新图片', [], signal(), [old.nodeId], randomUUID()));
     const current = await db.generationTask.findFirstOrThrow({ where: { canvasId: f.canvas.id, id: { not: old.id } }, include: { items: true } });
@@ -1107,6 +1383,152 @@ test('live phase two planner creates, references and generates three images thro
   assert.equal((await f.graph()).nodes.filter(n => n.data.kind === 'image' && n.data.status === 'ready' && n.data.assetId && n.data.url).length, 3);
 });
 
+test('live multi-turn functionality matrix checks dialogue, every edit tool and all node kinds', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 600000 }, async t => {
+  const f = await fixture();
+  const provider = new (apiRequire('@reel/llm').GlmProvider)({ apiKey: process.env.GLM_API_KEY, baseUrl: process.env.GLM_BASE_URL });
+  const config = { get: () => '/tmp' };
+  const agent = new CanvasAgentService(f.mcp, provider, db);
+  const credits = new CreditsService(db, config);
+  const chat = new CanvasChatService(db, provider, credits, config, agent);
+  const reference = node => ({ id: node.id, kind: node.data.kind, title: node.data.title, content: node.data.content, prompt: node.data.prompt });
+  const reports = [];
+  const artifactDir = path.resolve(__dirname, '../../../artifacts/agent-selftest-20261110');
+  fs.mkdirSync(artifactDir, { recursive: true });
+  async function step(name, content, references, verify) {
+    await t.test(name, async () => {
+      const before = await f.graph();
+      const entry = { name, request: content, passed: false };
+      reports.push(entry);
+      try {
+        const requestId = randomUUID();
+        let events;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            events = await collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, content, references, signal(), ['story'], requestId, attempt > 0));
+            break;
+          } catch (error) {
+            if (!(error instanceof LlmError) || error.status !== 429 || attempt === 2) throw error;
+            entry.busyRetries = attempt + 1;
+            // Resume the same durable request; never create a second operation
+            // to work around rate limiting after a step may have committed.
+            await new Promise(resolve => setTimeout(resolve, 5000 * (attempt + 1)));
+          }
+        }
+        assert(events, 'the request must finish within the bounded busy retries');
+        const after = await f.graph();
+        const run = await db.canvasAgentRun.findFirstOrThrow({ where: { conversationId: f.conversation.id }, orderBy: { createdAt: 'desc' }, include: { steps: true } });
+        const reply = events.filter(event => event.event === 'delta').map(event => event.data.text).join('');
+        Object.assign(entry, { reply, nodeCountBefore: before.nodes.length, nodeCountAfter: after.nodes.length, tools: run.steps.map(item => item.tool), status: run.status });
+        assert.equal(events.at(-1).event, 'done');
+        assert(!/rename_node|create_nodes|update_node_prompt|connect_nodes|Planner|Executor|节点ID|revision/.test(reply), reply);
+        assert(!/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i.test(reply), reply);
+        await verify({ before, after, run, reply });
+        entry.passed = true;
+      } catch (error) { entry.error = error.message; throw error; }
+      finally { fs.writeFileSync(path.join(artifactDir, 'live-matrix.json'), JSON.stringify(reports, null, 2)); }
+    });
+  }
+  const unchanged = ({ before, after, run }) => { assert.deepEqual(after, before); assert.equal(run.steps.length, 0); };
+  const addedOne = (before, after, kind, title) => {
+    const oldIds = new Set(before.nodes.map(node => node.id));
+    const added = after.nodes.filter(node => !oldIds.has(node.id));
+    assert.equal(added.length, 1);
+    assert.equal(added[0].data.kind, kind);
+    assert.equal(added[0].data.title, title);
+    assert.deepEqual(after.nodes.filter(node => oldIds.has(node.id)), before.nodes);
+    return added[0];
+  };
+  await step('自我介绍保持小X身份', '你是谁？', [], result => { unchanged(result); assert(result.reply.includes('小X')); });
+  await step('询问技能说明实际画布能力', '你会什么技能？', [], result => { unchanged(result); assert(/画布|节点|提示词|分镜/.test(result.reply)); });
+  await step('只在对话中写故事不创建节点', '只在聊天中写一个小猫回家的短故事，不要修改画布。', [], result => { unchanged(result); assert(result.reply.includes('猫')); });
+  await step('读取引用故事不修改画布', '这个故事里小狗遇到了什么事情？只回答，不要修改画布。', [reference((await f.graph()).nodes[0])], result => {
+    unchanged(result);
+    assert(/迷.{0,2}路|朋友|回家/.test(result.reply), result.reply);
+    assert(!/小猫|阿黄|老鼠|流浪狗/.test(result.reply), 'must describe the referenced dog story, not the earlier chat story');
+  });
+  let narration, image, video, audio;
+  await step('创建文本并填写正文', '创建一个文本节点，名称为「旁白」，正文为「这是旁白正文。」，不创建其他节点。', [], result => {
+    narration = addedOne(result.before, result.after, 'text', '旁白');
+    assert.equal(narration.data.content, '这是旁白正文。');
+    assert(result.run.steps.some(item => item.tool === 'create_nodes'));
+  });
+  assert(narration, 'text creation is required for subsequent reference tests');
+  await step('明确引用优先于选中的故事节点', '把这个节点重命名为「开场旁白」。', [reference(narration)], result => {
+    narration = result.after.nodes.find(node => node.id === narration.id);
+    assert.equal(narration.data.title, '开场旁白');
+    assert.deepEqual(result.after.nodes.find(node => node.id === 'story'), result.before.nodes.find(node => node.id === 'story'));
+    assert.equal(result.after.nodes.length, result.before.nodes.length);
+    assert.equal(narration.data.content, '这是旁白正文。');
+  });
+  await step('修改提示词不修改正文或标题', '把引用节点的提示词改为「清晨阳光照亮木屋」。只修改提示词。', [reference(narration)], result => {
+    const node = result.after.nodes.find(node => node.id === narration.id);
+    assert(node.data.prompt.startsWith('清晨阳光照亮木屋'));
+    assert.equal(node.data.content, narration.data.content);
+    assert.equal(node.data.title, narration.data.title);
+    narration = node;
+  });
+  await step('创建图片节点与故事建立依赖但不出图', '基于引用的故事创建且只创建一个图片节点，名称为「清晨镜头」，提示词为「小狗走出木屋，清晨阳光，绘本风格」。只创建节点，不实际生成图片。', [reference((await f.graph()).nodes.find(node => node.id === 'story'))], result => {
+    image = addedOne(result.before, result.after, 'image', '清晨镜头');
+    assert(image.data.referenceNodeIds.includes('story'));
+    assert(result.after.edges.some(edge => edge.source === 'story' && edge.target === image.id));
+    assert(!result.run.steps.some(item => item.tool === 'generate_image'));
+  });
+  assert(image);
+  await step('图片引用创建视频节点但不生成视频', '基于引用的图片创建一个视频节点，名称为「清晨视频」，提示词为「镜头缓缓推进，小狗走出木屋」。只创建视频节点，不生成媒体。', [reference(image)], result => {
+    video = addedOne(result.before, result.after, 'video', '清晨视频');
+    assert(video.data.referenceNodeIds.includes(image.id));
+    assert(result.after.edges.some(edge => edge.source === image.id && edge.target === video.id));
+  });
+  await step('创建音频节点但不生成音频', '创建一个独立的音频节点，名称为「晨间旁白」，提示词为「温柔清晰的旁白」。只创建节点，不生成音频。', [], result => {
+    audio = addedOne(result.before, result.after, 'audio', '晨间旁白');
+    assert(!result.run.steps.some(item => item.tool === 'generate_image'));
+  });
+  assert(audio);
+  await step('已有文本和音频建立引用连接', '将「开场旁白」作为「晨间旁白」的参考来源建立连接，只连线，不创建节点。', [reference(narration), reference(audio)], result => {
+    assert.equal(result.after.nodes.length, result.before.nodes.length);
+    assert(result.after.edges.some(edge => edge.source === narration.id && edge.target === audio.id));
+    assert(result.after.nodes.find(node => node.id === audio.id).data.referenceNodeIds.includes(narration.id));
+    assert(result.run.steps.some(item => item.tool === 'connect_nodes'));
+  });
+  await step('操作后询问数量不重放前一轮操作', '画布现在有几个节点？只回答数量，不要修改画布。', [], result => { unchanged(result); assert(/5|五/.test(result.reply), result.reply); });
+  await step('询问如何出图不授权实际生成', '如何为这个图片节点生成图片？只解释方法，这次不要实际生成。', [reference(image)], unchanged);
+  await step('不支持的视频生成不得假报成功', '为引用的视频节点实际生成一个视频。', [reference(video)], result => {
+    unchanged(result);
+    assert(/不支持|暂不|尚不|无法|不能|目前|暂时/.test(result.reply), result.reply);
+    assert(!/已生成|生成完成/.test(result.reply), result.reply);
+  });
+  await step('找不到目标时澄清而不是改选中节点', '把名为「不存在的目标XYZ」的节点重命名为「不能误改」。', [], unchanged);
+  assert.equal(await db.generationTask.count({ where: { canvasId: f.canvas.id } }), 0);
+  assert.equal((await credits.balance(user.id)).frozen, 0);
+});
+
+test('live capabilities then rename persists the actual operation in the same conversation', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 180000 }, async () => {
+  assert(process.env.GLM_API_KEY);
+  const f = await fixture();
+  const provider = new (apiRequire('@reel/llm').GlmProvider)({ apiKey: process.env.GLM_API_KEY, baseUrl: process.env.GLM_BASE_URL });
+  const calls = [];
+  const llm = { chatStreamEvents: async function* (messages, options) {
+    const call = { stage: messages[0].content === INTENT_ROUTER_PROMPT ? 'intent' : messages[0].content.includes('计划JSON Schema') ? 'plan' : 'answer', current: messages.at(-1).content.slice(0, 350), output: '' };
+    calls.push(call);
+    for await (const event of provider.chatStreamEvents(messages, options)) { if (event.type === 'text') call.output += event.text; yield event; }
+  } };
+  const agent = new CanvasAgentService(f.mcp, llm, db);
+  const config = { get: () => '/tmp' };
+  const chat = new CanvasChatService(db, llm, new CreditsService(db, config), config, agent);
+  const send = (content, references = []) => collect(chat.sendStream(user.id, f.canvas.id, f.conversation.id, content, references, signal(), ['story'], randomUUID()));
+  await send('你会什么技能？');
+  const skillReply = await db.canvasChatMessage.findFirstOrThrow({ where: { conversationId: f.conversation.id, role: 'assistant' } });
+  assert(/节点|画布|提示词|分镜/.test(skillReply.content), skillReply.content);
+  assert(!/rename_node|create_nodes|Planner|Executor|节点ID/.test(skillReply.content), skillReply.content);
+  await send('@[%E6%95%85%E4%BA%8BA](node:story) 把这个节点重命名为春日故事', [{ id: 'story', kind: 'text', title: '故事A', content: '小狗出门、迷路、遇到朋友、一起回家' }]);
+  assert.equal((await f.graph()).nodes[0].data.title, '春日故事', JSON.stringify(calls));
+  await send('把这个节点重命名为「夏日故事」', [{ id: 'story', kind: 'text', title: '春日故事', content: '小狗出门' }]);
+  assert.equal((await f.graph()).nodes[0].data.title, '夏日故事', JSON.stringify(calls));
+  const turns = await db.canvasChatMessage.findMany({ where: { conversationId: f.conversation.id }, orderBy: [{ createdAt: 'asc' }, { role: 'desc' }] });
+  assert.equal(turns.length, 6);
+  assert(turns.filter(turn => turn.role === 'assistant').slice(1).every(turn => /已.*改/.test(turn.content)), JSON.stringify(calls));
+});
+
 test('live Plan & Execute renames then creates a referenced video on a populated canvas', { skip: process.env.LIVE_AGENT_SMOKE !== '1', timeout: 120000 }, async () => {
   assert(process.env.GLM_API_KEY);
   const f = await fixture();
@@ -1114,13 +1536,22 @@ test('live Plan & Execute renames then creates a referenced video on a populated
   for (let index = 0; index < 28; index++) graph.nodes.push({ id: randomUUID(), type: 'workflow', position: { x: index * 520, y: 500 }, data: { kind: 'image', title: '图片', prompt: '', content: '', status: 'idle' } });
   await db.canvas.update({ where: { id: f.canvas.id }, data: { graph } });
   const { GlmProvider } = apiRequire('@reel/llm');
-  const llm = new GlmProvider({ apiKey: process.env.GLM_API_KEY, baseUrl: process.env.GLM_BASE_URL });
+  const provider = new GlmProvider({ apiKey: process.env.GLM_API_KEY, baseUrl: process.env.GLM_BASE_URL });
+  const outputs = [];
+  const llm = { chatStreamEvents: async function* (...args) {
+    let output = '';
+    try { for await (const event of provider.chatStreamEvents(...args)) { if (event.type === 'text') output += event.text; yield event; } }
+    finally { outputs.push(output); }
+  } };
   const agent = new CanvasAgentService(f.mcp, llm, db);
-  const events = await collect(agent.run(f.scope, f.conversation.id, request('本轮只把节点story的名称改为测试agent，不创建其他节点。'), 'glm-4.6v-flash', signal()));
+  const run = content => collect(agent.run(f.scope, f.conversation.id, request(content), 'glm-4.6v-flash', signal())).catch(error => {
+    throw new Error(`${error.message}\nSynthetic planner outputs: ${JSON.stringify(outputs)}`, { cause: error });
+  });
+  const events = await run('本轮只把节点story的名称改为测试agent，不创建其他节点。');
   assert.equal((await f.graph()).nodes[0].data.title, '测试agent');
   assert.equal((await f.graph()).nodes.length, 29);
   assert(events.findIndex(e => e.event === 'plan') < events.findIndex(e => e.event === 'canvas'));
-  await collect(agent.run(f.scope, f.conversation.id, request('引用文本节点story，创建且只创建一个视频节点，不生成媒体。'), 'glm-4.6v-flash', signal()));
+  await run('引用文本节点story，创建且只创建一个视频节点，不生成媒体。');
   const result = await f.graph();
   assert.equal(result.nodes.length, 30);
   const video = result.nodes.find(n => n.data.kind === 'video');
@@ -1128,7 +1559,7 @@ test('live Plan & Execute renames then creates a referenced video on a populated
   assert(result.edges.some(e => e.source === 'story' && e.target === video.id));
   const previousIds = new Set(result.nodes.map(node => node.id));
   const previousRight = Math.max(...result.nodes.map(node => node.position.x + (node.data.kind === 'video' ? 640 : 360)));
-  await collect(agent.run(f.scope, f.conversation.id, request('基于选中的故事节点story，创建两个图片节点，每个都依赖这个故事，只创建节点，不生成媒体。'), 'glm-4.6v-flash', signal()));
+  await run('基于选中的故事节点story，创建两个图片节点，每个都依赖这个故事，只创建节点，不生成媒体。');
   const storyboard = await f.graph();
   const created = storyboard.nodes.filter(node => !previousIds.has(node.id));
   assert.equal(created.length, 2);

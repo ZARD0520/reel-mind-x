@@ -85,14 +85,24 @@ test('model diagnostics retain status, provider error code and correlation witho
   assert.equal(diagnosticError({ code: -32603, message: 'MCP initialization failed' }).code, -32603);
 });
 
-test('chat image references cannot read another user, traverse paths or follow foreign symlinks', async () => {
+test('chat image references cannot read another user, traverse paths or follow foreign symlinks', async t => {
   const storage = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'reel-image-scope-'));
   try {
     for (const user of ['owner', 'other']) {
       fs.mkdirSync(path.join(storage, 'users', user, 'uploads'), { recursive: true });
       fs.writeFileSync(path.join(storage, 'users', user, 'uploads', 'image.png'), user);
     }
-    fs.symlinkSync(path.join(storage, 'users', 'other', 'uploads', 'image.png'), path.join(storage, 'users', 'owner', 'uploads', 'linked.png'));
+    const foreignImage = path.join(storage, 'users', 'other', 'uploads', 'image.png');
+    const linkedImage = path.join(storage, 'users', 'owner', 'uploads', 'linked.png');
+    try { fs.symlinkSync(foreignImage, linkedImage); }
+    catch (error) {
+      if (error.code !== 'EPERM') throw error;
+      // Windows may disallow creating links. Still exercise the security check
+      // with the exact realpath result a cross-user symlink would return.
+      const realpath = fs.promises.realpath.bind(fs.promises);
+      t.mock.method(fs.promises, 'realpath', file => path.resolve(file) === linkedImage ? Promise.resolve(foreignImage) : realpath(file));
+      t.diagnostic('OS symlink creation unavailable; cross-user realpath resolution supplied by the test');
+    }
     const chat = new CanvasChatService({}, {}, {}, { get: () => storage }, {});
     const references = [
       '/files/users/owner/uploads/image.png',
@@ -671,7 +681,7 @@ test('live HTTP chat persists image-to-video nodes with real image input, auth, 
     assert.match(await question.text(), /event: done/);
     const questionRun = await prisma.canvasAgentRun.findFirst({ where: { conversationId: conversation.id }, orderBy: { createdAt: 'desc' } });
     assert.equal(questionRun.status, 'completed', JSON.stringify({ error: questionRun.error, events: questionRun.events }));
-    assert.equal(questionRun.plan.mode, 'answer', JSON.stringify({ plan: questionRun.plan, events: questionRun.events }));
+    assert.equal(questionRun.plan, null, 'read-only dialogue must bypass the planning protocol');
     assert.equal(await prisma.canvasAgentStep.count({ where: { runId: questionRun.id } }), 0);
     assert.match(questionRun.response, /2|两|二/);
     assert.deepEqual((await prisma.canvas.findUniqueOrThrow({ where: { id: canvas.id } })).graph, afterUpdate.graph);
